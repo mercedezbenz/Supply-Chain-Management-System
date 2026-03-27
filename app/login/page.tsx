@@ -33,5 +33,13 @@ export default function LoginPage() {
     );
   }
 
-  return null;
+  // If we are authenticated, show a simple redirecting state as a fallback
+  // instead of null while the useEffect is doing router.replace("/")
+  return (
+    <div className="min-h-screen w-full bg-white flex flex-col items-center justify-center">
+      <Loader2 className="h-8 w-8 animate-spin text-sky-500 mb-2" />
+      <p className="text-gray-500">Redirecting to dashboard...</p>
+    </div>
+  );
 }
+

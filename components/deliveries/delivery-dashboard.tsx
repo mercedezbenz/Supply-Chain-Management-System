@@ -429,14 +429,24 @@ export function DeliveryDashboard() {
     setShowAssignDriverDialog(true)
   }
 
+  // Admin / Staff check
+  const canManage = isAdmin || isStaff
+
   // Safe guard: wait for auth data before rendering (unless guest)
-  if (!isGuestUser && (!currentEmail || !currentUserRole)) {
+  if (!loading && !isGuestUser && (!currentEmail || !currentUserRole)) {
+    // If we've timed out or reached a state where user exists but role/email are missing, show an error instead of hanging
     return (
-      <div style={{ color: "white", padding: "20px" }}>
-        Loading user data...
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background p-6 text-white text-center">
+        <AlertCircle className="h-12 w-12 text-red-500 mb-4" />
+        <h1 className="text-xl font-bold mb-2">User Profile Error</h1>
+        <p className="text-muted-foreground mb-4">We found your account but couldn't load your permissions. Please try logging in again.</p>
+        <Button onClick={() => window.location.href = "/login"} variant="outline">
+          Back to Login
+        </Button>
       </div>
     )
   }
+
 
   if (loading) {
     return <DeliveryDashboardSkeleton />

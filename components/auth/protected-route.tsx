@@ -13,38 +13,16 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children, adminOnly = false }: ProtectedRouteProps) {
-  const { user, loading, isAdmin, isGuest } = useAuth()
+  const { user, loading, isAdmin, isGuest, isStaff } = useAuth()
   const router = useRouter()
 
   useEffect(() => {
-    // WAIT until loading is complete before making any redirect decisions
-    if (loading) {
-      console.log("[ProtectedRoute] Still loading, waiting...")
-      return
-    }
-
-    console.log("[ProtectedRoute] Auth loaded. user:", user?.role, "isAdmin:", isAdmin, "isGuest:", isGuest, "adminOnly:", adminOnly)
-
-    // Not authenticated at all → login
-    if (!user) {
-      console.log("[ProtectedRoute] No user, redirecting to /login")
-      router.push("/login")
-      return
-    }
-
-    // Admin-only page and user is guest → redirect to home
-    if (adminOnly && isGuest) {
-      console.log("[ProtectedRoute] Guest tried to access admin-only page, redirecting to /")
-      router.push("/")
-      return
-    }
-
-    // Non-guest, non-admin users → login
-    if (!isAdmin && !isGuest) {
-      console.log("[ProtectedRoute] User is neither admin nor guest, redirecting to /login")
+    // ONLY redirect to /login if NOT authenticated
+    if (!loading && !user) {
+      console.log("[ProtectedRoute] No user found, redirecting to /login")
       router.push("/login")
     }
-  }, [user, loading, isAdmin, isGuest, adminOnly, router])
+  }, [user, loading, router])
 
   // Show loading spinner while auth is initializing
   if (loading) {
@@ -56,15 +34,38 @@ export function ProtectedRoute({ children, adminOnly = false }: ProtectedRoutePr
     return <AuthLoadingSkeleton />
   }
 
-  // Admin-only page but user is guest
-  if (adminOnly && isGuest) {
-    return null
+  // Admin-only page and user is guest or staff (if they are not admin)
+  if (adminOnly && !isAdmin) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background p-6 text-center">
+        <h1 className="text-2xl font-bold mb-2">Admin Only Page</h1>
+        <p className="text-muted-foreground mb-4">This section is restricted to administrators.</p>
+        <button 
+          onClick={() => window.location.href = "/"}
+          className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
+        >
+          Back to Dashboard
+        </button>
+      </div>
+    )
   }
 
-  // Must be admin or guest to view
-  if (!isAdmin && !isGuest) {
-    return null
+  // Check for any authorized role (admin, staff, guest)
+  if (!isAdmin && !isGuest && !isStaff) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background p-6 text-center">
+        <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
+        <p className="text-muted-foreground mb-4">You do not have permission to access this section.</p>
+        <button 
+           onClick={() => window.location.href = "/login"}
+           className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
+        >
+          Return to Login
+        </button>
+      </div>
+    )
   }
 
   return <>{children}</>
 }
+

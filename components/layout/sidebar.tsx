@@ -91,8 +91,9 @@ export function Sidebar() {
             isCollapsed ? "px-2" : "px-4"
           )}>
             {filteredNavigation.map((item) => {
-              const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)
+              const isActive = item.href === "/" ? pathname === "/" : pathname?.startsWith(item.href)
               return (
+
                 <Link
                   key={item.name}
                   href={item.href}
