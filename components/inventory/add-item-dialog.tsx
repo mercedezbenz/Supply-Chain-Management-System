@@ -650,6 +650,9 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         source: movementSource,
         production_date: formData.productionDate || null,
         process_date: null,
+        ...(formData.stockSource === "From Supplier (Received)" && {
+          supplier_name: formData.supplierName.trim() || null,
+        }),
         created_at: new Date(),
       } as any)
 

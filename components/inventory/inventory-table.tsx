@@ -149,9 +149,15 @@ export function InventoryTable({
 
   // ─── Group transactions by barcode ──────────────────────────────────────
   const groupedProducts: GroupedProduct[] = useMemo(() => {
+    // STEP 1: Sort ALL transactions chronologically (oldest first) BEFORE grouping
+    // This ensures movementOrigin detection is reliable regardless of Firestore document order
+    const sortedTransactions = [...transactions].sort((a: any, b: any) => {
+      return parseDateToMs(a.transaction_date) - parseDateToMs(b.transaction_date)
+    })
+
     const groupMap = new Map<string, GroupedProduct>()
 
-    for (const txn of transactions) {
+    for (const txn of sortedTransactions) {
       const bc = (txn as any).barcode || txn.id
       if (!bc) continue
 
@@ -160,7 +166,7 @@ export function InventoryTable({
           barcode: bc,
           productName: (txn as any).product_name || "-",
           category: (txn as any).category || "",
-          movementOrigin: "",  // Will be set from first incoming transaction
+          movementOrigin: "",  // Will be set from the EARLIEST incoming transaction
           latestDate: (txn as any).transaction_date,
           unitType: deriveUnitType(txn),
           totalIncoming: 0,
@@ -187,13 +193,6 @@ export function InventoryTable({
       group.totalGoodReturn += ((txn as any).good_return ?? 0)
       group.totalDamageReturn += ((txn as any).damage_return ?? 0)
 
-      // Track Movement Origin: the FIRST incoming source (how item entered system)
-      const mvType = getMovementType(txn)
-      const mvLower = mvType.toLowerCase()
-      if (!group.movementOrigin && (mvLower.includes("supplier") || mvLower.includes("production") || mvLower.includes("packing"))) {
-        group.movementOrigin = mvType
-      }
-
       // Track latest transaction date
       const txnDateMs = parseDateToMs((txn as any).transaction_date)
       const currentLatestMs = parseDateToMs(group.latestDate)
@@ -209,9 +208,21 @@ export function InventoryTable({
       }
     }
 
-    // Sort each group's transactions by date (newest first)
+    // STEP 2: For each group, determine movementOrigin from the EARLIEST incoming transaction
+    // Sort each group's transactions by date (newest first for display)
     // AND compute stock from totals
     for (const group of groupMap.values()) {
+      // Since we sorted oldest-first during iteration, the first incoming txn in the array
+      // IS the chronologically earliest. But let's be explicit:
+      const earliestIncoming = group.transactions.find((txn: any) => {
+        const mt = getMovementType(txn).toLowerCase()
+        return mt.includes("supplier") || mt.includes("production") || mt.includes("packing")
+      })
+      if (earliestIncoming) {
+        group.movementOrigin = getMovementType(earliestIncoming)
+      }
+
+      // Now sort newest-first for display in the UI
       group.transactions.sort((a: any, b: any) => {
         return parseDateToMs(b.transaction_date) - parseDateToMs(a.transaction_date)
       })

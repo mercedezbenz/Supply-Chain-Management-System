@@ -41,7 +41,15 @@ export function DeliveryDashboard() {
   const [loading, setLoading] = useState(true)
 
   // Get current email and normalize the role for table-level filtering
-  const currentEmail = auth.currentUser?.email ?? null
+  let currentEmail = null
+
+  if (typeof window !== "undefined") {
+    try {
+      currentEmail = auth?.currentUser?.email ?? null
+    } catch {
+      currentEmail = null
+    }
+  }
   const rawRole = user?.role ?? ""
   const normalizedRole = rawRole.toString().toLowerCase()
   const isDriver = normalizedRole === "delivery"
@@ -111,13 +119,15 @@ export function DeliveryDashboard() {
 
   // Load customer_transactions with query-level filter
   useEffect(() => {
-    const firebaseUser = getFirebaseAuth().currentUser
+    if (typeof window === "undefined") return
+
+    const firebaseUser = getFirebaseAuth()?.currentUser ?? null
     const currentEmail = firebaseUser?.email ?? null
+
     const isGuestUser = normalizedRole === "guest"
 
     console.log("DELIVERIES EMAIL DEBUG", { currentEmail, isGuestUser })
 
-    // Allow guest users even without currentEmail — they see all deliveries (read-only)
     if (!isGuestUser && (!currentEmail || !currentUserRole)) return
 
     const db = getFirebaseDb()
