@@ -1,3 +1,4 @@
+"use client"
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
@@ -12,13 +13,19 @@ const firebaseConfig = {
   messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID!,
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID!,
 };
+let app: any;
+let db: any;
+let auth: any;
+let realtimeDb: any;
+let storage: any;
 
-// Avoid "Firebase app already initialized" error
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-const db = getFirestore(app);
-const auth = getAuth(app);
-const realtimeDb = getDatabase(app);
-const storage = getStorage(app);
+if (typeof window !== "undefined") {
+  app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+  db = getFirestore(app);
+  auth = getAuth(app);
+  realtimeDb = getDatabase(app);
+  storage = getStorage(app);
+}
 
 // Export functions for use in hooks and components
 export function getFirebaseDb() {

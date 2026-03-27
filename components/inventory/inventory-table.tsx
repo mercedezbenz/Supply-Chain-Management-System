@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { EditItemDialog } from "./edit-item-dialog"
 import type { InventoryItem, InventoryTransaction, Category } from "@/lib/types"
 import { formatTimestamp, formatExpirationDate } from "@/lib/utils"
-import { ChevronLeft, ChevronRight, ChevronDown, Pencil, Trash2, Loader2, Barcode } from "lucide-react"
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Pencil, Trash2, Loader2, Barcode, MessageSquareWarning, Package, History } from "lucide-react"
 import { getItemStatus } from "./inventory-dashboard"
 import { buildProductDisplayName } from "@/lib/product-data"
 import { useToast } from "@/hooks/use-toast"
@@ -15,6 +15,12 @@ import { ConfirmationDialog } from "@/components/ui/confirmation-dialog"
 import { TransactionService } from "@/services/firebase-service"
 import { FirebaseService } from "@/services/firebase-service"
 import { BarcodeModal } from "./barcode-modal"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 interface InventoryTableProps {
   items: InventoryItem[]
@@ -27,24 +33,7 @@ interface InventoryTableProps {
   newItemIds?: Set<string>
 }
 
-// ─── NEW badge threshold: 10 minutes ─────────────────────────────────────────
-const NEW_BADGE_THRESHOLD_MS = 10 * 60 * 1000
-
-/** Returns true if this item was added within the last 10 minutes */
-function isRecentlyAdded(item: any): boolean {
-  if (!item.createdAt) return false
-  try {
-    const createdAt =
-      item.createdAt instanceof Date
-        ? item.createdAt
-        : item.createdAt?.toDate
-          ? item.createdAt.toDate()
-          : new Date(item.createdAt)
-    return Date.now() - createdAt.getTime() < NEW_BADGE_THRESHOLD_MS
-  } catch {
-    return false
-  }
-}
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /** Format a Date or Firestore Timestamp to "MMM DD, YYYY" */
 function formatTxnDate(d: any): string {
@@ -68,6 +57,15 @@ function formatDateFull(d: any): string {
     const year = date.getFullYear()
     return `${month}/${day}/${year}`
   } catch { return "\u2014" }
+}
+
+/** Parse a date to a timestamp number for sorting */
+function parseDateToMs(d: any): number {
+  if (!d) return 0
+  try {
+    const date = d instanceof Date ? d : d?.toDate ? d.toDate() : new Date(d)
+    return isNaN(date.getTime()) ? 0 : date.getTime()
+  } catch { return 0 }
 }
 
 /** Derive a readable Movement Type from source */
@@ -102,6 +100,26 @@ function deriveUnitType(txn: any): string {
   return "BOX" // default
 }
 
+// ─── Grouped Product type ────────────────────────────────────────────────────
+interface GroupedProduct {
+  barcode: string
+  productName: string
+  category: string
+  movementOrigin: string       // How item ENTERED system (Supplier/Production) — NOT latest action
+  latestDate: any
+  unitType: string
+  totalIncoming: number
+  totalIncomingWeight: number
+  totalOutgoing: number
+  totalOutgoingWeight: number
+  totalGoodReturn: number
+  totalDamageReturn: number
+  stockLeft: number
+  location: string
+  transactions: any[]
+  latestBadReturnDetails: any
+}
+
 export function InventoryTable({
   items,
   transactions = [],
@@ -115,10 +133,10 @@ export function InventoryTable({
   const [editingItem, setEditingItem] = useState<InventoryTransaction | null>(null)
   const [cancellingItem, setCancellingItem] = useState<InventoryTransaction | null>(null)
   const [cancelLoading, setCancelLoading] = useState(false)
-  const [hoveredRowId, setHoveredRowId] = useState<string | null>(null)
+  const [expandedBarcodes, setExpandedBarcodes] = useState<Set<string>>(new Set())
   const [currentPage, setCurrentPage] = useState(1)
-  const [recentItemIds, setRecentItemIds] = useState<Set<string>>(new Set())
   const [barcodeViewItem, setBarcodeViewItem] = useState<{ barcode: string; productName: string } | null>(null)
+  const [badReturnDetailsView, setBadReturnDetailsView] = useState<{ productName: string; details: any; quantity: number } | null>(null)
 
   // ─── Scroll-aware indicators ────────────────────────────────────────────
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -129,21 +147,103 @@ export function InventoryTable({
 
   const itemsPerPage = 50
 
-  // Sort transactions by date (newest first)
-  const sortedTransactions = useMemo(() => {
-    return [...transactions].sort((a, b) => {
-      const dateA = a.transaction_date instanceof Date ? a.transaction_date : a.transaction_date?.toDate ? a.transaction_date.toDate() : new Date(a.transaction_date || 0)
-      const dateB = b.transaction_date instanceof Date ? b.transaction_date : b.transaction_date?.toDate ? b.transaction_date.toDate() : new Date(b.transaction_date || 0)
-      return dateB.getTime() - dateA.getTime()
+  // ─── Group transactions by barcode ──────────────────────────────────────
+  const groupedProducts: GroupedProduct[] = useMemo(() => {
+    const groupMap = new Map<string, GroupedProduct>()
+
+    for (const txn of transactions) {
+      const bc = (txn as any).barcode || txn.id
+      if (!bc) continue
+
+      if (!groupMap.has(bc)) {
+        groupMap.set(bc, {
+          barcode: bc,
+          productName: (txn as any).product_name || "-",
+          category: (txn as any).category || "",
+          movementOrigin: "",  // Will be set from first incoming transaction
+          latestDate: (txn as any).transaction_date,
+          unitType: deriveUnitType(txn),
+          totalIncoming: 0,
+          totalIncomingWeight: 0,
+          totalOutgoing: 0,
+          totalOutgoingWeight: 0,
+          totalGoodReturn: 0,
+          totalDamageReturn: 0,
+          stockLeft: 0,
+          location: (txn as any).location || "",
+          transactions: [],
+          latestBadReturnDetails: null,
+        })
+      }
+
+      const group = groupMap.get(bc)!
+      group.transactions.push(txn)
+
+      // Accumulate totals
+      group.totalIncoming += ((txn as any).incoming_packs ?? (txn as any).incoming_qty ?? 0)
+      group.totalIncomingWeight += ((txn as any).incoming_weight ?? 0)
+      group.totalOutgoing += ((txn as any).outgoing_packs ?? (txn as any).outgoing_qty ?? 0)
+      group.totalOutgoingWeight += ((txn as any).outgoing_weight ?? 0)
+      group.totalGoodReturn += ((txn as any).good_return ?? 0)
+      group.totalDamageReturn += ((txn as any).damage_return ?? 0)
+
+      // Track Movement Origin: the FIRST incoming source (how item entered system)
+      const mvType = getMovementType(txn)
+      const mvLower = mvType.toLowerCase()
+      if (!group.movementOrigin && (mvLower.includes("supplier") || mvLower.includes("production") || mvLower.includes("packing"))) {
+        group.movementOrigin = mvType
+      }
+
+      // Track latest transaction date
+      const txnDateMs = parseDateToMs((txn as any).transaction_date)
+      const currentLatestMs = parseDateToMs(group.latestDate)
+      if (txnDateMs > currentLatestMs) {
+        group.latestDate = (txn as any).transaction_date
+        group.location = (txn as any).location || group.location
+        group.productName = (txn as any).product_name || group.productName
+      }
+
+      // Track bad return details
+      if ((txn as any).bad_return_details) {
+        group.latestBadReturnDetails = (txn as any).bad_return_details
+      }
+    }
+
+    // Sort each group's transactions by date (newest first)
+    // AND compute stock from totals
+    for (const group of groupMap.values()) {
+      group.transactions.sort((a: any, b: any) => {
+        return parseDateToMs(b.transaction_date) - parseDateToMs(a.transaction_date)
+      })
+      // Stock = totalIncoming - totalOutgoing + totalGoodReturn
+      group.stockLeft = group.totalIncoming - group.totalOutgoing + group.totalGoodReturn
+    }
+
+    // Sort groups by latest date (newest first)
+    return Array.from(groupMap.values()).sort((a, b) => {
+      return parseDateToMs(b.latestDate) - parseDateToMs(a.latestDate)
     })
   }, [transactions])
 
-  const dataLength = sortedTransactions.length
+  const dataLength = groupedProducts.length
   const totalPages = Math.max(1, Math.ceil(dataLength / itemsPerPage))
-  const paginatedTransactions = useMemo(() => {
+  const paginatedGroups = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage
-    return sortedTransactions.slice(start, start + itemsPerPage)
-  }, [sortedTransactions, currentPage])
+    return groupedProducts.slice(start, start + itemsPerPage)
+  }, [groupedProducts, currentPage])
+
+  // ─── Expand/Collapse ───────────────────────────────────────────────────
+  const toggleExpand = useCallback((barcode: string) => {
+    setExpandedBarcodes(prev => {
+      const next = new Set(prev)
+      if (next.has(barcode)) {
+        next.delete(barcode)
+      } else {
+        next.add(barcode)
+      }
+      return next
+    })
+  }, [])
 
   // ─── Scroll detection ────────────────────────────────────────────────────
   useEffect(() => {
@@ -173,23 +273,12 @@ export function InventoryTable({
       container.removeEventListener("scroll", handleScroll)
       resizeObserver.disconnect()
     }
-  }, [paginatedTransactions])
+  }, [paginatedGroups])
 
-  // Reset to page 1 when items change
+  // Reset to page 1 when data changes
   useEffect(() => {
     setCurrentPage(1)
   }, [dataLength])
-
-  // Re-evaluate the NEW badge set every 60 s
-  useEffect(() => {
-    const evaluate = () => {
-      const ids = new Set(items.filter(isRecentlyAdded).map(i => i.id))
-      setRecentItemIds(ids)
-    }
-    evaluate()
-    const interval = setInterval(evaluate, 60_000)
-    return () => clearInterval(interval)
-  }, [items])
 
   // Scroll to item
   useEffect(() => {
@@ -226,25 +315,6 @@ export function InventoryTable({
     return num.toFixed(2)
   }
 
-  const getProductDisplayName = (item: any): string => {
-    return buildProductDisplayName(item)
-  }
-
-  // Compute average weight per pack and validity status
-  const getAvgWeight = (txn: any): { value: number; valid: boolean } => {
-    const inPacks = txn.incoming_packs ?? txn.incoming_qty ?? 0
-    const inWeight = txn.incoming_weight ?? 0
-    const outPacks = txn.outgoing_packs ?? txn.outgoing_qty ?? 0
-    const outWeight = txn.outgoing_weight ?? 0
-    const packs = inPacks > 0 ? inPacks : outPacks
-    const weight = inWeight > 0 ? inWeight : outWeight
-    if (packs > 0 && weight > 0) {
-      const avg = weight / packs
-      return { value: avg, valid: isFinite(avg) && avg > 0 }
-    }
-    return { value: 0, valid: false }
-  }
-
   if (loading) {
     return (
       <div className="space-y-2">
@@ -263,45 +333,40 @@ export function InventoryTable({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
           </svg>
         </div>
-        <p className="text-foreground text-lg font-semibold mb-2">No Transactions Found</p>
+        <p className="text-foreground text-lg font-semibold mb-2">No Products Found</p>
         <p className="text-muted-foreground text-sm max-w-md mx-auto">
-          No transactions match your current filters. Try adding inventory items or changing filter settings.
+          No products match your current filters. Try adding inventory items or changing filter settings.
         </p>
       </div>
     )
   }
 
-  // ─── Column definitions ─────────────────────────────────────────────────────
-  const COLUMNS = [
-    { key: "date", label: "Date", align: "left" as const },
-    { key: "movement", label: "Movement Type", align: "left" as const },
+  // ─── Summary table columns ─────────────────────────────────────────────
+  const SUMMARY_COLUMNS = [
+    { key: "expand", label: "", align: "center" as const, width: "w-10" },
     { key: "product", label: "Product Name", align: "left" as const },
     { key: "barcode", label: "Barcode", align: "left" as const },
-    { key: "inPacks", label: "Incoming", align: "center" as const },
-    { key: "inWeight", label: "Incoming Weight (kg)", align: "center" as const },
-    { key: "outPacks", label: "Outgoing", align: "center" as const },
-    { key: "outWeight", label: "Outgoing Weight (kg)", align: "center" as const },
-    { key: "unitType", label: "Unit Type", align: "center" as const },
+    { key: "movementOrigin", label: "Movement Origin", align: "left" as const },
+    { key: "totalIn", label: "Total In", align: "center" as const },
+    { key: "totalInWeight", label: "In Weight (kg)", align: "center" as const },
+    { key: "totalOut", label: "Total Out", align: "center" as const },
+    { key: "totalOutWeight", label: "Out Weight (kg)", align: "center" as const },
     { key: "goodReturn", label: "Good Return", align: "center" as const },
     { key: "damageReturn", label: "Damage Return", align: "center" as const },
-    { key: "avg", label: "Avg Weight (kg/pack)", align: "center" as const },
-    { key: "status", label: "Status", align: "center" as const },
-    { key: "from", label: "From", align: "left" as const },
-    { key: "to", label: "To", align: "left" as const },
+    { key: "stockLeft", label: "Stock Left", align: "center" as const },
     { key: "location", label: "Location", align: "left" as const },
-    { key: "refNo", label: "Reference No.", align: "left" as const },
-    { key: "prodDate", label: "Production Date", align: "left" as const },
-    { key: "procDate", label: "Process Date", align: "left" as const },
-    { key: "expiry", label: "Expiry Date", align: "left" as const },
     { key: "actions", label: "Actions", align: "right" as const },
   ]
+
+
 
   return (
     <>
       <div className="space-y-4">
         {/* ─── INFO BANNER ──────────────────────────────────────────────────── */}
         <div className="text-xs text-muted-foreground px-1">
-          Showing <span className="font-medium text-foreground">{dataLength}</span> transactions
+          Showing <span className="font-medium text-foreground">{dataLength}</span> products
+          {" "}({transactions.length} transactions)
           {totalPages > 1 && <> · Page {currentPage} of {totalPages}</>}
         </div>
 
@@ -315,12 +380,12 @@ export function InventoryTable({
             <table className="w-full text-left">
               <thead className="sticky top-0 z-20 bg-gray-50 dark:bg-muted/50 border-b border-border/60">
                 <tr>
-                  {COLUMNS.map((col) => (
+                  {SUMMARY_COLUMNS.map((col) => (
                     <th
                       key={col.key}
                       className={`h-12 px-3 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap ${
-                        col.align === "center" ? "text-center" : "text-left"
-                      } ${col.key === "actions" ? "text-right bg-gray-50 dark:bg-muted/50" : ""}`}
+                        col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left"
+                      } ${col.width || ""} ${col.key === "actions" ? "bg-gray-50 dark:bg-muted/50" : ""}`}
                     >
                       {col.label}
                     </th>
@@ -328,268 +393,423 @@ export function InventoryTable({
                 </tr>
               </thead>
               <tbody>
-                {paginatedTransactions.map((txn: any, index: number) => {
-                  const isHovered = hoveredRowId === txn.id
-                  const movementType = getMovementType(txn)
-                  const avgData = getAvgWeight(txn)
-                  const inPacks = txn.incoming_packs ?? txn.incoming_qty ?? 0
-                  const inWeight = txn.incoming_weight ?? 0
-                  const outPacks = txn.outgoing_packs ?? txn.outgoing_qty ?? 0
-                  const outWeight = txn.outgoing_weight ?? 0
+                {paginatedGroups.map((group, groupIndex) => {
+                  const isExpanded = expandedBarcodes.has(group.barcode)
 
                   return (
-                    <tr
-                      key={txn.id}
-                      id={`inventory-item-${txn.id}`}
-                      className={[
-                        "group border-b border-border/40 transition-colors duration-200",
-                        isHovered
-                          ? "bg-blue-50 dark:bg-blue-950/40 shadow-sm"
-                          : index % 2 === 0
-                            ? "bg-white dark:bg-card"
-                            : "bg-gray-50/50 dark:bg-muted/20",
-                        "hover:bg-blue-50/60 dark:hover:bg-blue-950/30",
-                      ].join(" ")}
-                      onMouseEnter={() => setHoveredRowId(txn.id)}
-                      onMouseLeave={() => setHoveredRowId(null)}
-                    >
-                      {/* Date */}
-                      <td className="h-14 px-3 py-3 text-sm text-foreground/70 font-medium align-middle whitespace-nowrap">
-                        {formatTxnDate(txn.transaction_date)}
-                      </td>
+                    <>{/* Fragment for summary + expanded rows */}
+                      {/* ═══ SUMMARY ROW ═══ */}
+                      <tr
+                        key={group.barcode}
+                        id={`inventory-item-${group.barcode}`}
+                        ref={(el) => { if (el) itemRowRefs.current.set(group.barcode, el) }}
+                        className={[
+                          "group border-b border-border/40 transition-all duration-200 cursor-pointer",
+                          isExpanded
+                            ? "bg-blue-50/80 dark:bg-blue-950/30 shadow-sm"
+                            : groupIndex % 2 === 0
+                              ? "bg-white dark:bg-card"
+                              : "bg-gray-50/50 dark:bg-muted/20",
+                          "hover:bg-blue-50/60 dark:hover:bg-blue-950/30",
+                        ].join(" ")}
+                        onClick={() => toggleExpand(group.barcode)}
+                        title="Click to view transaction history"
+                      >
+                        {/* Expand Icon */}
+                        <td className="h-14 px-2 py-2 align-middle text-center w-10">
+                          <div className={`inline-flex items-center justify-center w-6 h-6 rounded-md transition-all duration-200 ${
+                            isExpanded
+                              ? "bg-blue-500 text-white shadow-sm"
+                              : "bg-slate-100 text-slate-500 group-hover:bg-blue-100 group-hover:text-blue-600"
+                          }`}>
+                            {isExpanded
+                              ? <ChevronUp className="h-3.5 w-3.5" />
+                              : <ChevronDown className="h-3.5 w-3.5" />
+                            }
+                          </div>
+                        </td>
 
-                      {/* Movement Type */}
-                      <td className="h-14 px-3 py-3 align-middle whitespace-nowrap">
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-[11px] font-semibold border ${getMovementBadgeStyle(movementType)}`}>
-                          {movementType}
-                        </span>
-                      </td>
+                        {/* Product Name */}
+                        <td className="h-14 px-3 py-3 font-medium text-sm text-foreground align-middle">
+                          <div className="flex items-center gap-2">
+                            <Package className="h-4 w-4 text-slate-400 shrink-0" />
+                            <span className="line-clamp-1" title={group.productName}>{group.productName}</span>
+                          </div>
+                        </td>
 
-                      {/* Product Name */}
-                      <td className="h-14 px-3 py-3 font-medium text-sm text-foreground align-middle">
-                        <span className="line-clamp-1" title={txn.product_name || "\u2014"}>{txn.product_name || <span className="text-muted-foreground">{"\u2014"}</span>}</span>
-                      </td>
+                        {/* Barcode */}
+                        <td className="h-14 px-3 py-3 font-mono text-sm text-foreground align-middle">
+                          <div className="truncate max-w-[180px]" title={group.barcode}>{group.barcode}</div>
+                        </td>
 
-                      {/* Barcode */}
-                      <td className="h-14 px-3 py-3 font-mono text-sm text-foreground align-middle">
-                        <div className="truncate" title={txn.barcode || "\u2014"}>{txn.barcode || <span className="text-muted-foreground">{"\u2014"}</span>}</div>
-                      </td>
+                        {/* Movement Origin */}
+                        <td className="h-14 px-3 py-3 align-middle whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            {group.movementOrigin ? (
+                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-[11px] font-semibold border ${getMovementBadgeStyle(group.movementOrigin)}`}>
+                                {group.movementOrigin}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground text-xs">{"\u2014"}</span>
+                            )}
+                          </div>
+                        </td>
 
-                      {/* Incoming */}
-                      <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
-                        {inPacks > 0 ? (
-                          <span className="text-green-600 dark:text-green-400">
-                            {formatNumber(inPacks)} <span className="text-[11px] font-normal opacity-70">{(txn.incoming_unit || "box") === "box" ? (inPacks === 1 ? "Box" : "Boxes") : (inPacks === 1 ? "Pack" : "Packs")}</span>
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">{"\u2014"}</span>
-                        )}
-                      </td>
-
-                      {/* Incoming Weight */}
-                      <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
-                        {inWeight > 0 ? (
-                          <span className="text-green-600 dark:text-green-400">{formatWeight(inWeight)}</span>
-                        ) : (
-                          <span className="text-muted-foreground">{"\u2014"}</span>
-                        )}
-                      </td>
-
-                      {/* Outgoing */}
-                      <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
-                        {outPacks > 0 ? (
-                          <span className="text-red-600 dark:text-red-400">
-                            {formatNumber(outPacks)} <span className="text-[11px] font-normal opacity-70">{(txn.outgoing_unit || "pack") === "box" ? (outPacks === 1 ? "Box" : "Boxes") : (outPacks === 1 ? "Pack" : "Packs")}</span>
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">{"\u2014"}</span>
-                        )}
-                      </td>
-
-                      {/* Outgoing Weight */}
-                      <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
-                        {outWeight > 0 ? (
-                          <span className="text-red-600 dark:text-red-400">{formatWeight(outWeight)}</span>
-                        ) : (
-                          <span className="text-muted-foreground">{"\u2014"}</span>
-                        )}
-                      </td>
-
-                      {/* Unit Type */}
-                      <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
-                        {(() => {
-                          const ut = deriveUnitType(txn)
-                          return ut === "PACK" ? (
-                            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold border bg-green-100 text-green-700 border-green-200 dark:bg-green-900/40 dark:text-green-400 dark:border-green-800">
-                              PACK
-                            </span>
+                        {/* Total Incoming */}
+                        <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
+                          {group.totalIncoming > 0 ? (
+                            <span className="text-green-600 dark:text-green-400 font-semibold">{formatNumber(group.totalIncoming)}</span>
                           ) : (
-                            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold border bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/40 dark:text-blue-400 dark:border-blue-800">
-                              BOX
-                            </span>
-                          )
-                        })()}
-                      </td>
-
-                      {/* Good Return */}
-                      <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
-                        {(txn.good_return ?? 0) > 0 ? (
-                          <span className="text-green-600 dark:text-green-400">{formatNumber(txn.good_return)}</span>
-                        ) : (
-                          <span className="text-muted-foreground">{"\u2014"}</span>
-                        )}
-                      </td>
-
-                      {/* Damage Return */}
-                      <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
-                        {(txn.damage_return ?? 0) > 0 ? (
-                          <span className="text-orange-600 dark:text-orange-400">{formatNumber(txn.damage_return)}</span>
-                        ) : (
-                          <span className="text-muted-foreground">{"\u2014"}</span>
-                        )}
-                      </td>
-
-                      {/* Average Weight */}
-                      <td className="text-center h-14 px-3 py-3 font-medium text-sm align-middle">
-                        {avgData.value > 0 ? (
-                          <span className="text-foreground">{avgData.value.toFixed(2)}</span>
-                        ) : (
-                          <span className="text-muted-foreground">{"\u2014"}</span>
-                        )}
-                      </td>
-
-                      {/* Status */}
-                      <td className="text-center h-14 px-3 py-3 align-middle">
-                        {avgData.value > 0 ? (
-                          avgData.valid ? (
-                            <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-semibold bg-green-100 text-green-700 border border-green-200 dark:bg-green-900/40 dark:text-green-400 dark:border-green-800">
-                              <span className="w-2 h-2 rounded-full bg-green-500 dark:bg-green-400"></span>
-                              Valid
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-semibold bg-red-100 text-red-700 border border-red-200 dark:bg-red-900/40 dark:text-red-400 dark:border-red-800">
-                              <span className="w-2 h-2 rounded-full bg-red-500 dark:bg-red-400"></span>
-                              Invalid
-                            </span>
-                          )
-                        ) : (
-                          <span className="text-muted-foreground text-xs">{"\u2014"}</span>
-                        )}
-                      </td>
-
-                      {/* From Location */}
-                      <td className="h-14 px-3 py-3 text-sm align-middle whitespace-nowrap">
-                        {txn.from_location ? (
-                          <div className="truncate max-w-[120px] text-foreground" title={txn.from_location}>{txn.from_location}</div>
-                        ) : (
-                          <span className="text-muted-foreground">{"\u2014"}</span>
-                        )}
-                      </td>
-
-                      {/* To Location */}
-                      <td className="h-14 px-3 py-3 text-sm align-middle whitespace-nowrap">
-                        {txn.to_location ? (
-                          <div className="truncate max-w-[120px] text-foreground" title={txn.to_location}>{txn.to_location}</div>
-                        ) : (
-                          <span className="text-muted-foreground">{"\u2014"}</span>
-                        )}
-                      </td>
-
-                      {/* Location */}
-                      <td className="h-14 px-2 py-2 font-medium text-sm align-middle whitespace-nowrap">
-                        {txn.location ? (
-                          <div className="truncate max-w-[120px] text-foreground" title={txn.location}>{txn.location}</div>
-                        ) : (
-                          <span className="text-muted-foreground">{"\u2014"}</span>
-                        )}
-                      </td>
-
-                      {/* Reference No. */}
-                      <td className="h-14 px-2 py-2 font-mono text-xs align-middle whitespace-nowrap">
-                        {txn.reference_no ? (
-                          <div className="truncate max-w-[140px] text-foreground" title={txn.reference_no}>{txn.reference_no}</div>
-                        ) : (
-                          <span className="text-muted-foreground">{"\u2014"}</span>
-                        )}
-                      </td>
-
-                      {/* Production Date */}
-                      <td className="h-14 px-2 py-2 text-sm align-middle whitespace-nowrap">
-                        {(() => {
-                          const v = formatDateFull(txn.production_date)
-                          return v === "\u2014" ? <span className="text-muted-foreground">{"\u2014"}</span> : <span className="text-foreground">{v}</span>
-                        })()}
-                      </td>
-
-                      {/* Process Date */}
-                      <td className="h-14 px-2 py-2 text-sm align-middle whitespace-nowrap">
-                        {(() => {
-                          const v = formatDateFull(txn.process_date)
-                          return v === "\u2014" ? <span className="text-muted-foreground">{"\u2014"}</span> : <span className="text-foreground">{v}</span>
-                        })()}
-                      </td>
-
-                      {/* Expiry Date */}
-                      <td className="h-14 px-2 py-2 text-sm align-middle whitespace-nowrap">
-                        {(() => {
-                          const expiryDate = txn.expiry_date
-                          if (!expiryDate) {
-                            return <span className="text-muted-foreground">{"\u2014"}</span>
-                          }
-                          try {
-                            const date = expiryDate instanceof Date ? expiryDate
-                              : expiryDate?.toDate ? expiryDate.toDate()
-                              : new Date(expiryDate)
-                            if (isNaN(date.getTime())) return <span className="text-muted-foreground">{"\u2014"}</span>
-                            const formatted = formatDateFull(date)
-                            const today = new Date(); today.setHours(0, 0, 0, 0)
-                            const expiry = new Date(date); expiry.setHours(0, 0, 0, 0)
-                            if (expiry < today) return <span className="text-red-600 dark:text-red-400 font-medium">{formatted}</span>
-                            return <span className="text-foreground">{formatted}</span>
-                          } catch {
-                            return <span className="text-muted-foreground">{"\u2014"}</span>
-                          }
-                        })()}
-                      </td>
-
-                      {/* Actions — Always visible inline buttons */}
-                      <td className="h-14 px-3 py-2 align-middle whitespace-nowrap">
-                        <div className="flex items-center gap-1.5 justify-end">
-                          {txn.barcode && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-8 px-2.5 gap-1.5 text-xs font-medium text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:text-emerald-300 dark:hover:bg-emerald-950/30"
-                              onClick={() => setBarcodeViewItem({ barcode: txn.barcode, productName: txn.product_name || "Unknown Product" })}
-                              title="View Barcode"
-                            >
-                              <Barcode className="h-3.5 w-3.5" />
-                              Barcode
-                            </Button>
+                            <span className="text-muted-foreground">{"\u2014"}</span>
                           )}
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-8 px-2.5 gap-1.5 text-xs font-medium text-muted-foreground hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30"
-                            onClick={() => setEditingItem(txn as any)}
-                            title="Edit Transaction"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                            Edit
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-8 px-2.5 gap-1.5 text-xs font-medium text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
-                            onClick={() => setCancellingItem(txn as any)}
-                            title="Delete Transaction"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            Delete
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
+                        </td>
+
+                        {/* Total Incoming Weight */}
+                        <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
+                          {group.totalIncomingWeight > 0 ? (
+                            <span className="text-green-600 dark:text-green-400">{formatWeight(group.totalIncomingWeight)}</span>
+                          ) : (
+                            <span className="text-muted-foreground">{"\u2014"}</span>
+                          )}
+                        </td>
+
+                        {/* Total Outgoing */}
+                        <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
+                          {group.totalOutgoing > 0 ? (
+                            <span className="text-red-600 dark:text-red-400 font-semibold">{formatNumber(group.totalOutgoing)}</span>
+                          ) : (
+                            <span className="text-muted-foreground">{"\u2014"}</span>
+                          )}
+                        </td>
+
+                        {/* Total Outgoing Weight */}
+                        <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
+                          {group.totalOutgoingWeight > 0 ? (
+                            <span className="text-red-600 dark:text-red-400">{formatWeight(group.totalOutgoingWeight)}</span>
+                          ) : (
+                            <span className="text-muted-foreground">{"\u2014"}</span>
+                          )}
+                        </td>
+
+                        {/* Good Return */}
+                        <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
+                          {group.totalGoodReturn > 0 ? (
+                            <span className="text-green-600 dark:text-green-400">{formatNumber(group.totalGoodReturn)}</span>
+                          ) : (
+                            <span className="text-muted-foreground">{"\u2014"}</span>
+                          )}
+                        </td>
+
+                        {/* Damage Return */}
+                        <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
+                          {group.totalDamageReturn > 0 ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setBadReturnDetailsView({
+                                  productName: group.productName,
+                                  details: group.latestBadReturnDetails,
+                                  quantity: group.totalDamageReturn,
+                                })
+                              }}
+                              className="group/dr inline-flex items-center gap-1 cursor-pointer transition-colors"
+                              title="Click to view bad return details"
+                            >
+                              <span className="text-red-600 dark:text-red-400 group-hover/dr:text-red-800 underline underline-offset-2 decoration-dotted font-semibold">
+                                {formatNumber(group.totalDamageReturn)}
+                              </span>
+                              <MessageSquareWarning className="h-3.5 w-3.5 text-red-400 opacity-0 group-hover/dr:opacity-100 transition-opacity" />
+                            </button>
+                          ) : (
+                            <span className="text-muted-foreground">{"\u2014"}</span>
+                          )}
+                        </td>
+
+                        {/* Stock Left */}
+                        <td className="text-center h-14 px-2 py-2 align-middle">
+                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border ${
+                            group.stockLeft <= 0
+                              ? "bg-red-100 text-red-700 border-red-200 dark:bg-red-900/40 dark:text-red-400"
+                              : group.stockLeft <= 5
+                                ? "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/40 dark:text-orange-400"
+                                : "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-400"
+                          }`}>
+                            {formatNumber(group.stockLeft)}
+                          </span>
+                        </td>
+
+                        {/* Location */}
+                        <td className="h-14 px-3 py-3 text-sm align-middle whitespace-nowrap">
+                          {group.location ? (
+                            <div className="truncate max-w-[100px] text-foreground" title={group.location}>{group.location}</div>
+                          ) : (
+                            <span className="text-muted-foreground">{"\u2014"}</span>
+                          )}
+                        </td>
+
+                        {/* Actions */}
+                        <td className="h-14 px-3 py-2 align-middle whitespace-nowrap">
+                          <div className="flex items-center gap-1.5 justify-end" onClick={(e) => e.stopPropagation()}>
+                            {group.barcode && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-8 px-2.5 gap-1.5 text-xs font-medium text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:text-emerald-300 dark:hover:bg-emerald-950/30"
+                                onClick={() => setBarcodeViewItem({ barcode: group.barcode, productName: group.productName })}
+                                title="View Barcode"
+                              >
+                                <Barcode className="h-3.5 w-3.5" />
+                                Barcode
+                              </Button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+
+                      {/* ═══ EXPANDED TRANSACTION HISTORY (TABLE FORMAT) ═══ */}
+                      {isExpanded && (
+                        <tr key={`${group.barcode}-expanded`}>
+                          <td colSpan={SUMMARY_COLUMNS.length} className="p-0">
+                            <div className="bg-slate-50/80 dark:bg-slate-900/30 border-y border-blue-200/60 dark:border-blue-800/40">
+                              {/* Sub-table header */}
+                              <div className="flex items-center gap-2 px-5 py-2.5 bg-blue-50/80 dark:bg-blue-950/20 border-b border-blue-100 dark:border-blue-900/40">
+                                <History className="h-3.5 w-3.5 text-blue-500" />
+                                <span className="text-xs font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wider">
+                                  Transaction History
+                                </span>
+                                <span className="text-[10px] text-blue-500/70 ml-1">
+                                  ({group.transactions.length} {group.transactions.length === 1 ? "record" : "records"})
+                                </span>
+                              </div>
+
+                              {/* Sub-table (proper TABLE format) */}
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-left">
+                                  <thead>
+                                    <tr className="bg-slate-100/80 dark:bg-slate-800/40">
+                                      <th className="h-9 px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-left">Date</th>
+                                      <th className="h-9 px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-left">Movement Type</th>
+                                      <th className="h-9 px-2 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-center">Qty</th>
+                                      <th className="h-9 px-2 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-center">Weight (kg)</th>
+                                      <th className="h-9 px-2 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-center">Good Return</th>
+                                      <th className="h-9 px-2 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-center">Bad Return</th>
+                                      <th className="h-9 px-2 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-center">Unit</th>
+                                      <th className="h-9 px-2 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-left">Location</th>
+                                      <th className="h-9 px-2 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-left">Reference</th>
+                                      <th className="h-9 px-2 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-left">Extra Info</th>
+                                      <th className="h-9 px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-right"></th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {group.transactions.map((txn: any, txnIdx: number) => {
+                                      const movementType = getMovementType(txn)
+                                      const mt = movementType.toLowerCase()
+                                      const isIncoming = mt.includes("supplier") || mt.includes("production") || mt.includes("packing")
+                                      const isOutgoing = mt.includes("outgoing")
+                                      const isReturn = mt.includes("return")
+                                      const inPacks = txn.incoming_packs ?? txn.incoming_qty ?? 0
+                                      const inWeight = txn.incoming_weight ?? 0
+                                      const outPacks = txn.outgoing_packs ?? txn.outgoing_qty ?? 0
+                                      const outWeight = txn.outgoing_weight ?? 0
+
+                                      // Qty & Weight per type
+                                      const displayQty = isIncoming ? inPacks : isOutgoing ? outPacks : 0
+                                      const displayWeight = isIncoming ? inWeight : isOutgoing ? outWeight : (txn.outgoing_weight ?? 0)
+                                      const qtyPrefix = isIncoming ? "+" : isOutgoing ? "-" : ""
+                                      const qtyColor = isIncoming ? "text-green-600 dark:text-green-400" : isOutgoing ? "text-red-600 dark:text-red-400" : ""
+
+                                      // Extra Info per type (contextual)
+                                      const extraInfoParts: string[] = []
+                                      if (isIncoming) {
+                                        if (txn.supplier_name) extraInfoParts.push(`Supplier: ${txn.supplier_name}`)
+                                        if (formatDateFull(txn.production_date) !== "\u2014") extraInfoParts.push(`Prod: ${formatDateFull(txn.production_date)}`)
+                                        if (formatDateFull(txn.expiry_date) !== "\u2014") extraInfoParts.push(`Exp: ${formatDateFull(txn.expiry_date)}`)
+                                      }
+                                      if (isOutgoing) {
+                                        if (txn.to_location || txn.customer_name) extraInfoParts.push(`Customer: ${txn.to_location || txn.customer_name}`)
+                                        if (txn.from_location) extraInfoParts.push(`From: ${txn.from_location}`)
+                                      }
+                                      if (isReturn) {
+                                        if (txn.customer_name) extraInfoParts.push(`Customer: ${txn.customer_name}`)
+                                        if (txn.bad_return_details?.reason) extraInfoParts.push(`Reason: ${txn.bad_return_details.reason}`)
+                                      }
+
+                                      return (
+                                        <tr
+                                          key={txn.id}
+                                          className={[
+                                            "border-b border-slate-200/60 dark:border-slate-700/40 transition-colors duration-150 text-sm",
+                                            isReturn
+                                              ? "bg-teal-50/40 dark:bg-teal-950/10"
+                                              : isOutgoing
+                                                ? "bg-red-50/20 dark:bg-red-950/5"
+                                                : txnIdx % 2 === 0
+                                                  ? "bg-white/60 dark:bg-card/40"
+                                                  : "bg-slate-50/40 dark:bg-muted/10",
+                                            "hover:bg-blue-50/50 dark:hover:bg-blue-950/20",
+                                          ].join(" ")}
+                                        >
+                                          {/* Date */}
+                                          <td className="h-11 px-3 py-2 text-xs text-foreground/70 font-medium align-middle whitespace-nowrap">
+                                            {formatTxnDate(txn.transaction_date)}
+                                          </td>
+
+                                          {/* Movement Type */}
+                                          <td className="h-11 px-3 py-2 align-middle whitespace-nowrap">
+                                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border ${getMovementBadgeStyle(movementType)}`}>
+                                              {movementType}
+                                            </span>
+                                          </td>
+
+                                          {/* Qty – contextual per type */}
+                                          <td className="text-center h-11 px-2 py-2 font-medium text-xs align-middle">
+                                            {displayQty > 0 ? (
+                                              <span className={qtyColor}>
+                                                {qtyPrefix}{formatNumber(displayQty)}
+                                              </span>
+                                            ) : (
+                                              <span className="text-muted-foreground">{"\u2014"}</span>
+                                            )}
+                                          </td>
+
+                                          {/* Weight – contextual per type */}
+                                          <td className="text-center h-11 px-2 py-2 font-medium text-xs align-middle">
+                                            {displayWeight > 0 ? (
+                                              <span className={qtyColor}>
+                                                {formatWeight(displayWeight)}
+                                              </span>
+                                            ) : (
+                                              <span className="text-muted-foreground">{"\u2014"}</span>
+                                            )}
+                                          </td>
+
+                                          {/* Good Return */}
+                                          <td className="text-center h-11 px-2 py-2 font-medium text-xs align-middle">
+                                            {(txn.good_return ?? 0) > 0 ? (
+                                              <span className="text-green-600 dark:text-green-400">+{formatNumber(txn.good_return)}</span>
+                                            ) : (
+                                              <span className="text-muted-foreground">{"\u2014"}</span>
+                                            )}
+                                          </td>
+
+                                          {/* Bad Return */}
+                                          <td className="text-center h-11 px-2 py-2 font-medium text-xs align-middle">
+                                            {(txn.damage_return ?? 0) > 0 ? (
+                                              <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.stopPropagation()
+                                                  setBadReturnDetailsView({
+                                                    productName: txn.product_name || "Unknown Product",
+                                                    details: txn.bad_return_details || null,
+                                                    quantity: txn.damage_return ?? 0,
+                                                  })
+                                                }}
+                                                className="group/dr inline-flex items-center gap-1 cursor-pointer transition-colors"
+                                                title="Click to view bad return details"
+                                              >
+                                                <span className="text-red-600 dark:text-red-400 group-hover/dr:text-red-800 underline underline-offset-2 decoration-dotted">
+                                                  {formatNumber(txn.damage_return)}
+                                                </span>
+                                              </button>
+                                            ) : (
+                                              <span className="text-muted-foreground">{"\u2014"}</span>
+                                            )}
+                                          </td>
+
+                                          {/* Unit */}
+                                          <td className="text-center h-11 px-2 py-2 align-middle">
+                                            {(() => {
+                                              const ut = deriveUnitType(txn)
+                                              return ut === "PACK" ? (
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border bg-green-100 text-green-700 border-green-200 dark:bg-green-900/40 dark:text-green-400 dark:border-green-800">
+                                                  PACK
+                                                </span>
+                                              ) : (
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/40 dark:text-blue-400 dark:border-blue-800">
+                                                  BOX
+                                                </span>
+                                              )
+                                            })()}
+                                          </td>
+
+                                          {/* Location */}
+                                          <td className="h-11 px-2 py-2 text-xs align-middle whitespace-nowrap">
+                                            {txn.location ? (
+                                              <div className="truncate max-w-[90px] text-foreground" title={txn.location}>{txn.location}</div>
+                                            ) : (
+                                              <span className="text-muted-foreground">{"\u2014"}</span>
+                                            )}
+                                          </td>
+
+                                          {/* Reference */}
+                                          <td className="h-11 px-2 py-2 font-mono text-[11px] align-middle whitespace-nowrap">
+                                            {txn.reference_no ? (
+                                              <div className="truncate max-w-[120px] text-foreground" title={txn.reference_no}>{txn.reference_no}</div>
+                                            ) : (
+                                              <span className="text-muted-foreground">{"\u2014"}</span>
+                                            )}
+                                          </td>
+
+                                          {/* Extra Info – contextual per movement type */}
+                                          <td className="h-11 px-2 py-2 text-[11px] align-middle">
+                                            {extraInfoParts.length > 0 ? (
+                                              <div className="flex flex-wrap gap-x-3 gap-y-0.5 max-w-[280px]">
+                                                {extraInfoParts.map((info, i) => {
+                                                  const isReason = info.startsWith("Reason:")
+                                                  return (
+                                                    <span
+                                                      key={i}
+                                                      className={`truncate ${isReason ? "text-red-600 dark:text-red-400 font-medium" : "text-foreground/70"}`}
+                                                      title={info}
+                                                    >
+                                                      {info}
+                                                    </span>
+                                                  )
+                                                })}
+                                              </div>
+                                            ) : (
+                                              <span className="text-muted-foreground">{"\u2014"}</span>
+                                            )}
+                                          </td>
+
+                                          {/* Actions */}
+                                          <td className="h-11 px-3 py-2 align-middle whitespace-nowrap">
+                                            <div className="flex items-center gap-1 justify-end">
+                                              <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-7 px-2 gap-1 text-[11px] font-medium text-muted-foreground hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30"
+                                                onClick={(e) => { e.stopPropagation(); setEditingItem(txn as any) }}
+                                                title="Edit Transaction"
+                                              >
+                                                <Pencil className="h-3 w-3" />
+                                                Edit
+                                              </Button>
+                                              <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-7 px-2 gap-1 text-[11px] font-medium text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                                                onClick={(e) => { e.stopPropagation(); setCancellingItem(txn as any) }}
+                                                title="Delete Transaction"
+                                              >
+                                                <Trash2 className="h-3 w-3" />
+                                                Delete
+                                              </Button>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      )
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>
                   )
                 })}
               </tbody>
@@ -605,8 +825,8 @@ export function InventoryTable({
           />
         )}
 
-        {/* "Scroll for more" hint — auto-hides after first scroll */}
-        {showScrollHint && paginatedTransactions.length > 0 && (
+        {/* "Scroll for more" hint */}
+        {showScrollHint && paginatedGroups.length > 0 && (
           <div
             className={`absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 px-3 py-1 rounded-full bg-white/90 dark:bg-gray-800/90 border border-border/60 shadow-md text-xs text-muted-foreground backdrop-blur-sm z-20 transition-opacity ${!showScrollHint ? 'scroll-hint-hidden' : ''}`}
           >
@@ -616,189 +836,190 @@ export function InventoryTable({
         )}
 
         {/* ─── MOBILE / TABLET CARD VIEW ─────────────────────────────────── */}
-        <div className="lg:hidden space-y-4">
-          {paginatedTransactions.map((txn: any, index: number) => {
-            const movementType = getMovementType(txn)
-            const avgData = getAvgWeight(txn)
-            const inPacks = txn.incoming_packs ?? txn.incoming_qty ?? 0
-            const inWeight = txn.incoming_weight ?? 0
-            const outPacks = txn.outgoing_packs ?? txn.outgoing_qty ?? 0
-            const outWeight = txn.outgoing_weight ?? 0
+        <div className="lg:hidden space-y-3">
+          {paginatedGroups.map((group, index) => {
+            const isExpanded = expandedBarcodes.has(group.barcode)
 
             return (
               <div
-                key={txn.id}
-                id={`inventory-item-${txn.id}`}
+                key={group.barcode}
                 className={[
-                  "border rounded-xl p-4 transition-all duration-200",
-                  index % 2 === 0
-                    ? "border-border/50 bg-white dark:bg-card"
-                    : "border-border/50 bg-gray-50/70 dark:bg-muted/30",
-                  "hover:shadow-lg hover:border-blue-300 dark:hover:border-blue-700",
+                  "border rounded-xl overflow-hidden transition-all duration-200",
+                  isExpanded
+                    ? "border-blue-300 dark:border-blue-700 shadow-md"
+                    : "border-border/50 hover:border-blue-200 dark:hover:border-blue-800 hover:shadow-sm",
                 ].join(" ")}
               >
-                <div className="space-y-3">
-                  {/* Header: Date + Movement Type + Edit Button */}
-                  <div className="flex items-start justify-between">
+                {/* Summary Card (clickable) */}
+                <div
+                  className={[
+                    "p-4 cursor-pointer transition-colors",
+                    isExpanded
+                      ? "bg-blue-50/60 dark:bg-blue-950/20"
+                      : "bg-white dark:bg-card hover:bg-blue-50/30",
+                  ].join(" ")}
+                  onClick={() => toggleExpand(group.barcode)}
+                >
+                  <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs text-muted-foreground font-medium">{formatTxnDate(txn.transaction_date)}</p>
-                      <h3 className="font-semibold text-sm text-foreground line-clamp-2">{txn.product_name || "-"}</h3>
+                      <h3 className="font-semibold text-sm text-foreground line-clamp-1">{group.productName}</h3>
+                      <p className="text-xs text-muted-foreground font-mono mt-0.5">{group.barcode}</p>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-[10px] font-semibold border ${getMovementBadgeStyle(movementType)}`}>
-                        {movementType}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {group.movementOrigin ? (
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border ${getMovementBadgeStyle(group.movementOrigin)}`}>
+                          {group.movementOrigin}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground">{"\u2014"}</span>
+                      )}
+                      <div className={`w-6 h-6 rounded-md flex items-center justify-center transition-all ${
+                        isExpanded ? "bg-blue-500 text-white" : "bg-slate-100 text-slate-500"
+                      }`}>
+                        {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Quick stats */}
+                  <div className="grid grid-cols-4 gap-2 mt-3 pt-3 border-t border-border/40">
+                    <div className="text-center">
+                      <span className="text-[10px] text-muted-foreground block">In</span>
+                      <span className="text-xs font-semibold text-green-600">{group.totalIncoming > 0 ? formatNumber(group.totalIncoming) : "\u2014"}</span>
+                    </div>
+                    <div className="text-center">
+                      <span className="text-[10px] text-muted-foreground block">Out</span>
+                      <span className="text-xs font-semibold text-red-600">{group.totalOutgoing > 0 ? formatNumber(group.totalOutgoing) : "\u2014"}</span>
+                    </div>
+                    <div className="text-center">
+                      <span className="text-[10px] text-muted-foreground block">Return</span>
+                      <span className="text-xs font-semibold text-teal-600">{group.totalGoodReturn > 0 ? formatNumber(group.totalGoodReturn) : "\u2014"}</span>
+                    </div>
+                    <div className="text-center">
+                      <span className="text-[10px] text-muted-foreground block">Stock</span>
+                      <span className={`text-xs font-bold ${group.stockLeft <= 0 ? "text-red-600" : group.stockLeft <= 5 ? "text-orange-600" : "text-emerald-600"}`}>
+                        {formatNumber(group.stockLeft)}
                       </span>
                     </div>
                   </div>
-
-                  {/* Barcode + Location */}
-                  <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div>
-                      <span className="text-muted-foreground text-xs">Barcode:</span>
-                      <p className="font-mono text-xs">{txn.barcode || "-"}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground text-xs">Location:</span>
-                      <p className="text-xs">{txn.location || "Not Set"}</p>
-                    </div>
-                  </div>
-
-                  {/* Unit Type Badge */}
-                  <div className="flex items-center gap-2 pt-2 border-t border-border/40">
-                    <span className="text-xs text-muted-foreground">Unit Type:</span>
-                    {(() => {
-                      const ut = deriveUnitType(txn)
-                      return ut === "PACK" ? (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold border bg-green-100 text-green-700 border-green-200 dark:bg-green-900/40 dark:text-green-400 dark:border-green-800">
-                          PACK
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold border bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/40 dark:text-blue-400 dark:border-blue-800">
-                          BOX
-                        </span>
-                      )
-                    })()}
-                  </div>
-
-                  {/* Incoming / Outgoing */}
-                  <div className="grid grid-cols-2 gap-3 pt-2 border-t border-border/40">
-                    <div className="text-center">
-                      <span className="text-xs text-muted-foreground block">Incoming</span>
-                      {inPacks > 0 ? (
-                        <span className="text-green-600 dark:text-green-400 font-semibold">{formatNumber(inPacks)} <span className="text-[10px] font-normal opacity-70">{(txn.incoming_unit || "box") === "box" ? (inPacks === 1 ? "Box" : "Boxes") : (inPacks === 1 ? "Pack" : "Packs")}</span></span>
-                      ) : (
-                        <span className="text-muted-foreground">{"\u2014"}</span>
-                      )}
-                    </div>
-                    <div className="text-center">
-                      <span className="text-xs text-muted-foreground block">Incoming Weight</span>
-                      <span className="text-green-600 dark:text-green-400 font-semibold">{formatWeight(inWeight)} kg</span>
-                    </div>
-                    <div className="text-center">
-                      <span className="text-xs text-muted-foreground block">Outgoing</span>
-                      {outPacks > 0 ? (
-                        <span className="text-red-600 dark:text-red-400 font-semibold">{formatNumber(outPacks)} <span className="text-[10px] font-normal opacity-70">{(txn.outgoing_unit || "pack") === "box" ? (outPacks === 1 ? "Box" : "Boxes") : (outPacks === 1 ? "Pack" : "Packs")}</span></span>
-                      ) : (
-                        <span className="text-muted-foreground">{"\u2014"}</span>
-                      )}
-                    </div>
-                    <div className="text-center">
-                      <span className="text-xs text-muted-foreground block">Outgoing Weight</span>
-                      <span className="text-red-600 dark:text-red-400 font-semibold">{formatWeight(outWeight)} kg</span>
-                    </div>
-                  </div>
-
-                  {/* Returns */}
-                  <div className="grid grid-cols-2 gap-3 pt-2 border-t border-border/40">
-                    <div className="text-center">
-                      <span className="text-xs text-muted-foreground block">Good Return</span>
-                      <span className="text-green-600 dark:text-green-400 font-semibold">{formatNumber(txn.good_return)}</span>
-                    </div>
-                    <div className="text-center">
-                      <span className="text-xs text-muted-foreground block">Damage Return</span>
-                      <span className="text-orange-600 dark:text-orange-400 font-semibold">{formatNumber(txn.damage_return)}</span>
-                    </div>
-                  </div>
-
-                  {/* Avg Weight + Status */}
-                  <div className="pt-2 border-t border-border/40">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="text-xs text-muted-foreground">Avg Weight:</span>
-                        <span className="ml-1 text-sm font-semibold">
-                          {avgData.value > 0 ? `${avgData.value.toFixed(2)} kg/pack` : "-"}
-                        </span>
-                      </div>
-                      {avgData.value > 0 && (
-                        avgData.valid ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-700 border border-green-200">
-                            <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-                            Valid
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-100 text-red-700 border border-red-200">
-                            <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
-                            Invalid
-                          </span>
-                        )
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Reference + Dates */}
-                  <div className="grid grid-cols-2 gap-3 pt-2 border-t border-border/40 text-xs">
-                    <div>
-                      <span className="text-muted-foreground">Ref No:</span>
-                      <p className="font-mono">{txn.reference_no || "-"}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Production:</span>
-                      <p>{formatDateFull(txn.production_date)}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Process:</span>
-                      <p>{formatDateFull(txn.process_date)}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Expiry:</span>
-                      <p>{formatDateFull(txn.expiry_date)}</p>
-                    </div>
-                  </div>
-
-                  {/* Action Buttons */}
-                  <div className="flex items-center gap-2 pt-3 border-t border-border/40">
-                    {txn.barcode && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-8 px-2.5 gap-1.5 text-xs font-medium text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:text-emerald-300 dark:hover:bg-emerald-950/30"
-                        onClick={() => setBarcodeViewItem({ barcode: txn.barcode, productName: txn.product_name || "Unknown Product" })}
-                      >
-                        <Barcode className="h-3.5 w-3.5" />
-                        Barcode
-                      </Button>
-                    )}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 px-2.5 gap-1.5 text-xs font-medium text-muted-foreground hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30"
-                      onClick={() => setEditingItem(txn as any)}
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                      Edit
-                    </Button>
-                    <div className="flex-1" />
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 px-2.5 gap-1.5 text-xs font-medium text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
-                      onClick={() => setCancellingItem(txn as any)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      Delete
-                    </Button>
-                  </div>
                 </div>
+
+                {/* Expanded: Transaction history */}
+                {isExpanded && (
+                  <div className="border-t border-blue-200/60 bg-slate-50/60 dark:bg-slate-900/20">
+                    <div className="flex items-center gap-2 px-4 py-2 bg-blue-50/60 border-b border-blue-100/60">
+                      <History className="h-3 w-3 text-blue-500" />
+                      <span className="text-[10px] font-semibold text-blue-700 uppercase tracking-wider">
+                        History ({group.transactions.length})
+                      </span>
+                    </div>
+                    <div className="divide-y divide-border/40">
+                      {group.transactions.map((txn: any) => {
+                        const movementType = getMovementType(txn)
+                        const mt = movementType.toLowerCase()
+                        const isIncoming = mt.includes("supplier") || mt.includes("production") || mt.includes("packing")
+                        const isOutgoing = mt.includes("outgoing")
+                        const isReturn = mt.includes("return")
+                        const inPacks = txn.incoming_packs ?? txn.incoming_qty ?? 0
+                        const inWeight = txn.incoming_weight ?? 0
+                        const outPacks = txn.outgoing_packs ?? txn.outgoing_qty ?? 0
+                        const outWeight = txn.outgoing_weight ?? 0
+
+                        const borderColor = isIncoming ? "border-l-blue-500" : isOutgoing ? "border-l-red-500" : "border-l-teal-500"
+
+                        return (
+                          <div
+                            key={txn.id}
+                            className={`px-4 py-3 border-l-[3px] ${borderColor} ${
+                              isReturn ? "bg-teal-50/30" : isOutgoing ? "bg-red-50/15" : ""
+                            }`}
+                          >
+                            {/* Header: Date + Badge + Qty + Actions */}
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-[11px] text-muted-foreground font-medium">{formatTxnDate(txn.transaction_date)}</span>
+                                <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold border ${getMovementBadgeStyle(movementType)}`}>
+                                  {movementType}
+                                </span>
+                                {isIncoming && inPacks > 0 && (
+                                  <span className="text-xs font-semibold text-green-600">
+                                    +{formatNumber(inPacks)} {(txn.incoming_unit || "box") === "box" ? "Box" : "Pack"}
+                                    {inWeight > 0 && <span className="text-[10px] font-normal text-green-500/70 ml-0.5">({formatWeight(inWeight)} kg)</span>}
+                                  </span>
+                                )}
+                                {isOutgoing && outPacks > 0 && (
+                                  <span className="text-xs font-semibold text-red-600">
+                                    −{formatNumber(outPacks)} {(txn.outgoing_unit || "box") === "box" ? "Box" : "Pack"}
+                                    {outWeight > 0 && <span className="text-[10px] font-normal text-red-500/70 ml-0.5">({formatWeight(outWeight)} kg)</span>}
+                                  </span>
+                                )}
+                                {isReturn && (
+                                  <>
+                                    {(txn.good_return ?? 0) > 0 && (
+                                      <span className="text-xs font-semibold text-green-600">+{formatNumber(txn.good_return)} Good</span>
+                                    )}
+                                    {(txn.damage_return ?? 0) > 0 && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          setBadReturnDetailsView({
+                                            productName: txn.product_name || "Unknown",
+                                            details: txn.bad_return_details || null,
+                                            quantity: txn.damage_return ?? 0,
+                                          })
+                                        }}
+                                        className="text-xs font-semibold text-red-600 underline underline-offset-2 decoration-dotted"
+                                      >
+                                        +{formatNumber(txn.damage_return)} Damaged
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                              <div className="flex gap-1 shrink-0">
+                                <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); setEditingItem(txn as any) }}>
+                                  <Pencil className="h-3 w-3 text-muted-foreground" />
+                                </Button>
+                                <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); setCancellingItem(txn as any) }}>
+                                  <Trash2 className="h-3 w-3 text-muted-foreground" />
+                                </Button>
+                              </div>
+                            </div>
+                            {/* Contextual details */}
+                            <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1 text-[10px]">
+                              {isIncoming && (
+                                <>
+                                  {txn.location && <span className="text-muted-foreground">📍 {txn.location}</span>}
+                                  {txn.reference_no && <span className="text-muted-foreground font-mono">Ref: {txn.reference_no}</span>}
+                                  {txn.supplier_name && <span className="text-muted-foreground">Supplier: {txn.supplier_name}</span>}
+                                  {formatDateFull(txn.production_date) !== "\u2014" && <span className="text-muted-foreground">Prod: {formatDateFull(txn.production_date)}</span>}
+                                  {formatDateFull(txn.expiry_date) !== "\u2014" && <span className="text-muted-foreground">Exp: {formatDateFull(txn.expiry_date)}</span>}
+                                </>
+                              )}
+                              {isOutgoing && (
+                                <>
+                                  {(txn.to_location || txn.customer_name) && <span className="text-muted-foreground">Customer: {txn.to_location || txn.customer_name}</span>}
+                                  {txn.from_location && <span className="text-muted-foreground">From: {txn.from_location}</span>}
+                                  {txn.reference_no && <span className="text-muted-foreground font-mono">DR/SI: {txn.reference_no}</span>}
+                                  {txn.location && !txn.from_location && <span className="text-muted-foreground">📍 {txn.location}</span>}
+                                </>
+                              )}
+                              {isReturn && (
+                                <>
+                                  {txn.customer_name && <span className="text-muted-foreground">Customer: {txn.customer_name}</span>}
+                                  {txn.reference_no && <span className="text-muted-foreground font-mono">Ref: {txn.reference_no}</span>}
+                                  {txn.bad_return_details?.reason && <span className="text-red-500">Reason: {txn.bad_return_details.reason}</span>}
+                                  {txn.location && <span className="text-muted-foreground">📍 {txn.location}</span>}
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )
           })}
@@ -810,7 +1031,7 @@ export function InventoryTable({
             <div className="text-sm text-muted-foreground">
               Showing <span className="font-medium text-foreground">{((currentPage - 1) * itemsPerPage) + 1}</span> to{" "}
               <span className="font-medium text-foreground">{Math.min(currentPage * itemsPerPage, dataLength)}</span> of{" "}
-              <span className="font-medium text-foreground">{dataLength}</span> transactions
+              <span className="font-medium text-foreground">{dataLength}</span> products
             </div>
             <div className="flex items-center gap-2">
               <Button
@@ -902,6 +1123,50 @@ export function InventoryTable({
         barcode={barcodeViewItem?.barcode || ""}
         productName={barcodeViewItem?.productName || ""}
       />
+
+      {/* Bad Return Details Modal */}
+      <Dialog open={!!badReturnDetailsView} onOpenChange={(open) => { if (!open) setBadReturnDetailsView(null) }}>
+        <DialogContent className="max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <MessageSquareWarning className="h-5 w-5 text-red-500" />
+              Bad Return Details
+            </DialogTitle>
+          </DialogHeader>
+          {badReturnDetailsView && (
+            <div className="space-y-3 pt-1">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 grid gap-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Product</span>
+                  <span className="font-medium text-slate-800 text-right max-w-[200px] truncate">{badReturnDetailsView.productName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Quantity</span>
+                  <span className="font-bold text-red-600">{badReturnDetailsView.quantity}</span>
+                </div>
+              </div>
+              {badReturnDetailsView.details ? (
+                <div className="rounded-lg border border-red-200 bg-red-50/60 p-3 grid gap-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Reason</span>
+                    <span className="font-semibold text-red-700 text-right max-w-[200px]">{badReturnDetailsView.details.reason || "—"}</span>
+                  </div>
+                  {badReturnDetailsView.details.notes && (
+                    <div className="grid gap-1">
+                      <span className="text-slate-500 text-xs">Notes</span>
+                      <p className="text-slate-700 text-sm bg-white rounded-md border border-red-100 px-3 py-2">{badReturnDetailsView.details.notes}</p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-center text-sm text-slate-400">
+                  No reason recorded for this bad return.
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

@@ -23,10 +23,11 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Search, PackageOpen, AlertTriangle, CheckCircle2, RotateCcw, User, CalendarIcon, FileText, Lock, Loader2, ArrowRight, Package } from "lucide-react"
+import { Search, PackageOpen, AlertTriangle, CheckCircle2, RotateCcw, User, CalendarIcon, FileText, Lock, Loader2, ArrowRight, Package, MessageSquareWarning } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/hooks/use-auth"
 import { useToast } from "@/hooks/use-toast"
+import { Textarea } from "@/components/ui/textarea"
 import { InventoryService, TransactionService, StockMovementService } from "@/services/firebase-service"
 import type { InventoryItem } from "@/lib/types"
 import { CATEGORIES, getTypesForCategory } from "@/lib/product-data"
@@ -47,11 +48,24 @@ type Step = "select" | "form"
 const EMPTY_FORM = {
   goodReturn: "",
   badReturn: "",
+  badReturnReason: "",
+  badReturnOtherReason: "",
+  badReturnNotes: "",
   weightKg: "",
   returnDate: new Date(),
   customerName: "",
   returnReferenceNo: "",
 }
+
+const BAD_RETURN_REASONS = [
+  "Damaged Packaging",
+  "Spoiled / Expired",
+  "Wrong Item Delivered",
+  "Customer Complaint",
+  "Quality Issue",
+  "Temperature Issue",
+  "Others",
+]
 
 // ---
 // Helpers
@@ -189,6 +203,13 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
     }
     if (goodReturnNum < 0) newErrors.goodReturn = "Cannot be negative."
     if (badReturnNum < 0) newErrors.badReturn = "Cannot be negative."
+    // Bad return reason validation
+    if (badReturnNum > 0) {
+      if (!formData.badReturnReason) newErrors.badReturnReason = "Reason is required for bad returns."
+      if (formData.badReturnReason === "Others" && !formData.badReturnOtherReason.trim()) {
+        newErrors.badReturnOtherReason = "Please specify the reason."
+      }
+    }
     if (!formData.customerName.trim()) newErrors.customerName = "Customer name is required."
     if (!formData.returnReferenceNo.trim()) newErrors.returnReferenceNo = "Reference no. is required."
     if (!formData.returnDate) newErrors.returnDate = "Return date is required."
@@ -206,33 +227,48 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
       const prevGoodReturn = (selectedItem as any).goodReturnStock ?? 0
       const prevDamageReturn = (selectedItem as any).damageReturnStock ?? 0
 
+      // Build bad return details object
+      const badReturnDetails = badReturnNum > 0 ? {
+        reason: formData.badReturnReason === "Others"
+          ? formData.badReturnOtherReason.trim()
+          : formData.badReturnReason,
+        notes: formData.badReturnNotes.trim() || null,
+        quantity: badReturnNum,
+      } : null
+
       // 1. Update inventory item — accumulate returns
       await InventoryService.updateItem(selectedItem.id, {
         goodReturnStock: prevGoodReturn + goodReturnNum,
         damageReturnStock: prevDamageReturn + badReturnNum,
+        ...(badReturnDetails && { badReturnDetails }),
         updatedAt: new Date(),
       } as any)
 
-      // 2. Update transaction record (one row per barcode)
-      const existingTxn = await TransactionService.findByBarcode(selectedItem.barcode || "")
-      if (existingTxn) {
-        const txnPrevGood = existingTxn.good_return ?? 0
-        const txnPrevDamage = existingTxn.damage_return ?? 0
-        const prevInPacks = existingTxn.incoming_packs ?? existingTxn.incoming_qty ?? 0
-        const prevOutPacks = existingTxn.outgoing_packs ?? existingTxn.outgoing_qty ?? 0
-
-        const newGood = txnPrevGood + goodReturnNum
-        const newDamage = txnPrevDamage + badReturnNum
-        const updatedStockLeft = prevInPacks - prevOutPacks + newGood
-
-        await TransactionService.updateTransaction(existingTxn.id, {
-          good_return: newGood,
-          damage_return: newDamage,
-          stock_left: updatedStockLeft,
-          reference_no: formData.returnReferenceNo.trim() || existingTxn.reference_no || "",
-          source: "customer_return",
-        } as any)
-      }
+      // 2. APPEND-ONLY LEDGER: Always create a NEW transaction row for returns
+      await TransactionService.addTransaction({
+        transaction_date: new Date(),
+        product_name: getProductName(selectedItem),
+        barcode: selectedItem.barcode || "",
+        category: selectedItem.category,
+        type: (selectedItem as any).productType || (selectedItem as any).subcategory || "",
+        unit_type: unitLabel.toUpperCase(),
+        incoming_qty: 0,
+        incoming_packs: 0,
+        incoming_weight: 0,
+        outgoing_qty: 0,
+        outgoing_packs: 0,
+        outgoing_weight: 0,
+        good_return: goodReturnNum,
+        damage_return: badReturnNum,
+        stock_left: newStock,
+        location: (selectedItem as any).storageLocation || (selectedItem as any).location || "",
+        reference_no: formData.returnReferenceNo.trim(),
+        source: "customer_return",
+        ...(badReturnDetails && { bad_return_details: badReturnDetails }),
+        customer_name: formData.customerName.trim(),
+        return_date: formData.returnDate || null,
+        created_at: new Date(),
+      } as any)
 
       // 3. Log stock movement
       await StockMovementService.addMovement({
@@ -253,6 +289,7 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
           return_date: formData.returnDate || null,
           good_return: goodReturnNum,
           damage_return: badReturnNum,
+          ...(badReturnDetails && { bad_return_details: badReturnDetails }),
         },
         createdBy: user.uid,
         createdAt: new Date(),
@@ -478,6 +515,67 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
                     </div>
                   </div>
 
+                  {/* Bad Return Reason — conditional */}
+                  {badReturnNum > 0 && (
+                    <div className="rounded-lg border border-red-200 bg-red-50/50 p-3 grid gap-3">
+                      <div className="flex items-center gap-2">
+                        <MessageSquareWarning className="h-4 w-4 text-red-500" />
+                        <p className="text-xs font-semibold uppercase tracking-widest text-red-600">Bad Return Details</p>
+                      </div>
+                      <div className="grid gap-1.5">
+                        <Label className="text-xs font-medium text-slate-600">
+                          Reason for Bad Return <span className="text-red-500">*</span>
+                        </Label>
+                        <Select
+                          value={formData.badReturnReason}
+                          onValueChange={(v) => {
+                            setFormData((p) => ({ ...p, badReturnReason: v, badReturnOtherReason: v !== "Others" ? "" : p.badReturnOtherReason }))
+                            setErrors((p) => ({ ...p, badReturnReason: "", badReturnOtherReason: "" }))
+                          }}
+                        >
+                          <SelectTrigger className={cn("h-9 bg-white", errors.badReturnReason ? "border-destructive" : "")}>
+                            <SelectValue placeholder="Select reason..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {BAD_RETURN_REASONS.map((r) => (
+                              <SelectItem key={r} value={r}>{r}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {errors.badReturnReason && <p className="text-xs text-destructive flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> {errors.badReturnReason}</p>}
+                      </div>
+                      {formData.badReturnReason === "Others" && (
+                        <div className="grid gap-1.5">
+                          <Label className="text-xs font-medium text-slate-600">
+                            Specify Reason <span className="text-red-500">*</span>
+                          </Label>
+                          <Input
+                            value={formData.badReturnOtherReason}
+                            onChange={(e) => {
+                              setFormData((p) => ({ ...p, badReturnOtherReason: e.target.value }))
+                              setErrors((p) => ({ ...p, badReturnOtherReason: "" }))
+                            }}
+                            placeholder="e.g. Mold found inside packaging"
+                            className={cn("h-9 bg-white", errors.badReturnOtherReason ? "border-destructive" : "")}
+                          />
+                          {errors.badReturnOtherReason && <p className="text-xs text-destructive">{errors.badReturnOtherReason}</p>}
+                        </div>
+                      )}
+                      <div className="grid gap-1.5">
+                        <Label className="text-xs font-medium text-slate-600">
+                          Additional Notes <span className="text-slate-400">(optional)</span>
+                        </Label>
+                        <Textarea
+                          value={formData.badReturnNotes}
+                          onChange={(e) => setFormData((p) => ({ ...p, badReturnNotes: e.target.value }))}
+                          placeholder="e.g. Packaging was torn during delivery, 2 boxes severely dented"
+                          className="min-h-[60px] text-sm bg-white resize-none"
+                          rows={2}
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   {/* Unit (locked) */}
                   <div className="grid gap-1">
                     <Label className="text-xs font-medium text-slate-600 flex items-center gap-1">
@@ -613,6 +711,14 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
                       <>
                         <span className="text-red-500">Damaged (tracked)</span>
                         <span className="font-bold text-red-500 text-right">{badReturnNum}</span>
+                        {formData.badReturnReason && (
+                          <>
+                            <span className="text-red-400 text-[10px]">Reason</span>
+                            <span className="text-red-500 text-[10px] text-right font-medium">
+                              {formData.badReturnReason === "Others" ? formData.badReturnOtherReason.trim() : formData.badReturnReason}
+                            </span>
+                          </>
+                        )}
                       </>
                     )}
                   </div>
@@ -701,7 +807,13 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
               <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 grid gap-1 text-[13px]">
                 <div className="flex justify-between"><span className="text-slate-500">Product</span><span className="font-medium text-slate-800">{selectedItem ? getProductName(selectedItem) : ""}</span></div>
                 <div className="flex justify-between"><span className="text-slate-500">Good Return</span><span className="font-semibold text-green-600">+{goodReturnNum} {unitLabel}</span></div>
-                {badReturnNum > 0 && <div className="flex justify-between"><span className="text-slate-500">Bad Return</span><span className="font-semibold text-red-500">{badReturnNum} {unitLabel}</span></div>}
+                {badReturnNum > 0 && (
+                  <>
+                    <div className="flex justify-between"><span className="text-slate-500">Bad Return</span><span className="font-semibold text-red-500">{badReturnNum} {unitLabel}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">Reason</span><span className="font-medium text-red-600 text-right max-w-[160px] truncate">{formData.badReturnReason === "Others" ? formData.badReturnOtherReason.trim() : formData.badReturnReason}</span></div>
+                    {formData.badReturnNotes.trim() && <div className="flex justify-between"><span className="text-slate-500">Notes</span><span className="text-slate-700 text-right max-w-[160px] truncate">{formData.badReturnNotes.trim()}</span></div>}
+                  </>
+                )}
                 <div className="flex justify-between"><span className="text-slate-500">Customer</span><span className="font-medium text-slate-800">{formData.customerName.trim()}</span></div>
                 <div className="border-t border-slate-200 pt-1 mt-1 flex justify-between"><span className="text-slate-500">New Stock</span><span className="font-bold text-teal-600">{newStock}</span></div>
               </div>

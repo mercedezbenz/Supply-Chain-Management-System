@@ -615,8 +615,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
 
       await InventoryService.addItem(itemData)
 
-      // Also write/update a transaction record for the transaction-based table
-      // ONE ROW PER BARCODE — find existing, update if found, create if not
+      // APPEND-ONLY LEDGER: Always create a NEW transaction row for every incoming event
       const referenceNo =
         formData.stockSource === "From Supplier (Received)"
           ? [formData.deliveryReceiptNo.trim(), formData.supplierInvoiceNo.trim()].filter(Boolean).join(" / ")
@@ -628,63 +627,31 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
 
       const totalWeight = formData.weightKg ? parseFloat(formData.weightKg) : 0
 
-      const existingTxn = await TransactionService.findByBarcode(formData.barcode.trim())
-
-      if (existingTxn) {
-        // UPDATE existing row — accumulate incoming values
-        const prevInPacks = existingTxn.incoming_packs ?? existingTxn.incoming_qty ?? 0
-        const prevInWeight = (existingTxn as any).incoming_weight ?? 0
-        const prevGoodReturn = existingTxn.good_return ?? 0
-        const prevDamageReturn = existingTxn.damage_return ?? 0
-        const prevOutPacks = existingTxn.outgoing_packs ?? existingTxn.outgoing_qty ?? 0
-
-        const newInPacks = prevInPacks + incoming
-        const newInWeight = prevInWeight + totalWeight
-        const newStockLeft = newInPacks - prevOutPacks + prevGoodReturn
-
-        await TransactionService.updateTransaction(existingTxn.id, {
-          incoming_qty: newInPacks,
-          incoming_packs: newInPacks,
-          incoming_unit: formData.incomingUnit,
-          incoming_weight: newInWeight,
-          good_return: prevGoodReturn,
-          damage_return: prevDamageReturn,
-          unit_type: formData.incomingUnit.toUpperCase(),
-          stock_left: newStockLeft,
-          location: formData.storageLocation,
-          expiry_date: formData.expirationDate || existingTxn.expiry_date || null,
-          reference_no: referenceNo || existingTxn.reference_no || "",
-          source: movementSource || existingTxn.source || "",
-          production_date: formData.productionDate || (existingTxn as any).production_date || null,
-        } as any)
-      } else {
-        // CREATE new row
-        await TransactionService.addTransaction({
-          transaction_date: new Date(),
-          product_name: autoProductName || formData.category,
-          barcode: formData.barcode.trim(),
-          category: formData.category,
-          type: formData.productType,
-          unit_type: formData.incomingUnit.toUpperCase(),
-          incoming_qty: incoming,
-          incoming_packs: incoming,
-          incoming_unit: formData.incomingUnit,
-          incoming_weight: totalWeight,
-          outgoing_qty: 0,
-          outgoing_packs: 0,
-          outgoing_weight: 0,
-          good_return: 0,
-          damage_return: 0,
-          stock_left: stockLeft,
-          location: formData.storageLocation,
-          expiry_date: formData.expirationDate || null,
-          reference_no: referenceNo,
-          source: movementSource,
-          production_date: formData.productionDate || null,
-          process_date: null,
-          created_at: new Date(),
-        } as any)
-      }
+      await TransactionService.addTransaction({
+        transaction_date: new Date(),
+        product_name: autoProductName || formData.category,
+        barcode: formData.barcode.trim(),
+        category: formData.category,
+        type: formData.productType,
+        unit_type: formData.incomingUnit.toUpperCase(),
+        incoming_qty: incoming,
+        incoming_packs: incoming,
+        incoming_unit: formData.incomingUnit,
+        incoming_weight: totalWeight,
+        outgoing_qty: 0,
+        outgoing_packs: 0,
+        outgoing_weight: 0,
+        good_return: 0,
+        damage_return: 0,
+        stock_left: stockLeft,
+        location: formData.storageLocation,
+        expiry_date: formData.expirationDate || null,
+        reference_no: referenceNo,
+        source: movementSource,
+        production_date: formData.productionDate || null,
+        process_date: null,
+        created_at: new Date(),
+      } as any)
 
       toast({
         title: "✅ Item Successfully Added",
