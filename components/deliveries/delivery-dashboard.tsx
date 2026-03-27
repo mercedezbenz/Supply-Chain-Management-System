@@ -14,7 +14,7 @@ import { AssignDriverDialogTransaction } from "./assign-driver-dialog-transactio
 import { DocumentService, InventoryService, DeliveryLogService } from "@/services/firebase-service"
 import type { Document, CustomerTransaction, InventoryItem, DeliveryLog } from "@/lib/types"
 import { useAuth } from "@/hooks/use-auth"
-import { getFirebaseDb, getFirebaseAuth, auth } from "@/lib/firebase-live"
+import { getFirebaseDb } from "@/lib/firebase-live"
 import { collection, query, where, onSnapshot, DocumentData, Query } from "firebase/firestore"
 import { calculateWeeklyCountChange, formatWeeklyChange, parseFirestoreDate } from "@/lib/weekly-change-utils"
 import { formatDeliveryTime } from "@/lib/utils"
@@ -22,6 +22,16 @@ import { DeliveryDashboardSkeleton } from "@/components/skeletons/dashboard-skel
 
 export function DeliveryDashboard() {
   const { user, firebaseUser } = useAuth()
+  const currentEmail = firebaseUser?.email ?? null
+
+  const rawRole = user?.role ?? ""
+  const normalizedRole = rawRole.toString().toLowerCase()
+
+  const currentUserRole = normalizedRole
+  const isDriver = normalizedRole === "delivery"
+  const isAdmin = normalizedRole === "admin"
+  const isStaff = normalizedRole === "staff"
+  const isGuestUser = normalizedRole === "guest"
   const [documents, setDocuments] = useState<Document[]>([])
 
   // Three separate states for customer_transactions based on transactionType
@@ -39,29 +49,6 @@ export function DeliveryDashboard() {
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([])
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [loading, setLoading] = useState(true)
-
-  // Get current email and normalize the role for table-level filtering
-  let currentEmail = null
-
-  if (typeof window !== "undefined") {
-    try {
-      currentEmail = auth?.currentUser?.email ?? null
-    } catch {
-      currentEmail = null
-    }
-  }
-  const rawRole = user?.role ?? ""
-  const normalizedRole = rawRole.toString().toLowerCase()
-  const isDriver = normalizedRole === "delivery"
-
-  console.log("DELIVERIES TABLE FILTER DEBUG", { currentEmail, rawRole, normalizedRole, isDriver })
-
-  // Also keep the old role variables for the query logic
-  const currentUserRole = normalizedRole
-  const isAdmin = currentUserRole === "admin"
-  const isStaff = currentUserRole === "staff"
-
-  console.log("DELIVERIES ROLE DEBUG", { currentUserRoleRaw: rawRole, currentUserRole, isDriver, isAdmin, isStaff })
 
   const parseLogTimestamp = (value: any): number | null => {
     if (!value) return null
@@ -119,16 +106,8 @@ export function DeliveryDashboard() {
 
   // Load customer_transactions with query-level filter
   useEffect(() => {
-    if (typeof window === "undefined") return
-
-    const firebaseUser = getFirebaseAuth()?.currentUser ?? null
-    const currentEmail = firebaseUser?.email ?? null
-
-    const isGuestUser = normalizedRole === "guest"
-
-    console.log("DELIVERIES EMAIL DEBUG", { currentEmail, isGuestUser })
-
     if (!isGuestUser && (!currentEmail || !currentUserRole)) return
+
 
     const db = getFirebaseDb()
     const base = collection(db, "customer_transactions")
@@ -220,7 +199,7 @@ export function DeliveryDashboard() {
       unsubInProgress()
       unsubDelivered()
     }
-  }, [currentUserRole, isDriver, normalizedRole])
+  }, [currentUserRole, isDriver, normalizedRole, currentEmail, isGuestUser])
 
   // Load inventory items for category lookup
   useEffect(() => {
@@ -448,6 +427,15 @@ export function DeliveryDashboard() {
   const handleAssignDriver = (transaction: CustomerTransaction) => {
     setAssigningTransaction(transaction)
     setShowAssignDriverDialog(true)
+  }
+
+  // Safe guard: wait for auth data before rendering (unless guest)
+  if (!isGuestUser && (!currentEmail || !currentUserRole)) {
+    return (
+      <div style={{ color: "white", padding: "20px" }}>
+        Loading user data...
+      </div>
+    )
   }
 
   if (loading) {

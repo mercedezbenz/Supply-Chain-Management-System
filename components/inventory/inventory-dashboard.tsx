@@ -320,17 +320,10 @@ export function InventoryDashboard() {
           return bTime - aTime
         })
 
-        // DEDUP SAFETY NET: keep only one row per barcode (newest wins)
-        const seen = new Set<string>()
-        const deduped = normalized.filter((txn: any) => {
-          const bc = (txn.barcode || "").trim()
-          if (!bc) return true // keep rows without barcode
-          if (seen.has(bc)) return false
-          seen.add(bc)
-          return true
-        })
-
-        setTransactions(deduped as InventoryTransaction[])
+        // IMPORTANT: Pass ALL transactions to the table — do NOT dedup by barcode.
+        // The inventory-table groups transactions by barcode and needs ALL records
+        // (incoming, outgoing, return) to compute correct totals and Movement Origin.
+        setTransactions(normalized as InventoryTransaction[])
       },
       (error) => {
         console.error("[Inventory Dashboard] Error subscribing to transactions:", error)

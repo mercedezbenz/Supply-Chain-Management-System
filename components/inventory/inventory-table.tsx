@@ -118,6 +118,11 @@ interface GroupedProduct {
   location: string
   transactions: any[]
   latestBadReturnDetails: any
+  // Incoming context fields (from first incoming transaction)
+  dateAdded: any
+  expiryDate: any
+  productionDate: any
+  supplierName: string
 }
 
 export function InventoryTable({
@@ -179,6 +184,10 @@ export function InventoryTable({
           location: (txn as any).location || "",
           transactions: [],
           latestBadReturnDetails: null,
+          dateAdded: null,
+          expiryDate: null,
+          productionDate: null,
+          supplierName: "",
         })
       }
 
@@ -220,6 +229,12 @@ export function InventoryTable({
       })
       if (earliestIncoming) {
         group.movementOrigin = getMovementType(earliestIncoming)
+        // Extract context fields from the earliest incoming transaction
+        group.dateAdded = (earliestIncoming as any).transaction_date || (earliestIncoming as any).created_at || null
+        group.expiryDate = (earliestIncoming as any).expiry_date || null
+        group.productionDate = (earliestIncoming as any).production_date || null
+        group.supplierName = (earliestIncoming as any).supplier_name || ""
+        if (!group.location) group.location = (earliestIncoming as any).location || ""
       }
 
       // Now sort newest-first for display in the UI
@@ -352,18 +367,16 @@ export function InventoryTable({
     )
   }
 
-  // ─── Summary table columns ─────────────────────────────────────────────
+  // ─── Summary table columns (context-aware: incoming summary only) ────
   const SUMMARY_COLUMNS = [
     { key: "expand", label: "", align: "center" as const, width: "w-10" },
+    { key: "dateAdded", label: "Date Added", align: "left" as const },
     { key: "product", label: "Product Name", align: "left" as const },
     { key: "barcode", label: "Barcode", align: "left" as const },
     { key: "movementOrigin", label: "Movement Origin", align: "left" as const },
     { key: "totalIn", label: "Total In", align: "center" as const },
-    { key: "totalInWeight", label: "In Weight (kg)", align: "center" as const },
-    { key: "totalOut", label: "Total Out", align: "center" as const },
-    { key: "totalOutWeight", label: "Out Weight (kg)", align: "center" as const },
-    { key: "goodReturn", label: "Good Return", align: "center" as const },
-    { key: "damageReturn", label: "Damage Return", align: "center" as const },
+    { key: "totalInWeight", label: "Total Weight (kg)", align: "center" as const },
+    { key: "expiryDate", label: "Expiry Date", align: "left" as const },
     { key: "stockLeft", label: "Stock Left", align: "center" as const },
     { key: "location", label: "Location", align: "left" as const },
     { key: "actions", label: "Actions", align: "right" as const },
@@ -451,6 +464,11 @@ export function InventoryTable({
                           )}
                         </td>
 
+                        {/* Date Added */}
+                        <td className="h-14 px-3 py-3 text-sm text-foreground/70 align-middle whitespace-nowrap">
+                          {formatTxnDate(group.dateAdded)}
+                        </td>
+
                         {/* Product Name */}
                         <td className="h-14 px-3 py-3 font-medium text-sm text-foreground align-middle">
                           <div className="flex items-center gap-2">
@@ -477,7 +495,7 @@ export function InventoryTable({
                           </div>
                         </td>
 
-                        {/* Total Incoming */}
+                        {/* Total In */}
                         <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
                           {group.totalIncoming > 0 ? (
                             <span className="text-green-600 dark:text-green-400 font-semibold">{formatNumber(group.totalIncoming)}</span>
@@ -486,7 +504,7 @@ export function InventoryTable({
                           )}
                         </td>
 
-                        {/* Total Incoming Weight */}
+                        {/* Total Weight (incoming) */}
                         <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
                           {group.totalIncomingWeight > 0 ? (
                             <span className="text-green-600 dark:text-green-400">{formatWeight(group.totalIncomingWeight)}</span>
@@ -495,54 +513,10 @@ export function InventoryTable({
                           )}
                         </td>
 
-                        {/* Total Outgoing */}
-                        <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
-                          {group.totalOutgoing > 0 ? (
-                            <span className="text-red-600 dark:text-red-400 font-semibold">{formatNumber(group.totalOutgoing)}</span>
-                          ) : (
-                            <span className="text-muted-foreground">{"\u2014"}</span>
-                          )}
-                        </td>
-
-                        {/* Total Outgoing Weight */}
-                        <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
-                          {group.totalOutgoingWeight > 0 ? (
-                            <span className="text-red-600 dark:text-red-400">{formatWeight(group.totalOutgoingWeight)}</span>
-                          ) : (
-                            <span className="text-muted-foreground">{"\u2014"}</span>
-                          )}
-                        </td>
-
-                        {/* Good Return */}
-                        <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
-                          {group.totalGoodReturn > 0 ? (
-                            <span className="text-green-600 dark:text-green-400">{formatNumber(group.totalGoodReturn)}</span>
-                          ) : (
-                            <span className="text-muted-foreground">{"\u2014"}</span>
-                          )}
-                        </td>
-
-                        {/* Damage Return */}
-                        <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
-                          {group.totalDamageReturn > 0 ? (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setBadReturnDetailsView({
-                                  productName: group.productName,
-                                  details: group.latestBadReturnDetails,
-                                  quantity: group.totalDamageReturn,
-                                })
-                              }}
-                              className="group/dr inline-flex items-center gap-1 cursor-pointer transition-colors"
-                              title="Click to view bad return details"
-                            >
-                              <span className="text-red-600 dark:text-red-400 group-hover/dr:text-red-800 underline underline-offset-2 decoration-dotted font-semibold">
-                                {formatNumber(group.totalDamageReturn)}
-                              </span>
-                              <MessageSquareWarning className="h-3.5 w-3.5 text-red-400 opacity-0 group-hover/dr:opacity-100 transition-opacity" />
-                            </button>
+                        {/* Expiry Date */}
+                        <td className="h-14 px-3 py-3 text-sm align-middle whitespace-nowrap">
+                          {formatTxnDate(group.expiryDate) !== "\u2014" ? (
+                            <span className="text-foreground/70 text-xs">{formatTxnDate(group.expiryDate)}</span>
                           ) : (
                             <span className="text-muted-foreground">{"\u2014"}</span>
                           )}
@@ -605,119 +579,101 @@ export function InventoryTable({
                                 </span>
                               </div>
 
-                              {/* Sub-table (proper TABLE format) */}
+                              {/* Sub-table: type-specific columns per row */}
                               <div className="overflow-x-auto">
-                                <table className="w-full text-left">
-                                  <thead>
-                                    <tr className="bg-slate-100/80 dark:bg-slate-800/40">
-                                      <th className="h-9 px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-left">Date</th>
-                                      <th className="h-9 px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-left">Movement Type</th>
-                                      <th className="h-9 px-2 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-center">Qty</th>
-                                      <th className="h-9 px-2 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-center">Weight (kg)</th>
-                                      <th className="h-9 px-2 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-center">Good Return</th>
-                                      <th className="h-9 px-2 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-center">Bad Return</th>
-                                      <th className="h-9 px-2 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-center">Unit</th>
-                                      <th className="h-9 px-2 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-left">Location</th>
-                                      <th className="h-9 px-2 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-left">Reference</th>
-                                      <th className="h-9 px-2 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-left">Extra Info</th>
-                                      <th className="h-9 px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap text-right"></th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {historyTransactions.map((txn: any, txnIdx: number) => {
-                                      const movementType = getMovementType(txn)
-                                      const mt = movementType.toLowerCase()
-                                      const isIncoming = mt.includes("supplier") || mt.includes("production") || mt.includes("packing")
-                                      const isOutgoing = mt.includes("outgoing")
-                                      const isReturn = mt.includes("return")
-                                      const inPacks = txn.incoming_packs ?? txn.incoming_qty ?? 0
-                                      const inWeight = txn.incoming_weight ?? 0
-                                      const outPacks = txn.outgoing_packs ?? txn.outgoing_qty ?? 0
-                                      const outWeight = txn.outgoing_weight ?? 0
+                                {historyTransactions.map((txn: any, txnIdx: number) => {
+                                  const movementType = getMovementType(txn)
+                                  const mt = movementType.toLowerCase()
+                                  const isOutgoing = mt.includes("outgoing")
+                                  const isReturn = mt.includes("return")
+                                  const outPacks = txn.outgoing_packs ?? txn.outgoing_qty ?? 0
+                                  const outWeight = txn.outgoing_weight ?? 0
 
-                                      // Qty & Weight per type
-                                      const displayQty = isIncoming ? inPacks : isOutgoing ? outPacks : 0
-                                      const displayWeight = isIncoming ? inWeight : isOutgoing ? outWeight : (txn.outgoing_weight ?? 0)
-                                      const qtyPrefix = isIncoming ? "+" : isOutgoing ? "-" : ""
-                                      const qtyColor = isIncoming ? "text-green-600 dark:text-green-400" : isOutgoing ? "text-red-600 dark:text-red-400" : ""
+                                  return (
+                                    <div
+                                      key={txn.id}
+                                      className={[
+                                        "border-b border-slate-200/60 dark:border-slate-700/40",
+                                        isReturn
+                                          ? "bg-teal-50/40 dark:bg-teal-950/10"
+                                          : "bg-red-50/20 dark:bg-red-950/5",
+                                      ].join(" ")}
+                                    >
+                                      {/* Row header: date + type badge + actions */}
+                                      <div className="flex items-center justify-between px-5 py-2">
+                                        <div className="flex items-center gap-3">
+                                          <span className="text-xs text-foreground/70 font-medium">{formatTxnDate(txn.transaction_date)}</span>
+                                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border ${getMovementBadgeStyle(movementType)}`}>
+                                            {movementType}
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                          <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="h-7 px-2 gap-1 text-[11px] font-medium text-muted-foreground hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30"
+                                            onClick={(e) => { e.stopPropagation(); setEditingItem(txn as any) }}
+                                            title="Edit Transaction"
+                                          >
+                                            <Pencil className="h-3 w-3" />
+                                            Edit
+                                          </Button>
+                                          <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="h-7 px-2 gap-1 text-[11px] font-medium text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                                            onClick={(e) => { e.stopPropagation(); setCancellingItem(txn as any) }}
+                                            title="Delete Transaction"
+                                          >
+                                            <Trash2 className="h-3 w-3" />
+                                            Delete
+                                          </Button>
+                                        </div>
+                                      </div>
 
-                                      // Extra Info per type (contextual)
-                                      const extraInfoParts: string[] = []
-                                      if (isIncoming) {
-                                        if (txn.supplier_name) extraInfoParts.push(`Supplier: ${txn.supplier_name}`)
-                                        if (formatDateFull(txn.production_date) !== "\u2014") extraInfoParts.push(`Prod: ${formatDateFull(txn.production_date)}`)
-                                        if (formatDateFull(txn.expiry_date) !== "\u2014") extraInfoParts.push(`Exp: ${formatDateFull(txn.expiry_date)}`)
-                                      }
-                                      if (isOutgoing) {
-                                        if (txn.to_location || txn.customer_name) extraInfoParts.push(`Customer: ${txn.to_location || txn.customer_name}`)
-                                        if (txn.from_location) extraInfoParts.push(`From: ${txn.from_location}`)
-                                      }
-                                      if (isReturn) {
-                                        if (txn.customer_name) extraInfoParts.push(`Customer: ${txn.customer_name}`)
-                                        if (txn.bad_return_details?.reason) extraInfoParts.push(`Reason: ${txn.bad_return_details.reason}`)
-                                      }
-
-                                      return (
-                                        <tr
-                                          key={txn.id}
-                                          className={[
-                                            "border-b border-slate-200/60 dark:border-slate-700/40 transition-colors duration-150 text-sm",
-                                            isReturn
-                                              ? "bg-teal-50/40 dark:bg-teal-950/10"
-                                              : isOutgoing
-                                                ? "bg-red-50/20 dark:bg-red-950/5"
-                                                : txnIdx % 2 === 0
-                                                  ? "bg-white/60 dark:bg-card/40"
-                                                  : "bg-slate-50/40 dark:bg-muted/10",
-                                            "hover:bg-blue-50/50 dark:hover:bg-blue-950/20",
-                                          ].join(" ")}
-                                        >
-                                          {/* Date */}
-                                          <td className="h-11 px-3 py-2 text-xs text-foreground/70 font-medium align-middle whitespace-nowrap">
-                                            {formatTxnDate(txn.transaction_date)}
-                                          </td>
-
-                                          {/* Movement Type */}
-                                          <td className="h-11 px-3 py-2 align-middle whitespace-nowrap">
-                                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border ${getMovementBadgeStyle(movementType)}`}>
-                                              {movementType}
+                                      {/* Type-specific detail grid */}
+                                      {isOutgoing && (
+                                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-x-4 gap-y-2 px-5 pb-3 text-xs">
+                                          <div>
+                                            <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Quantity</span>
+                                            <span className="text-red-600 dark:text-red-400 font-semibold">-{formatNumber(outPacks)} {deriveUnitType(txn) === "PACK" ? "Packs" : "Boxes"}</span>
+                                          </div>
+                                          <div>
+                                            <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Weight</span>
+                                            <span className="text-foreground font-medium">{outWeight > 0 ? `${formatWeight(outWeight)} kg` : "\u2014"}</span>
+                                          </div>
+                                          <div>
+                                            <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Customer</span>
+                                            <span className="text-foreground truncate block max-w-[160px]" title={txn.to_location || txn.customer_name || ""}>
+                                              {txn.to_location || txn.customer_name || "\u2014"}
                                             </span>
-                                          </td>
+                                          </div>
+                                          {txn.reference_no && (
+                                            <div>
+                                              <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">DR / SI No.</span>
+                                              <span className="text-foreground font-mono truncate block max-w-[140px]" title={txn.reference_no}>{txn.reference_no}</span>
+                                            </div>
+                                          )}
+                                          {txn.location && (
+                                            <div>
+                                              <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">From Location</span>
+                                              <span className="text-foreground">{txn.from_location || txn.location}</span>
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
 
-                                          {/* Qty – contextual per type */}
-                                          <td className="text-center h-11 px-2 py-2 font-medium text-xs align-middle">
-                                            {displayQty > 0 ? (
-                                              <span className={qtyColor}>
-                                                {qtyPrefix}{formatNumber(displayQty)}
-                                              </span>
-                                            ) : (
-                                              <span className="text-muted-foreground">{"\u2014"}</span>
-                                            )}
-                                          </td>
-
-                                          {/* Weight – contextual per type */}
-                                          <td className="text-center h-11 px-2 py-2 font-medium text-xs align-middle">
-                                            {displayWeight > 0 ? (
-                                              <span className={qtyColor}>
-                                                {formatWeight(displayWeight)}
-                                              </span>
-                                            ) : (
-                                              <span className="text-muted-foreground">{"\u2014"}</span>
-                                            )}
-                                          </td>
-
-                                          {/* Good Return */}
-                                          <td className="text-center h-11 px-2 py-2 font-medium text-xs align-middle">
-                                            {(txn.good_return ?? 0) > 0 ? (
-                                              <span className="text-green-600 dark:text-green-400">+{formatNumber(txn.good_return)}</span>
-                                            ) : (
-                                              <span className="text-muted-foreground">{"\u2014"}</span>
-                                            )}
-                                          </td>
-
-                                          {/* Bad Return */}
-                                          <td className="text-center h-11 px-2 py-2 font-medium text-xs align-middle">
-                                            {(txn.damage_return ?? 0) > 0 ? (
+                                      {isReturn && (
+                                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-x-4 gap-y-2 px-5 pb-3 text-xs">
+                                          {(txn.good_return ?? 0) > 0 && (
+                                            <div>
+                                              <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Good Return</span>
+                                              <span className="text-green-600 dark:text-green-400 font-semibold">+{formatNumber(txn.good_return)}</span>
+                                            </div>
+                                          )}
+                                          {(txn.damage_return ?? 0) > 0 && (
+                                            <div>
+                                              <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Bad Return</span>
                                               <button
                                                 type="button"
                                                 onClick={(e) => {
@@ -728,104 +684,39 @@ export function InventoryTable({
                                                     quantity: txn.damage_return ?? 0,
                                                   })
                                                 }}
-                                                className="group/dr inline-flex items-center gap-1 cursor-pointer transition-colors"
-                                                title="Click to view bad return details"
+                                                className="text-red-600 dark:text-red-400 font-semibold underline underline-offset-2 decoration-dotted cursor-pointer"
                                               >
-                                                <span className="text-red-600 dark:text-red-400 group-hover/dr:text-red-800 underline underline-offset-2 decoration-dotted">
-                                                  {formatNumber(txn.damage_return)}
-                                                </span>
+                                                {formatNumber(txn.damage_return)}
                                               </button>
-                                            ) : (
-                                              <span className="text-muted-foreground">{"\u2014"}</span>
-                                            )}
-                                          </td>
-
-                                          {/* Unit */}
-                                          <td className="text-center h-11 px-2 py-2 align-middle">
-                                            {(() => {
-                                              const ut = deriveUnitType(txn)
-                                              return ut === "PACK" ? (
-                                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border bg-green-100 text-green-700 border-green-200 dark:bg-green-900/40 dark:text-green-400 dark:border-green-800">
-                                                  PACK
-                                                </span>
-                                              ) : (
-                                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/40 dark:text-blue-400 dark:border-blue-800">
-                                                  BOX
-                                                </span>
-                                              )
-                                            })()}
-                                          </td>
-
-                                          {/* Location */}
-                                          <td className="h-11 px-2 py-2 text-xs align-middle whitespace-nowrap">
-                                            {txn.location ? (
-                                              <div className="truncate max-w-[90px] text-foreground" title={txn.location}>{txn.location}</div>
-                                            ) : (
-                                              <span className="text-muted-foreground">{"\u2014"}</span>
-                                            )}
-                                          </td>
-
-                                          {/* Reference */}
-                                          <td className="h-11 px-2 py-2 font-mono text-[11px] align-middle whitespace-nowrap">
-                                            {txn.reference_no ? (
-                                              <div className="truncate max-w-[120px] text-foreground" title={txn.reference_no}>{txn.reference_no}</div>
-                                            ) : (
-                                              <span className="text-muted-foreground">{"\u2014"}</span>
-                                            )}
-                                          </td>
-
-                                          {/* Extra Info – contextual per movement type */}
-                                          <td className="h-11 px-2 py-2 text-[11px] align-middle">
-                                            {extraInfoParts.length > 0 ? (
-                                              <div className="flex flex-wrap gap-x-3 gap-y-0.5 max-w-[280px]">
-                                                {extraInfoParts.map((info, i) => {
-                                                  const isReason = info.startsWith("Reason:")
-                                                  return (
-                                                    <span
-                                                      key={i}
-                                                      className={`truncate ${isReason ? "text-red-600 dark:text-red-400 font-medium" : "text-foreground/70"}`}
-                                                      title={info}
-                                                    >
-                                                      {info}
-                                                    </span>
-                                                  )
-                                                })}
-                                              </div>
-                                            ) : (
-                                              <span className="text-muted-foreground">{"\u2014"}</span>
-                                            )}
-                                          </td>
-
-                                          {/* Actions */}
-                                          <td className="h-11 px-3 py-2 align-middle whitespace-nowrap">
-                                            <div className="flex items-center gap-1 justify-end">
-                                              <Button
-                                                size="sm"
-                                                variant="ghost"
-                                                className="h-7 px-2 gap-1 text-[11px] font-medium text-muted-foreground hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30"
-                                                onClick={(e) => { e.stopPropagation(); setEditingItem(txn as any) }}
-                                                title="Edit Transaction"
-                                              >
-                                                <Pencil className="h-3 w-3" />
-                                                Edit
-                                              </Button>
-                                              <Button
-                                                size="sm"
-                                                variant="ghost"
-                                                className="h-7 px-2 gap-1 text-[11px] font-medium text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
-                                                onClick={(e) => { e.stopPropagation(); setCancellingItem(txn as any) }}
-                                                title="Delete Transaction"
-                                              >
-                                                <Trash2 className="h-3 w-3" />
-                                                Delete
-                                              </Button>
                                             </div>
-                                          </td>
-                                        </tr>
-                                      )
-                                    })}
-                                  </tbody>
-                                </table>
+                                          )}
+                                          {txn.bad_return_details?.reason && (
+                                            <div>
+                                              <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Return Reason</span>
+                                              <span className="text-red-600 dark:text-red-400 font-medium">{txn.bad_return_details.reason}</span>
+                                            </div>
+                                          )}
+                                          <div>
+                                            <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Customer</span>
+                                            <span className="text-foreground">{txn.customer_name || "\u2014"}</span>
+                                          </div>
+                                          {txn.reference_no && (
+                                            <div>
+                                              <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Reference No.</span>
+                                              <span className="text-foreground font-mono">{txn.reference_no}</span>
+                                            </div>
+                                          )}
+                                          {txn.location && (
+                                            <div>
+                                              <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Location</span>
+                                              <span className="text-foreground">{txn.location}</span>
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )
+                                })}
                               </div>
                             </div>
                           </td>
@@ -915,21 +806,17 @@ export function InventoryTable({
                   </div>
 
                   {/* Quick stats */}
-                  <div className="grid grid-cols-4 gap-2 mt-3 pt-3 border-t border-border/40">
+                  <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-border/40">
                     <div className="text-center">
-                      <span className="text-[10px] text-muted-foreground block">In</span>
+                      <span className="text-[10px] text-muted-foreground block">Total In</span>
                       <span className="text-xs font-semibold text-green-600">{group.totalIncoming > 0 ? formatNumber(group.totalIncoming) : "\u2014"}</span>
                     </div>
                     <div className="text-center">
-                      <span className="text-[10px] text-muted-foreground block">Out</span>
-                      <span className="text-xs font-semibold text-red-600">{group.totalOutgoing > 0 ? formatNumber(group.totalOutgoing) : "\u2014"}</span>
+                      <span className="text-[10px] text-muted-foreground block">Weight</span>
+                      <span className="text-xs font-semibold text-foreground/70">{group.totalIncomingWeight > 0 ? `${formatWeight(group.totalIncomingWeight)} kg` : "\u2014"}</span>
                     </div>
                     <div className="text-center">
-                      <span className="text-[10px] text-muted-foreground block">Return</span>
-                      <span className="text-xs font-semibold text-teal-600">{group.totalGoodReturn > 0 ? formatNumber(group.totalGoodReturn) : "\u2014"}</span>
-                    </div>
-                    <div className="text-center">
-                      <span className="text-[10px] text-muted-foreground block">Stock</span>
+                      <span className="text-[10px] text-muted-foreground block">Stock Left</span>
                       <span className={`text-xs font-bold ${group.stockLeft <= 0 ? "text-red-600" : group.stockLeft <= 5 ? "text-orange-600" : "text-emerald-600"}`}>
                         {formatNumber(group.stockLeft)}
                       </span>
@@ -950,36 +837,27 @@ export function InventoryTable({
                       {historyTransactions.map((txn: any) => {
                         const movementType = getMovementType(txn)
                         const mt = movementType.toLowerCase()
-                        const isIncoming = mt.includes("supplier") || mt.includes("production") || mt.includes("packing")
                         const isOutgoing = mt.includes("outgoing")
                         const isReturn = mt.includes("return")
-                        const inPacks = txn.incoming_packs ?? txn.incoming_qty ?? 0
-                        const inWeight = txn.incoming_weight ?? 0
                         const outPacks = txn.outgoing_packs ?? txn.outgoing_qty ?? 0
                         const outWeight = txn.outgoing_weight ?? 0
 
-                        const borderColor = isIncoming ? "border-l-blue-500" : isOutgoing ? "border-l-red-500" : "border-l-teal-500"
+                        const borderColor = isOutgoing ? "border-l-red-500" : "border-l-teal-500"
 
                         return (
                           <div
                             key={txn.id}
                             className={`px-4 py-3 border-l-[3px] ${borderColor} ${
-                              isReturn ? "bg-teal-50/30" : isOutgoing ? "bg-red-50/15" : ""
+                              isReturn ? "bg-teal-50/30" : "bg-red-50/15"
                             }`}
                           >
-                            {/* Header: Date + Badge + Qty + Actions */}
+                            {/* Header: Date + Badge + Actions */}
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="text-[11px] text-muted-foreground font-medium">{formatTxnDate(txn.transaction_date)}</span>
                                 <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold border ${getMovementBadgeStyle(movementType)}`}>
                                   {movementType}
                                 </span>
-                                {isIncoming && inPacks > 0 && (
-                                  <span className="text-xs font-semibold text-green-600">
-                                    +{formatNumber(inPacks)} {(txn.incoming_unit || "box") === "box" ? "Box" : "Pack"}
-                                    {inWeight > 0 && <span className="text-[10px] font-normal text-green-500/70 ml-0.5">({formatWeight(inWeight)} kg)</span>}
-                                  </span>
-                                )}
                                 {isOutgoing && outPacks > 0 && (
                                   <span className="text-xs font-semibold text-red-600">
                                     −{formatNumber(outPacks)} {(txn.outgoing_unit || "box") === "box" ? "Box" : "Pack"}
@@ -1021,15 +899,6 @@ export function InventoryTable({
                             </div>
                             {/* Contextual details */}
                             <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1 text-[10px]">
-                              {isIncoming && (
-                                <>
-                                  {txn.location && <span className="text-muted-foreground">📍 {txn.location}</span>}
-                                  {txn.reference_no && <span className="text-muted-foreground font-mono">Ref: {txn.reference_no}</span>}
-                                  {txn.supplier_name && <span className="text-muted-foreground">Supplier: {txn.supplier_name}</span>}
-                                  {formatDateFull(txn.production_date) !== "\u2014" && <span className="text-muted-foreground">Prod: {formatDateFull(txn.production_date)}</span>}
-                                  {formatDateFull(txn.expiry_date) !== "\u2014" && <span className="text-muted-foreground">Exp: {formatDateFull(txn.expiry_date)}</span>}
-                                </>
-                              )}
                               {isOutgoing && (
                                 <>
                                   {(txn.to_location || txn.customer_name) && <span className="text-muted-foreground">Customer: {txn.to_location || txn.customer_name}</span>}
