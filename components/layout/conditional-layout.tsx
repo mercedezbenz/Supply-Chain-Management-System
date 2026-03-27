@@ -1,0 +1,27 @@
+"use client"
+
+import { usePathname } from "next/navigation"
+import { ThemeProvider } from "@/components/theme-provider"
+import { SidebarProvider } from "@/components/layout/sidebar-context"
+import { AuthProvider } from "@/hooks/use-auth"
+
+export function ConditionalLayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname()
+  const isLoginRoute = pathname === "/login" || pathname?.startsWith("/login") || pathname?.startsWith("/auth")
+
+  // For login/auth routes, return children ONLY - no wrappers at all
+  // The login/layout.tsx will provide AuthProvider separately
+  if (isLoginRoute) {
+    return <>{children}</>
+  }
+
+  // For all other routes, use full layout with theme and sidebar
+  return (
+    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+      <SidebarProvider>
+        <AuthProvider>{children}</AuthProvider>
+      </SidebarProvider>
+    </ThemeProvider>
+  )
+}
+

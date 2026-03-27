@@ -1,0 +1,115 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ✅ Helper: check if user is logged in
+    function isAuthed() {
+      return request.auth != null;
+    }
+
+    // ✅ Helper: fetch the current user's role from Firestore
+    function userRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    // ✅ Helper: allow STAFF or ADMIN (any capitalization)
+    function isStaffOrAdmin() {
+      return isAuthed() &&
+        (userRole() in ['STAFF', 'ADMIN', 'staff', 'admin', 'Staff', 'Admin']);
+    }
+
+    // ✅ If you want admin-only (for viewing all users)
+    function isAdmin() {
+      return isAuthed() &&
+        (userRole() in ['ADMIN', 'admin', 'Admin']);
+    }
+
+    // ---- USERS Collection ----
+    match /users/{userId} {
+      // Users can access their own document
+      allow read, write: if isAuthed() && request.auth.uid == userId;
+
+      // Admin (any casing) can read AND UPDATE all user profiles
+      allow read, update: if isAdmin();
+      
+      // Allow delete only for Admins
+      allow delete: if isAdmin();
+    }
+
+    // ---- INVENTORY ----
+    match /inventory/{itemId} {
+      allow read: if true;              // ⭐ Guest can view inventory
+      allow write: if isStaffOrAdmin();
+    }
+
+    // ---- CATEGORIES ----
+    match /categories/{categoryId} {
+      allow read: if true;              // ⭐ Guest can view categories
+      allow write: if isStaffOrAdmin();
+    }
+
+    // ---- CUSTOMER TRANSACTIONS ----
+    match /customer_transactions/{transactionId} {
+      allow read: if true;              // ⭐ Guest can view transactions
+      allow write: if isStaffOrAdmin() || isAuthed();
+    }
+
+    // ---- DELIVERIES ----
+    match /deliveries/{deliveryId} {
+      allow read: if true;              // ⭐ Guest can view deliveries
+      allow write: if isStaffOrAdmin();
+    }
+
+    // ⭐ DELIVERY LOGS (used by handlePickupScan / handleCompleteScan)
+    match /delivery_logs/{logId} {
+      allow read: if true;              // ⭐ Guest can view delivery logs
+      allow write: if isStaffOrAdmin() || isAuthed();
+    }
+
+    // ---- STOCK LOGS ----
+    match /stock_logs/{logId} {
+      allow read: if true;              // ⭐ Guest can view stock logs
+      allow write: if isStaffOrAdmin();
+    }
+
+    // ---- STOCK MOVEMENTS ----
+    match /stock_movements/{movementId} {
+      allow read: if true;              // ⭐ Guest can view stock movements
+      allow write: if isStaffOrAdmin();
+    }
+
+    // ---- TRANSACTIONS (inventory transaction log) ----
+    match /transactions/{transactionId} {
+      allow read: if true;              // ⭐ Guest can view transactions
+      allow write: if isStaffOrAdmin();
+    }
+
+    // ---- OTHER COLLECTIONS ----
+    match /locations/{locationId} {
+      allow read: if isAuthed();
+      allow write: if isStaffOrAdmin();
+    }
+
+    match /qc_reports/{reportId} {
+      allow read: if isAuthed();
+      allow write: if isStaffOrAdmin();
+    }
+
+    match /expiration_alerts/{alertId} {
+      allow read: if isAuthed();
+      allow write: if isStaffOrAdmin();
+    }
+
+    // ---- GENERATED BARCODES ----
+    match /generated_barcodes/{barcodeId} {
+      allow read: if isAuthed();
+      allow create: if isStaffOrAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    // Deny everything else by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

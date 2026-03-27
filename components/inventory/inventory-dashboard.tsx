@@ -1,0 +1,1015 @@
+"use client"
+
+import { useState, useEffect, useMemo, useRef, useCallback } from "react"
+import { useRouter } from "next/navigation"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Input } from "@/components/ui/input"
+import { Package, TrendingUp, TrendingDown, AlertTriangle, Search, X, Plus, ArrowDownUp, Clock, Truck, ScanLine, Tag, RotateCcw } from "lucide-react"
+import { TodaysMovementIcon, StockOverviewIcon, ReturnsSummaryIcon, FastMovingIcon } from "./inventory-icons"
+import { Button } from "@/components/ui/button"
+import { InventoryTable } from "./inventory-table"
+import { AddItemDialog } from "./add-item-dialog"
+import { OutgoingStockDialog } from "./outgoing-stock-dialog"
+import { ReturnItemDialog } from "./return-item-dialog"
+import { ScanItemDialog } from "./scan-item-dialog"
+import { InventoryService, CategoryService, TransactionService } from "@/services/firebase-service"
+import type { InventoryItem, InventoryTransaction, Category } from "@/lib/types"
+import { CATEGORIES, TYPES, getTypesForCategory } from "@/lib/product-data"
+import { calculateWeeklyChange, calculateWeeklyCountChange, formatWeeklyChange, parseFirestoreDate } from "@/lib/weekly-change-utils"
+import { useToast } from "@/hooks/use-toast"
+import { useAuth } from "@/hooks/use-auth"
+import { InventoryDashboardSkeleton } from "@/components/skeletons/dashboard-skeleton"
+import { ToastAction } from "@/components/ui/toast"
+
+// ——— Recently Added filter options ———————————————————————————————————————————
+
+const RECENTLY_ADDED_OPTIONS = [
+  { value: "all", label: "All Time" },
+  { value: "today", label: "Today" },
+  { value: "week", label: "This Week" },
+  { value: "month", label: "This Month" },
+]
+
+/** Returns the cutoff Date for a given recently-added filter value. */
+function getRecentlyCutoff(filter: string): Date | null {
+  const now = new Date()
+  switch (filter) {
+    case "today": {
+      const start = new Date(now)
+      start.setHours(0, 0, 0, 0)
+      return start
+    }
+    case "week": return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+    case "month": return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+    default: return null
+  }
+}
+
+// ——— Status helpers (kept for summary cards, not for filtering) ——————————————
+
+export type ItemStatus = "all" | "in-stock" | "low-stock" | "out-of-stock" | "expiring-soon" | "expired"
+
+/** Derives the computed status of an inventory item from stockLeft and expirationDate. */
+export function getItemStatus(item: any): Exclude<ItemStatus, "all"> {
+  const incoming = item.incoming ?? item.stockIncoming ?? item.incomingStock ?? 0
+  const outgoing = item.outgoing ?? item.stockOutgoing ?? item.outgoingStock ?? 0
+  const goodReturn = item.goodReturnStock ?? 0
+  const damageReturn = item.damageReturnStock ?? 0
+  const stockLeft = Math.max(0, incoming - outgoing + goodReturn - damageReturn)
+
+  // Check expiration first — these states take priority over stock level
+  const expiryDate = item.expiryDate ?? item.expirationDate ?? null
+  if (expiryDate) {
+    try {
+      const d = expiryDate instanceof Date ? expiryDate
+        : expiryDate?.toDate ? expiryDate.toDate()
+          : new Date(expiryDate)
+      if (!isNaN(d.getTime())) {
+        const today = new Date(); today.setHours(0, 0, 0, 0)
+        const expiry = new Date(d); expiry.setHours(0, 0, 0, 0)
+        if (expiry < today) return "expired"
+        const sevenDays = new Date(today); sevenDays.setDate(today.getDate() + 7)
+        if (expiry <= sevenDays) return "expiring-soon"
+      }
+    } catch { /* ignore */ }
+  }
+
+  if (stockLeft === 0) return "out-of-stock"
+  if (stockLeft <= 5) return "low-stock"
+  return "in-stock"
+}
+
+export function InventoryDashboard() {
+  const [items, setItems] = useState<InventoryItem[]>([])
+  const [transactions, setTransactions] = useState<InventoryTransaction[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
+  const { isGuest } = useAuth()
+
+  // ——— Filter state ————————————————————————————————————————————————————————
+  const [selectedCategory, setSelectedCategory] = useState<string>("all")
+  const [selectedType, setSelectedType] = useState<string>("all")
+  const [recentlyAddedFilter, setRecentlyAddedFilter] = useState<string>("all")
+  // Search: pendingSearch is what the user types, searchQuery is what's actually applied
+  const [pendingSearch, setPendingSearch] = useState<string>("")
+  const [searchQuery, setSearchQuery] = useState<string>("")
+
+  // Sort newest first toggle
+  const [sortNewestFirst, setSortNewestFirst] = useState(true)
+  const [loading, setLoading] = useState(true)
+  const [addItemDialogOpen, setAddItemDialogOpen] = useState(false)
+  const [outgoingDialogOpen, setOutgoingDialogOpen] = useState(false)
+  const [returnDialogOpen, setReturnDialogOpen] = useState(false)
+  const [scanDialogOpen, setScanDialogOpen] = useState(false)
+  // Scanned item passed from ScanItemDialog to outgoing/add-item dialogs
+  const [scannedItem, setScannedItem] = useState<InventoryItem | null>(null)
+  // Track newly added item IDs for animation & auto-scroll
+  const [newItemIds, setNewItemIds] = useState<Set<string>>(new Set())
+  const router = useRouter()
+  const { toast } = useToast()
+  const previousItemsRef = useRef<Set<string>>(new Set())
+  const scrollToItemIdRef = useRef<string | null>(null)
+  const animationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // When Category changes, reset Type
+  const handleCategoryChange = useCallback((value: string) => {
+    setSelectedCategory(value)
+    setSelectedType("all")
+  }, [])
+
+  // Apply search
+  const applySearch = useCallback(() => {
+    setSearchQuery(pendingSearch)
+  }, [pendingSearch])
+
+  // Handle Enter key in search
+  const handleSearchKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      applySearch()
+    }
+  }, [applySearch])
+
+  // Reset all filters
+  const resetAllFilters = useCallback(() => {
+    setSelectedCategory("all")
+    setSelectedType("all")
+    setRecentlyAddedFilter("all")
+    setPendingSearch("")
+    setSearchQuery("")
+  }, [])
+
+  // Check if any filter is active
+  const hasActiveFilters = selectedCategory !== "all" || selectedType !== "all" || recentlyAddedFilter !== "all" || searchQuery !== ""
+
+  // Available types based on selected category
+  const availableTypes = useMemo(() => {
+    if (selectedCategory === "all") {
+      // Show all base types when no category is selected
+      return [...TYPES] as string[]
+    }
+    return getTypesForCategory(selectedCategory)
+  }, [selectedCategory])
+
+  useEffect(() => {
+    console.log("[Inventory Dashboard] Subscribing to inventory items...")
+    console.log("[Inventory Dashboard] Using LIVE Firebase (not mock-firestore)")
+
+    // Subscribe to real-time inventory updates from Firebase
+    const unsubscribeItems = InventoryService.subscribeToItems(
+      (updatedItems) => {
+        console.log("[Inventory Dashboard] Received items from Firebase:", updatedItems.length)
+        console.log("[Inventory Dashboard] Sample item (first):", updatedItems[0])
+
+        if (updatedItems.length === 0) {
+          console.warn("[Inventory Dashboard] No items received! Check Firebase connection and permissions.")
+          setItems([])
+          setLoading(false)
+          return
+        }
+
+        // Normalize legacy field names so data from existing Firestore shows correctly
+        const normalized = updatedItems.map((it: any) => {
+          const incoming = it.incoming ?? it.stockIncoming ?? it.incomingStock ?? 0
+          const outgoing = it.outgoing ?? it.stockOutgoing ?? it.outgoingStock ?? 0
+          const stockBase =
+            it.stock ?? it.stockLeft ?? it.stockQuantity ?? it.stockTotal ?? it.ongoingStock ?? 0
+          const returned = it.returned ?? it.returnedStock ?? 0
+          const goodReturnStock = it.goodReturnStock ?? 0
+          const damageReturnStock = it.damageReturnStock ?? 0
+          // Extract expiryDate - prefer expiryDate over expirationDate, preserve original Firestore Timestamp object
+          const expiry = it.expiryDate ?? it.expirationDate ?? null
+          // Parse createdAt - handle both Date objects and Firestore Timestamps
+          const createdAt = it.createdAt
+            ? (it.createdAt instanceof Date ? it.createdAt : it.createdAt.toDate ? it.createdAt.toDate() : new Date(it.createdAt))
+            : new Date()
+
+          // Preserve all Firebase fields including name, stability, qualityStatus, etc.
+          return {
+            ...it, // Preserve ALL original fields from Firebase
+            incoming,
+            outgoing,
+            stock: stockBase,
+            ongoingStock: stockBase, // Keep ongoingStock for display
+            returned,
+            goodReturnStock,
+            damageReturnStock,
+            // Ensure expiryDate is always set (even if null) for consistent access
+            expirationDate: expiry,
+            expiryDate: expiry ?? it.expiryDate, // Prefer normalized value, fallback to original
+            name: it.name ?? it.itemName ?? "", // Support various name field names
+            stability: it.stability ?? "", // Include stability field
+            qualityStatus: it.qualityStatus ?? it.quality ?? "GOOD", // Include quality status
+            updatedAt: it.updatedAt ?? it.lastUpdated ?? it.createdAt ?? new Date(), // Last updated timestamp
+            createdAt, // Ensure createdAt is always a Date object
+          }
+        })
+
+        // Sort by createdAt descending (newest first) — always maintain base order
+        const sorted = normalized.sort((a: any, b: any) => {
+          const aTime = a.createdAt instanceof Date ? a.createdAt.getTime() : new Date(a.createdAt || 0).getTime()
+          const bTime = b.createdAt instanceof Date ? b.createdAt.getTime() : new Date(b.createdAt || 0).getTime()
+          return bTime - aTime // Descending order (newest first)
+        })
+
+        // Detect new items (items that weren't in previousItemsRef)
+        const currentItemIds = new Set(sorted.map((item: any) => item.id))
+        const newItems = sorted.filter((item: any) => !previousItemsRef.current.has(item.id))
+
+        // Initialize previousItemsRef on first load (to avoid showing toast for existing items)
+        const isFirstLoad = previousItemsRef.current.size === 0
+
+        // Mark new items for animation and trigger auto-scroll
+        if (newItems.length > 0 && !isFirstLoad) {
+          const ids = new Set(newItems.map((i: any) => i.id))
+
+          // Clear any previous animation timer
+          if (animationTimerRef.current) {
+            clearTimeout(animationTimerRef.current)
+          }
+
+          setNewItemIds(ids)
+          // Auto-scroll to the newest item
+          scrollToItemIdRef.current = newItems[0].id
+
+          // Clear animation highlight after 4.5 s
+          animationTimerRef.current = setTimeout(() => {
+            setNewItemIds(new Set())
+          }, 4500)
+
+          // Show toast notification for newly added items
+          const newestItem = newItems[0] // Already sorted by createdAt descending
+          const itemName = newestItem.name || newestItem.category || "New item"
+
+          toast({
+            title: "✅ Item successfully added",
+            description: `${itemName} has been added to inventory.`,
+            action: (
+              <ToastAction
+                altText="View Item"
+                onClick={() => {
+                  // Set scroll target
+                  scrollToItemIdRef.current = newestItem.id
+
+                  // Check if we're already on inventory page
+                  if (typeof window !== "undefined" && window.location.pathname === "/inventory") {
+                    // Already on inventory page, trigger scroll immediately
+                    setTimeout(() => {
+                      const rowElement = document.getElementById(`inventory-item-${newestItem.id}`)
+                      if (rowElement) {
+                        rowElement.scrollIntoView({ behavior: "smooth", block: "center" })
+                        scrollToItemIdRef.current = null
+                      }
+                    }, 300)
+                  } else {
+                    // Navigate to inventory page - scroll will happen via scrollToItemId prop
+                    router.push("/inventory")
+                  }
+                }}
+              >
+                View Item
+              </ToastAction>
+            ),
+          })
+        }
+
+        // Update previous items ref
+        previousItemsRef.current = currentItemIds
+
+        console.log("[Inventory Dashboard] Normalized items count:", sorted.length)
+        console.log("[Inventory Dashboard] Sample normalized item:", sorted[0])
+        setItems(sorted as InventoryItem[])
+        setLoading(false)
+      },
+      (error) => {
+        console.error("[Inventory Dashboard] Error subscribing to items:", error)
+        setLoading(false)
+        // Don't clear items on error, keep existing data
+      }
+    )
+
+    // Load categories (for filtering only)
+    const loadCategories = async () => {
+      try {
+        const categoriesData = await CategoryService.getCategories()
+        setCategories(categoriesData)
+      } catch (error) {
+        console.error("Error loading categories:", error)
+      }
+    }
+
+    loadCategories()
+
+    // Subscribe to transactions collection for the table
+    const unsubscribeTransactions = TransactionService.subscribeToTransactions(
+      (txns) => {
+        console.log("[Inventory Dashboard] Received transactions from Firebase:", txns.length)
+        // Normalize created_at to Date objects for sorting
+        const normalized = txns.map((t: any) => ({
+          ...t,
+          created_at: t.created_at instanceof Date ? t.created_at
+            : t.created_at?.toDate ? t.created_at.toDate()
+            : new Date(t.created_at || 0),
+          transaction_date: t.transaction_date instanceof Date ? t.transaction_date
+            : t.transaction_date?.toDate ? t.transaction_date.toDate()
+            : t.transaction_date ? new Date(t.transaction_date) : new Date(),
+        }))
+        // Sort by created_at descending (newest first)
+        normalized.sort((a: any, b: any) => {
+          const aTime = a.created_at instanceof Date ? a.created_at.getTime() : 0
+          const bTime = b.created_at instanceof Date ? b.created_at.getTime() : 0
+          return bTime - aTime
+        })
+
+        // DEDUP SAFETY NET: keep only one row per barcode (newest wins)
+        const seen = new Set<string>()
+        const deduped = normalized.filter((txn: any) => {
+          const bc = (txn.barcode || "").trim()
+          if (!bc) return true // keep rows without barcode
+          if (seen.has(bc)) return false
+          seen.add(bc)
+          return true
+        })
+
+        setTransactions(deduped as InventoryTransaction[])
+      },
+      (error) => {
+        console.error("[Inventory Dashboard] Error subscribing to transactions:", error)
+      }
+    )
+
+    return () => {
+      unsubscribeItems()
+      unsubscribeTransactions()
+      if (animationTimerRef.current) clearTimeout(animationTimerRef.current)
+    }
+  }, [])
+
+  // Filter items by category, type, search query, and recently added
+  const filteredItems = useMemo(() => {
+    const recentlyCutoff = getRecentlyCutoff(recentlyAddedFilter)
+
+    const filtered = items.filter((item) => {
+      // Category filter — match item.category against selected category
+      if (selectedCategory !== "all") {
+        const itemCategory = (item.category || "").trim()
+        if (itemCategory.toLowerCase() !== selectedCategory.toLowerCase()) return false
+      }
+
+      // Type filter — match item.productType against selected type
+      if (selectedType !== "all") {
+        const itemType = ((item as any).productType || "").trim()
+        if (itemType.toLowerCase() !== selectedType.toLowerCase()) return false
+      }
+
+      // Search filter - search by name, barcode
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase().trim()
+        const itemName = (item.name || "").toLowerCase()
+        const itemBarcode = (item.barcode || "").toLowerCase()
+        const itemProductName = ((item as any).productName || "").toLowerCase()
+        const itemId = (item.id || "").toLowerCase()
+
+        const matchesSearch =
+          itemName.includes(query) ||
+          itemBarcode.includes(query) ||
+          itemProductName.includes(query) ||
+          itemId.includes(query)
+
+        if (!matchesSearch) return false
+      }
+
+      // Recently Added filter
+      if (recentlyCutoff) {
+        let createdAt: Date
+        if (item.createdAt instanceof Date) {
+          createdAt = item.createdAt
+        } else if ((item.createdAt as any)?.toDate) {
+          createdAt = (item.createdAt as any).toDate()
+        } else {
+          createdAt = new Date(item.createdAt as any)
+        }
+        if (isNaN(createdAt.getTime())) return false
+        if (createdAt < recentlyCutoff) return false
+      }
+
+      return true
+    })
+
+    // Apply sort direction
+    if (!sortNewestFirst) {
+      return [...filtered].sort((a: any, b: any) => {
+        const aTime = a.createdAt instanceof Date ? a.createdAt.getTime() : new Date(a.createdAt || 0).getTime()
+        const bTime = b.createdAt instanceof Date ? b.createdAt.getTime() : new Date(b.createdAt || 0).getTime()
+        return aTime - bTime // Ascending (oldest first)
+      })
+    }
+
+    return filtered // Already sorted descending by subscribeToItems
+  }, [items, selectedCategory, selectedType, searchQuery, recentlyAddedFilter, sortNewestFirst])
+
+  // Filter transactions for the table display (one row per transaction)
+  const filteredTransactions = useMemo(() => {
+    const recentlyCutoff = getRecentlyCutoff(recentlyAddedFilter)
+
+    const filtered = transactions.filter((txn) => {
+      // Category filter
+      if (selectedCategory !== "all") {
+        if ((txn.category || "").trim().toLowerCase() !== selectedCategory.toLowerCase()) return false
+      }
+      // Type filter
+      if (selectedType !== "all") {
+        if ((txn.type || "").trim().toLowerCase() !== selectedType.toLowerCase()) return false
+      }
+      // Search filter
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim()
+        const matches =
+          (txn.product_name || "").toLowerCase().includes(q) ||
+          (txn.barcode || "").toLowerCase().includes(q) ||
+          (txn.reference_no || "").toLowerCase().includes(q)
+        if (!matches) return false
+      }
+      // Recently Added filter
+      if (recentlyCutoff) {
+        const createdAt = txn.created_at instanceof Date ? txn.created_at : new Date(txn.created_at || 0)
+        if (isNaN(createdAt.getTime()) || createdAt < recentlyCutoff) return false
+      }
+      return true
+    })
+
+    // Apply sort direction
+    if (!sortNewestFirst) {
+      return [...filtered].sort((a: any, b: any) => {
+        const aTime = a.created_at instanceof Date ? a.created_at.getTime() : 0
+        const bTime = b.created_at instanceof Date ? b.created_at.getTime() : 0
+        return aTime - bTime
+      })
+    }
+
+    return filtered // Already sorted descending
+  }, [transactions, selectedCategory, selectedType, searchQuery, recentlyAddedFilter, sortNewestFirst])
+
+  console.log("[Inventory Dashboard] Total items:", items.length, "Filtered items:", filteredItems.length, "Category:", selectedCategory, "Type:", selectedType, "Search:", searchQuery)
+
+  const totalItems = items.length
+  // Calculate total stock using correct formula: incomingStock - outgoingStock + goodReturnStock - damageReturnStock
+  const totalStock = items.reduce((sum, item) => {
+    const incomingStock = (item as any).incoming ?? 0
+    const outgoingStock = (item as any).outgoing ?? 0
+    const goodReturnStock = (item as any).goodReturnStock ?? 0
+    const damageReturnStock = (item as any).damageReturnStock ?? 0
+    const stockLeft = incomingStock - outgoingStock + goodReturnStock - damageReturnStock
+    return sum + Math.max(0, Number.isFinite(stockLeft) ? stockLeft : 0)
+  }, 0)
+
+  // Filter low stock items using correct formula
+  const lowStockItems = items.filter((item) => {
+    const incomingStock = (item as any).incoming ?? 0
+    const outgoingStock = (item as any).outgoing ?? 0
+    const goodReturnStock = (item as any).goodReturnStock ?? 0
+    const damageReturnStock = (item as any).damageReturnStock ?? 0
+    const stockLeft = incomingStock - outgoingStock + goodReturnStock - damageReturnStock
+    return stockLeft < 10
+  }).length
+
+  const nearExpiryItems = items.filter((item) => {
+    if (!item.expirationDate) return false
+    const expiryDate = new Date(item.expirationDate)
+    const today = new Date()
+    const daysUntilExpiry = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+    return daysUntilExpiry <= 7 && daysUntilExpiry >= 0
+  }).length
+
+  // Compute today's returns from transactions
+  const todayReturns = useMemo(() => {
+    const todayStart = new Date()
+    todayStart.setHours(0, 0, 0, 0)
+    let goodReturns = 0
+    let damagedReturns = 0
+    transactions.forEach((txn) => {
+      const txDate = txn.transaction_date instanceof Date
+        ? txn.transaction_date
+        : txn.transaction_date?.toDate ? txn.transaction_date.toDate()
+        : new Date(txn.transaction_date || 0)
+      if (isNaN(txDate.getTime()) || txDate < todayStart) return
+      goodReturns += (txn.good_return ?? 0)
+      damagedReturns += (txn.damage_return ?? 0)
+    })
+    return { good: goodReturns, damaged: damagedReturns, total: goodReturns + damagedReturns }
+  }, [transactions])
+
+  // Compute today's movement (incoming + outgoing totals for today)
+  const todayMovement = useMemo(() => {
+    const todayStart = new Date()
+    todayStart.setHours(0, 0, 0, 0)
+    let incoming = 0
+    let outgoing = 0
+    transactions.forEach((txn) => {
+      const txDate = txn.transaction_date instanceof Date
+        ? txn.transaction_date
+        : txn.transaction_date?.toDate ? txn.transaction_date.toDate()
+        : new Date(txn.transaction_date || 0)
+      if (isNaN(txDate.getTime()) || txDate < todayStart) return
+      incoming += (txn.incoming_qty ?? 0)
+      outgoing += (txn.outgoing_qty ?? 0)
+    })
+    return { incoming, outgoing, total: incoming + outgoing }
+  }, [transactions])
+
+  // Compute fast moving products (top 3 by outgoing quantity)
+  const fastMovingProducts = useMemo(() => {
+    const productMap = new Map<string, number>()
+    transactions.forEach((txn) => {
+      const qty = txn.outgoing_qty ?? 0
+      if (qty <= 0) return
+      const name = txn.product_name || "Unknown"
+      productMap.set(name, (productMap.get(name) || 0) + qty)
+    })
+    return Array.from(productMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([name, qty]) => ({ name, qty }))
+  }, [transactions])
+
+  // Calculate weekly changes using correct stock formula
+  const totalStockWeeklyChange = useMemo(() => {
+    return calculateWeeklyChange({
+      items,
+      getValue: (item) => {
+        const incomingStock = (item as any).incoming ?? 0
+        const outgoingStock = (item as any).outgoing ?? 0
+        const goodReturnStock = (item as any).goodReturnStock ?? 0
+        const damageReturnStock = (item as any).damageReturnStock ?? 0
+        return incomingStock - outgoingStock + goodReturnStock - damageReturnStock
+      },
+      getDate: (item) => parseFirestoreDate((item as any).updatedAt || (item as any).createdAt),
+    })
+  }, [items])
+
+  const lowStockWeeklyChange = useMemo(() => {
+    return calculateWeeklyCountChange({
+      items,
+      getDate: (item) => parseFirestoreDate((item as any).updatedAt || (item as any).createdAt),
+      currentWeekCount: lowStockItems,
+      filter: (item) => {
+        const incomingStock = (item as any).incoming ?? 0
+        const outgoingStock = (item as any).outgoing ?? 0
+        const goodReturnStock = (item as any).goodReturnStock ?? 0
+        const damageReturnStock = (item as any).damageReturnStock ?? 0
+        const stockLeft = incomingStock - outgoingStock + goodReturnStock - damageReturnStock
+        return stockLeft < 10
+      },
+    })
+  }, [items, lowStockItems])
+
+  // Build active filter tags
+  const activeFilterTags = useMemo(() => {
+    const tags: { key: string; label: string; onRemove: () => void }[] = []
+    if (selectedCategory !== "all") {
+      tags.push({ key: "category", label: selectedCategory, onRemove: () => { setSelectedCategory("all"); setSelectedType("all") } })
+    }
+    if (selectedType !== "all") {
+      tags.push({ key: "type", label: selectedType, onRemove: () => setSelectedType("all") })
+    }
+    if (recentlyAddedFilter !== "all") {
+      const label = RECENTLY_ADDED_OPTIONS.find(o => o.value === recentlyAddedFilter)?.label || recentlyAddedFilter
+      tags.push({ key: "recent", label, onRemove: () => setRecentlyAddedFilter("all") })
+    }
+    if (searchQuery) {
+      tags.push({ key: "search", label: `"${searchQuery}"`, onRemove: () => { setSearchQuery(""); setPendingSearch("") } })
+    }
+    return tags
+  }, [selectedCategory, selectedType, recentlyAddedFilter, searchQuery])
+
+  if (loading) {
+    return <InventoryDashboardSkeleton />
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 pb-8">
+      <div className="space-y-8">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-balance">Inventory Management</h1>
+            <p className="text-muted-foreground">Monitor stock levels and manage categories</p>
+          </div>
+          {!isGuest && (
+            <div className="flex items-center gap-2">
+              <Button onClick={() => setAddItemDialogOpen(true)} className="gap-2">
+                <Plus className="h-4 w-4" />
+                Add Item
+              </Button>
+              <Button
+                onClick={() => setScanDialogOpen(true)}
+                className="gap-2 bg-violet-600 hover:bg-violet-700 text-white"
+              >
+                <ScanLine className="h-4 w-4" />
+                Scan Item
+              </Button>
+              <Button
+                onClick={() => setOutgoingDialogOpen(true)}
+                className="gap-2 bg-orange-500 hover:bg-orange-600 text-white"
+              >
+                <Truck className="h-4 w-4" />
+                Outgoing Stock
+              </Button>
+              <Button
+                onClick={() => setReturnDialogOpen(true)}
+                className="gap-2 bg-teal-600 hover:bg-teal-700 text-white"
+              >
+                <RotateCcw className="h-4 w-4" />
+                Return Item
+              </Button>
+            </div>
+          )}
+        </div>
+
+        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
+          {/* 1. Today's Movement */}
+          <Card
+            className="shadow-md hover:shadow-lg transition-shadow cursor-pointer"
+            onClick={() => {
+              setRecentlyAddedFilter("today")
+              setPendingSearch("")
+              setSearchQuery("")
+              setSelectedCategory("all")
+              setSelectedType("all")
+            }}
+          >
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Today&apos;s Movement</CardTitle>
+              <TodaysMovementIcon />
+            </CardHeader>
+            <CardContent>
+              {todayMovement.total === 0 ? (
+                <>
+                  <div className="text-2xl font-bold text-muted-foreground/60">0</div>
+                  <p className="text-xs text-muted-foreground">No transactions today</p>
+                </>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold">{todayMovement.total}</div>
+                  <div className="flex items-center gap-3 mt-1">
+                    <span className="text-xs font-semibold text-green-600 dark:text-green-400">↑ {todayMovement.incoming} In</span>
+                    <div className="w-px h-4 bg-border" />
+                    <span className="text-xs font-semibold text-orange-600 dark:text-orange-400">↓ {todayMovement.outgoing} Out</span>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* 2. Stock Overview */}
+          <Card className="shadow-md hover:shadow-lg transition-shadow">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Stock Overview</CardTitle>
+              <StockOverviewIcon />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{totalStock.toLocaleString()}</div>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-xs text-muted-foreground">{totalItems} items</span>
+                <div className="w-px h-3 bg-border" />
+                {lowStockItems > 0 ? (
+                  <span className="text-xs font-semibold text-destructive">{lowStockItems} low stock</span>
+                ) : (
+                  <span className="text-xs text-green-600 dark:text-green-400">All stocked</span>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 3. Returns Summary */}
+          <Card
+            className="shadow-md hover:shadow-lg transition-shadow cursor-pointer"
+            onClick={() => {
+              setPendingSearch("")
+              setSearchQuery("")
+              setSelectedCategory("all")
+              setSelectedType("all")
+              setRecentlyAddedFilter("today")
+            }}
+          >
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Returns Today</CardTitle>
+              <ReturnsSummaryIcon />
+            </CardHeader>
+            <CardContent>
+              {todayReturns.total === 0 ? (
+                <>
+                  <div className="text-2xl font-bold text-muted-foreground/60">0</div>
+                  <p className="text-xs text-muted-foreground">No returns today</p>
+                </>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold">{todayReturns.total}</div>
+                  <div className="flex items-center gap-3 mt-1">
+                    <div className="flex flex-col">
+                      <span className="text-xs font-semibold text-green-600 dark:text-green-400">
+                        +{todayReturns.good} Good
+                      </span>
+                      <span className="text-[10px] text-muted-foreground leading-tight">Adds back to stock</span>
+                    </div>
+                    <div className="w-px h-6 bg-border" />
+                    <div className="flex flex-col">
+                      <span className="text-xs font-semibold text-orange-600 dark:text-orange-400">
+                        +{todayReturns.damaged} Damaged
+                      </span>
+                      <span className="text-[10px] text-muted-foreground leading-tight">Loss / damaged items</span>
+                    </div>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* 4. Fast Moving Products */}
+          <Card className="shadow-md hover:shadow-lg transition-shadow">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Fast Moving</CardTitle>
+              <FastMovingIcon />
+            </CardHeader>
+            <CardContent>
+              {fastMovingProducts.length === 0 ? (
+                <>
+                  <div className="text-2xl font-bold text-muted-foreground/60">—</div>
+                  <p className="text-xs text-muted-foreground">No outgoing data yet</p>
+                </>
+              ) : (
+                <div className="space-y-1.5">
+                  {fastMovingProducts.map((p, i) => (
+                    <div key={p.name} className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className={`text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center shrink-0 ${
+                          i === 0 ? "bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400"
+                            : i === 1 ? "bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-400"
+                            : "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400"
+                        }`}>{i + 1}</span>
+                        <span className="text-xs font-medium truncate">{p.name}</span>
+                      </div>
+                      <span className="text-xs font-semibold text-muted-foreground shrink-0">{p.qty}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Main Content - Inventory Section */}
+        <Card className="border-border/50 shadow-md bg-white dark:bg-card">
+          <CardHeader className="pb-6 px-6 pt-6">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+              <div>
+                <CardTitle className="text-xl font-semibold">Inventory Items</CardTitle>
+                <CardDescription className="mt-1.5">
+                  {filteredItems.length} of {totalItems} items
+                  {selectedCategory !== "all" && ` in ${selectedCategory}`}
+                  {selectedType !== "all" && ` • Type: ${selectedType}`}
+                  {recentlyAddedFilter !== "all" && ` • ${RECENTLY_ADDED_OPTIONS.find(o => o.value === recentlyAddedFilter)?.label}`}
+                  {!sortNewestFirst && ` • Sorted: Oldest First`}
+                  {searchQuery && ` • Searching: "${searchQuery}"`}
+                </CardDescription>
+              </div>
+            </div>
+
+            {/* —— Filters Bar —————————————————————————————————————————————— */}
+            <div className="flex flex-wrap items-end gap-3 pb-4 border-b border-border/40">
+
+              {/* Category */}
+              <div className="flex flex-col gap-1.5 min-w-[165px]">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                  <Package className="h-3 w-3 text-blue-500" /> Category
+                </label>
+                <Select value={selectedCategory} onValueChange={handleCategoryChange}>
+                  <SelectTrigger className={`h-10 w-full rounded-lg border text-sm transition-colors focus:ring-2 focus:ring-blue-500/20 ${selectedCategory !== "all"
+                    ? "bg-blue-50 border-blue-300 text-blue-800 dark:bg-blue-950/40 dark:border-blue-700 dark:text-blue-300"
+                    : "bg-white dark:bg-card border-gray-200 dark:border-border text-gray-700 dark:text-foreground hover:border-gray-300"
+                    }`}>
+                    <SelectValue placeholder="All Categories" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Categories ({totalItems})</SelectItem>
+                    {CATEGORIES.map((cat) => {
+                      const count = items.filter((item) => {
+                        const itemCat = (item.category || "").trim()
+                        return itemCat.toLowerCase() === cat.toLowerCase()
+                      }).length
+                      return (
+                        <SelectItem key={cat} value={cat}>
+                          {cat} ({count})
+                        </SelectItem>
+                      )
+                    })}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Type */}
+              <div className="flex flex-col gap-1.5 min-w-[145px]">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                  <Tag className="h-3 w-3 text-amber-500" /> Type
+                </label>
+                <Select value={selectedType} onValueChange={setSelectedType}>
+                  <SelectTrigger className={`h-10 w-full rounded-lg border text-sm transition-colors focus:ring-2 focus:ring-blue-500/20 ${selectedType !== "all"
+                    ? "bg-amber-50 border-amber-300 text-amber-800 dark:bg-amber-950/40 dark:border-amber-700 dark:text-amber-300"
+                    : "bg-white dark:bg-card border-gray-200 dark:border-border text-gray-700 dark:text-foreground hover:border-gray-300"
+                    }`}>
+                    <SelectValue placeholder="All Types" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Types</SelectItem>
+                    {availableTypes.map((type) => (
+                      <SelectItem key={type} value={type}>{type}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Recently Added */}
+              <div className="flex flex-col gap-1.5 min-w-[155px]">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                  <Clock className="h-3 w-3 text-emerald-500" /> Recently Added
+                </label>
+                <Select value={recentlyAddedFilter} onValueChange={setRecentlyAddedFilter}>
+                  <SelectTrigger className={`h-10 w-full rounded-lg border text-sm transition-colors focus:ring-2 focus:ring-blue-500/20 ${recentlyAddedFilter !== "all"
+                    ? "bg-emerald-50 border-emerald-300 text-emerald-800 dark:bg-emerald-950/40 dark:border-emerald-700 dark:text-emerald-300"
+                    : "bg-white dark:bg-card border-gray-200 dark:border-border text-gray-700 dark:text-foreground hover:border-gray-300"
+                    }`}>
+                    <SelectValue placeholder="All Time" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {RECENTLY_ADDED_OPTIONS.map(opt => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Search Input + Button */}
+              <div className="flex flex-col gap-1.5 flex-1 min-w-[250px]">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                  <Search className="h-3 w-3 text-violet-500" /> Search
+                </label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      type="text"
+                      placeholder="Search by product name or barcode..."
+                      value={pendingSearch}
+                      onChange={(e) => setPendingSearch(e.target.value)}
+                      onKeyDown={handleSearchKeyDown}
+                      className="pl-9 pr-9 h-10 hover:bg-accent transition-colors"
+                    />
+                    {pendingSearch && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7 p-0 hover:bg-destructive hover:text-destructive-foreground"
+                        onClick={() => { setPendingSearch(""); setSearchQuery("") }}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                  <Button
+                    onClick={applySearch}
+                    className="h-10 px-5 gap-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg font-medium shadow-sm"
+                  >
+                    <Search className="h-4 w-4" />
+                    Search
+                  </Button>
+                </div>
+              </div>
+
+              {/* —— Sort + Reset — pushed right ———————————————————————————— */}
+              <div className="flex items-end gap-2 ml-auto">
+                {/* Sort toggle */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Sort By</label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSortNewestFirst(v => !v)}
+                    className={`h-10 px-4 gap-1.5 rounded-lg border text-sm font-medium transition-colors ${sortNewestFirst
+                      ? "border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 dark:border-blue-700 dark:text-blue-300 dark:bg-blue-950/40 dark:hover:bg-blue-950/60"
+                      : "border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50 dark:border-border dark:text-muted-foreground dark:hover:bg-accent"
+                      }`}
+                  >
+                    <ArrowDownUp className="h-3.5 w-3.5" />
+                    {sortNewestFirst ? "Newest First" : "Oldest First"}
+                  </Button>
+                </div>
+
+                {/* Reset Filters — only visible when a filter is active */}
+                {hasActiveFilters && (
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-semibold text-transparent uppercase tracking-wide select-none">.</label>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={resetAllFilters}
+                      className="h-10 px-3 gap-1.5 rounded-lg text-sm text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 dark:hover:text-red-400 transition-colors"
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                      Reset
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* —— Active filter tags ————————————————————————————————————— */}
+            {activeFilterTags.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 pt-3">
+                <span className="text-xs text-muted-foreground font-medium">Active Filters:</span>
+                {activeFilterTags.map(tag => (
+                  <span
+                    key={tag.key}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800 transition-colors"
+                  >
+                    {tag.label}
+                    <button
+                      onClick={tag.onRemove}
+                      className="inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </CardHeader>
+          <CardContent className="px-6 pb-6 pt-0">
+            <InventoryTable
+              items={filteredItems}
+              transactions={filteredTransactions}
+              categories={categories}
+              loading={loading}
+              scrollToItemId={scrollToItemIdRef.current}
+              newItemIds={newItemIds}
+              onItemScrolled={() => {
+                scrollToItemIdRef.current = null
+              }}
+            />
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Add Item Dialog */}
+      <AddItemDialog
+        open={addItemDialogOpen}
+        onOpenChange={(open) => {
+          setAddItemDialogOpen(open)
+          if (!open) setScannedItem(null)
+        }}
+        scannedItem={scannedItem}
+      />
+
+      {/* Scan Item Dialog */}
+      <ScanItemDialog
+        open={scanDialogOpen}
+        onOpenChange={setScanDialogOpen}
+        inventoryItems={items}
+        onAddStock={(item) => {
+          setScannedItem(item || null)
+          setScanDialogOpen(false)
+          setAddItemDialogOpen(true)
+        }}
+        onProductOut={(item) => {
+          setScannedItem(item || null)
+          setScanDialogOpen(false)
+          setOutgoingDialogOpen(true)
+        }}
+        onRegisterNew={() => {
+          setScannedItem(null)
+          setScanDialogOpen(false)
+          setAddItemDialogOpen(true)
+        }}
+      />
+
+      {/* Outgoing Stock Dialog */}
+      <OutgoingStockDialog
+        open={outgoingDialogOpen}
+        onOpenChange={(open) => {
+          setOutgoingDialogOpen(open)
+          if (!open) setScannedItem(null)
+        }}
+        inventoryItems={items}
+        scannedItem={scannedItem}
+      />
+
+      {/* Return Item Dialog */}
+      <ReturnItemDialog
+        open={returnDialogOpen}
+        onOpenChange={(open) => {
+          setReturnDialogOpen(open)
+          if (!open) setScannedItem(null)
+        }}
+        inventoryItems={items}
+        scannedItem={scannedItem}
+      />
+    </div>
+  )
+}
