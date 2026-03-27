@@ -396,6 +396,12 @@ export function InventoryTable({
                 {paginatedGroups.map((group, groupIndex) => {
                   const isExpanded = expandedBarcodes.has(group.barcode)
 
+                  // Filter: only show outgoing + return in dropdown (not initial incoming)
+                  const historyTransactions = group.transactions.filter((txn: any) => {
+                    const mt = getMovementType(txn).toLowerCase()
+                    return mt.includes("outgoing") || mt.includes("return")
+                  })
+                  const hasHistory = historyTransactions.length > 0
                   return (
                     <>{/* Fragment for summary + expanded rows */}
                       {/* ═══ SUMMARY ROW ═══ */}
@@ -404,29 +410,34 @@ export function InventoryTable({
                         id={`inventory-item-${group.barcode}`}
                         ref={(el) => { if (el) itemRowRefs.current.set(group.barcode, el) }}
                         className={[
-                          "group border-b border-border/40 transition-all duration-200 cursor-pointer",
+                          "group border-b border-border/40 transition-all duration-200",
+                          hasHistory ? "cursor-pointer" : "",
                           isExpanded
                             ? "bg-blue-50/80 dark:bg-blue-950/30 shadow-sm"
                             : groupIndex % 2 === 0
                               ? "bg-white dark:bg-card"
                               : "bg-gray-50/50 dark:bg-muted/20",
-                          "hover:bg-blue-50/60 dark:hover:bg-blue-950/30",
+                          hasHistory ? "hover:bg-blue-50/60 dark:hover:bg-blue-950/30" : "",
                         ].join(" ")}
-                        onClick={() => toggleExpand(group.barcode)}
-                        title="Click to view transaction history"
+                        onClick={() => hasHistory && toggleExpand(group.barcode)}
+                        title={hasHistory ? "Click to view transaction history" : ""}      
                       >
                         {/* Expand Icon */}
                         <td className="h-14 px-2 py-2 align-middle text-center w-10">
-                          <div className={`inline-flex items-center justify-center w-6 h-6 rounded-md transition-all duration-200 ${
-                            isExpanded
-                              ? "bg-blue-500 text-white shadow-sm"
-                              : "bg-slate-100 text-slate-500 group-hover:bg-blue-100 group-hover:text-blue-600"
-                          }`}>
-                            {isExpanded
-                              ? <ChevronUp className="h-3.5 w-3.5" />
-                              : <ChevronDown className="h-3.5 w-3.5" />
-                            }
-                          </div>
+                          {hasHistory ? (
+                            <div className={`inline-flex items-center justify-center w-6 h-6 rounded-md transition-all duration-200 ${
+                              isExpanded
+                                ? "bg-blue-500 text-white shadow-sm"
+                                : "bg-slate-100 text-slate-500 group-hover:bg-blue-100 group-hover:text-blue-600"
+                            }`}>
+                              {isExpanded
+                                ? <ChevronUp className="h-3.5 w-3.5" />
+                                : <ChevronDown className="h-3.5 w-3.5" />
+                              }
+                            </div>
+                          ) : (
+                            <div className="w-6 h-6" />
+                          )}
                         </td>
 
                         {/* Product Name */}
@@ -568,7 +579,7 @@ export function InventoryTable({
                       </tr>
 
                       {/* ═══ EXPANDED TRANSACTION HISTORY (TABLE FORMAT) ═══ */}
-                      {isExpanded && (
+                      {isExpanded && hasHistory && (
                         <tr key={`${group.barcode}-expanded`}>
                           <td colSpan={SUMMARY_COLUMNS.length} className="p-0">
                             <div className="bg-slate-50/80 dark:bg-slate-900/30 border-y border-blue-200/60 dark:border-blue-800/40">
@@ -579,7 +590,7 @@ export function InventoryTable({
                                   Transaction History
                                 </span>
                                 <span className="text-[10px] text-blue-500/70 ml-1">
-                                  ({group.transactions.length} {group.transactions.length === 1 ? "record" : "records"})
+                                  ({historyTransactions.length} {historyTransactions.length === 1 ? "record" : "records"})
                                 </span>
                               </div>
 
@@ -602,7 +613,7 @@ export function InventoryTable({
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {group.transactions.map((txn: any, txnIdx: number) => {
+                                    {historyTransactions.map((txn: any, txnIdx: number) => {
                                       const movementType = getMovementType(txn)
                                       const mt = movementType.toLowerCase()
                                       const isIncoming = mt.includes("supplier") || mt.includes("production") || mt.includes("packing")
@@ -840,6 +851,13 @@ export function InventoryTable({
           {paginatedGroups.map((group, index) => {
             const isExpanded = expandedBarcodes.has(group.barcode)
 
+            // Filter: only show outgoing + return in dropdown (not initial incoming)
+            const historyTransactions = group.transactions.filter((txn: any) => {
+              const mt = getMovementType(txn).toLowerCase()
+              return mt.includes("outgoing") || mt.includes("return")
+            })
+            const hasHistory = historyTransactions.length > 0
+
             return (
               <div
                 key={group.barcode}
@@ -853,12 +871,14 @@ export function InventoryTable({
                 {/* Summary Card (clickable) */}
                 <div
                   className={[
-                    "p-4 cursor-pointer transition-colors",
+                    "p-4 transition-colors",
+                    hasHistory ? "cursor-pointer" : "",
                     isExpanded
                       ? "bg-blue-50/60 dark:bg-blue-950/20"
-                      : "bg-white dark:bg-card hover:bg-blue-50/30",
+                      : "bg-white dark:bg-card",
+                    hasHistory ? "hover:bg-blue-50/30" : "",
                   ].join(" ")}
-                  onClick={() => toggleExpand(group.barcode)}
+                  onClick={() => hasHistory && toggleExpand(group.barcode)}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
@@ -873,11 +893,13 @@ export function InventoryTable({
                       ) : (
                         <span className="text-[10px] text-muted-foreground">{"\u2014"}</span>
                       )}
-                      <div className={`w-6 h-6 rounded-md flex items-center justify-center transition-all ${
-                        isExpanded ? "bg-blue-500 text-white" : "bg-slate-100 text-slate-500"
-                      }`}>
-                        {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                      </div>
+                      {hasHistory ? (
+                        <div className={`w-6 h-6 rounded-md flex items-center justify-center transition-all ${
+                          isExpanded ? "bg-blue-500 text-white" : "bg-slate-100 text-slate-500"
+                        }`}>
+                          {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
 
@@ -905,16 +927,16 @@ export function InventoryTable({
                 </div>
 
                 {/* Expanded: Transaction history */}
-                {isExpanded && (
+                {isExpanded && hasHistory && (
                   <div className="border-t border-blue-200/60 bg-slate-50/60 dark:bg-slate-900/20">
                     <div className="flex items-center gap-2 px-4 py-2 bg-blue-50/60 border-b border-blue-100/60">
                       <History className="h-3 w-3 text-blue-500" />
                       <span className="text-[10px] font-semibold text-blue-700 uppercase tracking-wider">
-                        History ({group.transactions.length})
+                        History ({historyTransactions.length})
                       </span>
                     </div>
                     <div className="divide-y divide-border/40">
-                      {group.transactions.map((txn: any) => {
+                      {historyTransactions.map((txn: any) => {
                         const movementType = getMovementType(txn)
                         const mt = movementType.toLowerCase()
                         const isIncoming = mt.includes("supplier") || mt.includes("production") || mt.includes("packing")
