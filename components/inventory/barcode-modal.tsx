@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useEffect, useCallback } from "react"
+import { useRef, useEffect, useCallback, useState } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Printer, Download, CheckCircle2, X } from "lucide-react"
@@ -13,34 +13,37 @@ interface BarcodeModalProps {
 }
 
 export function BarcodeModal({ open, onOpenChange, barcode, productName }: BarcodeModalProps) {
-  const barcodeSvgRef = useRef<SVGSVGElement>(null)
+  const barcodeSvgRef = useRef<SVGSVGElement | null>(null)
+  const [svgMounted, setSvgMounted] = useState(false)
 
-  // Render barcode using JsBarcode when modal opens
+  // Callback ref: fires the instant the <svg> enters the DOM
+  const svgCallbackRef = useCallback((node: SVGSVGElement | null) => {
+    barcodeSvgRef.current = node
+    setSvgMounted(!!node)
+  }, [])
+
+  // Render barcode using JsBarcode when SVG is mounted and barcode value is available
   useEffect(() => {
-    if (!open || !barcode) return
-    // Small delay to allow Dialog content to mount and SVG ref to attach
-    const timer = setTimeout(() => {
-      if (!barcodeSvgRef.current) return
-      import("jsbarcode").then(({ default: JsBarcode }) => {
-        try {
-          JsBarcode(barcodeSvgRef.current!, barcode, {
-            format: "CODE128",
-            width: 2.5,
-            height: 100,
-            displayValue: true,
-            fontSize: 16,
-            fontOptions: "bold",
-            margin: 12,
-            background: "#ffffff",
-            lineColor: "#000000",
-          })
-        } catch (err) {
-          console.error("[BarcodeModal] JsBarcode render error:", err)
-        }
-      })
-    }, 100)
-    return () => clearTimeout(timer)
-  }, [open, barcode])
+    if (!svgMounted || !barcodeSvgRef.current || !barcode) return
+    import("jsbarcode").then((mod) => {
+      const JsBarcode = mod.default || mod
+      try {
+        JsBarcode(barcodeSvgRef.current!, barcode, {
+          format: "CODE128",
+          width: 2.5,
+          height: 100,
+          displayValue: true,
+          fontSize: 16,
+          fontOptions: "bold",
+          margin: 12,
+          background: "#ffffff",
+          lineColor: "#000000",
+        })
+      } catch (err) {
+        console.error("[BarcodeModal] JsBarcode render error:", err)
+      }
+    })
+  }, [svgMounted, barcode])
 
   // ── Print handler (hidden iframe — clean print layout) ─────────────────
   const handlePrint = useCallback(() => {
@@ -202,7 +205,7 @@ export function BarcodeModal({ open, onOpenChange, barcode, productName }: Barco
             <div className="rounded-xl border-2 border-dashed border-green-300 dark:border-green-700 bg-white dark:bg-gray-950 p-4 flex flex-col items-center justify-center">
               {/* Product name above barcode */}
               <p className="text-sm font-semibold text-foreground mb-2 text-center line-clamp-2">{productName}</p>
-              <svg ref={barcodeSvgRef} className="w-full max-w-[380px]" />
+              <svg ref={svgCallbackRef} className="w-full max-w-[380px]" />
             </div>
           </div>
 

@@ -396,9 +396,9 @@ export function OutgoingStockDialog({ open, onOpenChange, inventoryItems, scanne
       })
 
       // 3. APPEND-ONLY LEDGER: Always create a NEW transaction row for outgoing
-      const outWeight = formData.weightKg ? Number(formData.weightKg) : 0
+      const avgWeight = formData.weightKg ? Number(formData.weightKg) : 0
 
-      await TransactionService.addTransaction({
+      const transactionPayload = {
         transaction_date: new Date(),
         product_name: getProductName(selectedItem),
         barcode: selectedItem.barcode || "",
@@ -407,25 +407,37 @@ export function OutgoingStockDialog({ open, onOpenChange, inventoryItems, scanne
         unit_type: formData.unit.toUpperCase(),
         incoming_qty: 0,
         incoming_packs: 0,
-        incoming_weight: 0,
         outgoing_qty: quantityNum,
         outgoing_packs: quantityNum,
         outgoing_unit: formData.unit,
-        outgoing_weight: outWeight,
+        avg_weight: avgWeight,
         good_return: 0,
         damage_return: 0,
         stock_left: newStockLeft,
         location: (selectedItem as any).storageLocation || (selectedItem as any).location || "",
-        from_location: (selectedItem as any).storageLocation || (selectedItem as any).location || "",
         to_location: fullAddress || "",
         customer_name: fullName || "",
         customer_address: fullAddress || "",
+        delivery_address: fullAddress || "",
+        addressDetails: {
+          houseNumber: formData.houseNumber,
+          streetName: formData.streetName,
+          barangay: formData.barangay,
+          city: formData.city,
+          province: formData.province,
+          region: formData.region,
+          zipCode: formData.zipCode,
+        },
         expiry_date: (selectedItem as any).expiryDate || (selectedItem as any).expirationDate || null,
         reference_no: [formData.deliveryReceiptNo.trim(), formData.salesInvoiceNo.trim()].filter(Boolean).join(" / "),
         source: "delivery",
         process_date: formData.processingDate || null,
         created_at: new Date(),
-      } as any)
+      }
+
+      console.log("[OutgoingStock] Transaction payload:", transactionPayload)
+
+      await TransactionService.addTransaction(transactionPayload as any)
 
       setShowConfirm(false)
       toast({
@@ -487,7 +499,7 @@ export function OutgoingStockDialog({ open, onOpenChange, inventoryItems, scanne
       })
 
       // 3. APPEND-ONLY LEDGER: Always create a NEW transaction row for outgoing (production)
-      const prodOutWeight = formData.weightKg ? Number(formData.weightKg) : 0
+      const prodAvgWeight = formData.weightKg ? Number(formData.weightKg) : 0
 
       await TransactionService.addTransaction({
         transaction_date: new Date(),
@@ -498,11 +510,10 @@ export function OutgoingStockDialog({ open, onOpenChange, inventoryItems, scanne
         unit_type: formData.unit.toUpperCase(),
         incoming_qty: 0,
         incoming_packs: 0,
-        incoming_weight: 0,
         outgoing_qty: quantityNum,
         outgoing_packs: quantityNum,
         outgoing_unit: formData.unit,
-        outgoing_weight: prodOutWeight,
+        avg_weight: prodAvgWeight,
         good_return: 0,
         damage_return: 0,
         stock_left: newStockLeft,

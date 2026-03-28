@@ -329,11 +329,19 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
   }, [canGenerate, formData.barcode, isGenerating])
 
   // ── Barcode SVG ref for JsBarcode preview ────────────────────────────────
-  const barcodeSvgRef = useRef<SVGSVGElement>(null)
+  const barcodeSvgRef = useRef<SVGSVGElement | null>(null)
+  const [svgMounted, setSvgMounted] = useState(false)
+
+  // Callback ref: fires the instant the <svg> enters the DOM
+  const barcodeSvgCallbackRef = useCallback((node: SVGSVGElement | null) => {
+    barcodeSvgRef.current = node
+    setSvgMounted(!!node)
+  }, [])
 
   useEffect(() => {
-    if (!barcodeReady || !formData.barcode || !barcodeSvgRef.current) return
-    import("jsbarcode").then(({ default: JsBarcode }) => {
+    if (!svgMounted || !barcodeSvgRef.current || !formData.barcode) return
+    import("jsbarcode").then((mod) => {
+      const JsBarcode = mod.default || mod
       try {
         JsBarcode(barcodeSvgRef.current!, formData.barcode, {
           format: "CODE128",
@@ -350,7 +358,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         console.error("[JsBarcode] render error:", err)
       }
     })
-  }, [barcodeReady, formData.barcode])
+  }, [svgMounted, formData.barcode])
 
   // ── Generate Unique Barcode ─────────────────────────────────────────────
   const handleGenerateBarcode = async () => {
@@ -589,7 +597,8 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         productionDate: formData.productionDate || null,
         location: formData.storageLocation,
         storageLocation: formData.storageLocation,
-        incoming_weight: formData.weightKg ? parseFloat(formData.weightKg) : 0,
+        unit_type: formData.incomingUnit.toUpperCase(),
+        avg_weight: formData.weightKg ? parseFloat(formData.weightKg) : 0,
         avgWeightMin: formData.avgWeightMin ? parseFloat(formData.avgWeightMin) : null,
         avgWeightMax: formData.avgWeightMax ? parseFloat(formData.avgWeightMax) : null,
         qualityStatus: "GOOD" as const,
@@ -626,7 +635,9 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         : formData.stockSource === "From Production (Recovery)" ? "production"
         : formData.stockSource || ""
 
-      const totalWeight = formData.weightKg ? parseFloat(formData.weightKg) : 0
+      const avgWeight = formData.weightKg ? parseFloat(formData.weightKg) : 0
+
+      console.log("[AddItem] Payload avg_weight:", avgWeight)
 
       await TransactionService.addTransaction({
         transaction_date: new Date(),
@@ -638,10 +649,9 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         incoming_qty: incoming,
         incoming_packs: incoming,
         incoming_unit: formData.incomingUnit,
-        incoming_weight: totalWeight,
+        avg_weight: avgWeight,
         outgoing_qty: 0,
         outgoing_packs: 0,
-        outgoing_weight: 0,
         good_return: 0,
         damage_return: 0,
         stock_left: stockLeft,
@@ -806,7 +816,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                   </div>
                   <div className="grid gap-1.5">
                     <Label className="text-sm font-medium text-slate-700">
-                      Total Weight <span className="text-slate-400 font-normal">(kg)</span>
+                      Average Weight <span className="text-slate-400 font-normal">(kg)</span>
                     </Label>
                     <div className="flex gap-1.5 items-center">
                       <Input
@@ -1403,7 +1413,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                     )}
                   >
                     {barcodeReady ? (
-                      <svg ref={barcodeSvgRef} className="max-w-full" />
+                      <svg ref={barcodeSvgCallbackRef} className="max-w-full" />
                     ) : (
                       <div className="flex flex-col items-center gap-1.5 py-8 text-slate-400">
                         <Barcode className="h-10 w-10 opacity-30" />

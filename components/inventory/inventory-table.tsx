@@ -109,9 +109,8 @@ interface GroupedProduct {
   latestDate: any
   unitType: string
   totalIncoming: number
-  totalIncomingWeight: number
+  avgWeight: number
   totalOutgoing: number
-  totalOutgoingWeight: number
   totalGoodReturn: number
   totalDamageReturn: number
   stockLeft: number
@@ -175,9 +174,8 @@ export function InventoryTable({
           latestDate: (txn as any).transaction_date,
           unitType: deriveUnitType(txn),
           totalIncoming: 0,
-          totalIncomingWeight: 0,
+          avgWeight: 0,
           totalOutgoing: 0,
-          totalOutgoingWeight: 0,
           totalGoodReturn: 0,
           totalDamageReturn: 0,
           stockLeft: 0,
@@ -196,11 +194,15 @@ export function InventoryTable({
 
       // Accumulate totals
       group.totalIncoming += ((txn as any).incoming_packs ?? (txn as any).incoming_qty ?? 0)
-      group.totalIncomingWeight += ((txn as any).incoming_weight ?? 0)
       group.totalOutgoing += ((txn as any).outgoing_packs ?? (txn as any).outgoing_qty ?? 0)
-      group.totalOutgoingWeight += ((txn as any).outgoing_weight ?? 0)
       group.totalGoodReturn += ((txn as any).good_return ?? 0)
       group.totalDamageReturn += ((txn as any).damage_return ?? 0)
+
+      // Capture avg_weight — use the latest non-zero value found
+      const txnAvgWeight = (txn as any).avg_weight ?? (txn as any).incoming_weight ?? 0
+      if (txnAvgWeight > 0) {
+        group.avgWeight = txnAvgWeight
+      }
 
       // Track latest transaction date
       const txnDateMs = parseDateToMs((txn as any).transaction_date)
@@ -375,7 +377,8 @@ export function InventoryTable({
     { key: "barcode", label: "Barcode", align: "left" as const },
     { key: "movementOrigin", label: "Movement Origin", align: "left" as const },
     { key: "totalIn", label: "Total In", align: "center" as const },
-    { key: "totalInWeight", label: "Total Weight (kg)", align: "center" as const },
+    { key: "unit", label: "Unit", align: "center" as const },
+    { key: "avgWeight", label: "Average Weight (kg)", align: "center" as const },
     { key: "expiryDate", label: "Expiry Date", align: "left" as const },
     { key: "stockLeft", label: "Stock Left", align: "center" as const },
     { key: "location", label: "Location", align: "left" as const },
@@ -504,10 +507,15 @@ export function InventoryTable({
                           )}
                         </td>
 
-                        {/* Total Weight (incoming) */}
+                        {/* Unit (Box / Pack) */}
+                        <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle whitespace-nowrap">
+                          <span className="text-foreground/70 text-xs">{group.unitType === "PACK" ? "Packs" : "Boxes"}</span>
+                        </td>
+
+                        {/* Average Weight */}
                         <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
-                          {group.totalIncomingWeight > 0 ? (
-                            <span className="text-green-600 dark:text-green-400">{formatWeight(group.totalIncomingWeight)}</span>
+                          {group.avgWeight > 0 ? (
+                            <span className="text-green-600 dark:text-green-400">{formatWeight(group.avgWeight)} kg</span>
                           ) : (
                             <span className="text-muted-foreground">{"\u2014"}</span>
                           )}
@@ -587,7 +595,14 @@ export function InventoryTable({
                                   const isOutgoing = mt.includes("outgoing")
                                   const isReturn = mt.includes("return")
                                   const outPacks = txn.outgoing_packs ?? txn.outgoing_qty ?? 0
-                                  const outWeight = txn.outgoing_weight ?? 0
+                                  const txnAvgWeight = txn.avg_weight ?? txn.outgoing_weight ?? txn.incoming_weight ?? 0
+
+                                  // Construct delivery address from addressDetails if customer_address is missing
+                                  const deliveryAddr = txn.customer_address || txn.delivery_address || (() => {
+                                    const ad = txn.addressDetails
+                                    if (!ad) return ""
+                                    return [ad.houseNumber, ad.streetName, ad.barangay ? `Brgy. ${ad.barangay}` : "", ad.city, ad.province, ad.region].filter(Boolean).join(", ")
+                                  })() || ""
 
                                   return (
                                     <div
@@ -639,31 +654,33 @@ export function InventoryTable({
                                             <span className="text-red-600 dark:text-red-400 font-semibold">-{formatNumber(outPacks)} {deriveUnitType(txn) === "PACK" ? "Packs" : "Boxes"}</span>
                                           </div>
                                           <div>
-                                            <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Total Weight</span>
-                                            <span className="text-foreground font-medium">{outWeight > 0 ? `${formatWeight(outWeight)} kg` : "\u2014"}</span>
+                                            <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Average Weight</span>
+                                            <span className="text-foreground font-medium">{txnAvgWeight > 0 ? `${formatWeight(txnAvgWeight)} kg` : "\u2014"}</span>
                                           </div>
                                           <div>
                                             <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Customer</span>
-                                            <span className="text-foreground truncate block max-w-[160px]" title={txn.customer_name || ""}>
-                                              {txn.customer_name || "\u2014"}
+                                            <span className="text-foreground truncate block max-w-[160px]" title={txn.customer_name || txn.to_location || ""}>
+                                              {txn.customer_name || txn.to_location || "\u2014"}
                                             </span>
                                           </div>
                                           <div>
                                             <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Delivery Address</span>
-                                            <span className="text-foreground truncate block max-w-[200px]" title={txn.customer_address || txn.to_location || ""}>
-                                              {txn.customer_address || txn.to_location || "No address provided"}
+                                            <span className="text-foreground truncate block max-w-[200px]" title={deliveryAddr || ""}>
+                                              {deliveryAddr || "No address provided"}
                                             </span>
                                           </div>
-                                          {txn.reference_no && (
+                                          <div>
+                                            <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">DR / SI No.</span>
+                                            <span className="text-foreground font-mono truncate block max-w-[180px]" title={txn.reference_no || `${txn.deliveryReceiptNo || ""} / ${txn.salesInvoiceNo || ""}`}>
+                                              {txn.deliveryReceiptNo && txn.salesInvoiceNo
+                                                ? `${txn.deliveryReceiptNo} / ${txn.salesInvoiceNo}`
+                                                : txn.reference_no || "\u2014"}
+                                            </span>
+                                          </div>
+                                          {txn.transferSlipNo && (
                                             <div>
-                                              <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">DR / SI No.</span>
-                                              <span className="text-foreground font-mono truncate block max-w-[140px]" title={txn.reference_no}>{txn.reference_no}</span>
-                                            </div>
-                                          )}
-                                          {(txn.from_location || txn.location) && (
-                                            <div>
-                                              <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">From Location</span>
-                                              <span className="text-foreground">{txn.from_location || txn.location}</span>
+                                              <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Transfer Slip</span>
+                                              <span className="text-foreground font-mono truncate block max-w-[120px]" title={txn.transferSlipNo}>{txn.transferSlipNo}</span>
                                             </div>
                                           )}
                                         </div>
@@ -812,14 +829,18 @@ export function InventoryTable({
                   </div>
 
                   {/* Quick stats */}
-                  <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-border/40">
+                  <div className="grid grid-cols-4 gap-2 mt-3 pt-3 border-t border-border/40">
                     <div className="text-center">
                       <span className="text-[10px] text-muted-foreground block">Total In</span>
                       <span className="text-xs font-semibold text-green-600">{group.totalIncoming > 0 ? formatNumber(group.totalIncoming) : "\u2014"}</span>
                     </div>
                     <div className="text-center">
-                      <span className="text-[10px] text-muted-foreground block">Weight</span>
-                      <span className="text-xs font-semibold text-foreground/70">{group.totalIncomingWeight > 0 ? `${formatWeight(group.totalIncomingWeight)} kg` : "\u2014"}</span>
+                      <span className="text-[10px] text-muted-foreground block">Unit</span>
+                      <span className="text-xs font-semibold text-foreground/70">{group.unitType === "PACK" ? "Packs" : "Boxes"}</span>
+                    </div>
+                    <div className="text-center">
+                      <span className="text-[10px] text-muted-foreground block">Avg Weight</span>
+                      <span className="text-xs font-semibold text-foreground/70">{group.avgWeight > 0 ? `${formatWeight(group.avgWeight)} kg` : "\u2014"}</span>
                     </div>
                     <div className="text-center">
                       <span className="text-[10px] text-muted-foreground block">Stock Left</span>
@@ -828,6 +849,22 @@ export function InventoryTable({
                       </span>
                     </div>
                   </div>
+
+                  {/* View Barcode action */}
+                  {group.barcode && (
+                    <div className="mt-2 pt-2 border-t border-border/30">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2.5 gap-1.5 text-xs font-medium text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:text-emerald-300 dark:hover:bg-emerald-950/30"
+                        onClick={(e) => { e.stopPropagation(); setBarcodeViewItem({ barcode: group.barcode, productName: group.productName }) }}
+                        title="View Barcode"
+                      >
+                        <Barcode className="h-3.5 w-3.5" />
+                        Barcode
+                      </Button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Expanded: Transaction history */}
@@ -846,7 +883,14 @@ export function InventoryTable({
                         const isOutgoing = mt.includes("outgoing")
                         const isReturn = mt.includes("return")
                         const outPacks = txn.outgoing_packs ?? txn.outgoing_qty ?? 0
-                        const outWeight = txn.outgoing_weight ?? 0
+                        const txnAvgWeight = txn.avg_weight ?? txn.outgoing_weight ?? txn.incoming_weight ?? 0
+
+                        // Construct delivery address from addressDetails if customer_address is missing
+                        const deliveryAddr = txn.customer_address || txn.delivery_address || (() => {
+                          const ad = txn.addressDetails
+                          if (!ad) return ""
+                          return [ad.houseNumber, ad.streetName, ad.barangay ? `Brgy. ${ad.barangay}` : "", ad.city, ad.province, ad.region].filter(Boolean).join(", ")
+                        })() || ""
 
                         const borderColor = isOutgoing ? "border-l-red-500" : "border-l-teal-500"
 
@@ -867,7 +911,7 @@ export function InventoryTable({
                                 {isOutgoing && outPacks > 0 && (
                                   <span className="text-xs font-semibold text-red-600">
                                     −{formatNumber(outPacks)} {(txn.outgoing_unit || "box") === "box" ? "Box" : "Pack"}
-                                    {outWeight > 0 && <span className="text-[10px] font-normal text-red-500/70 ml-0.5">({formatWeight(outWeight)} kg)</span>}
+                                    {txnAvgWeight > 0 && <span className="text-[10px] font-normal text-red-500/70 ml-0.5">({formatWeight(txnAvgWeight)} kg)</span>}
                                   </span>
                                 )}
                                 {isReturn && (
@@ -907,10 +951,13 @@ export function InventoryTable({
                             <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1 text-[10px]">
                               {isOutgoing && (
                                 <>
-                                  {txn.customer_name && <span className="text-muted-foreground">Customer: {txn.customer_name}</span>}
-                                  <span className="text-muted-foreground">📍 {txn.customer_address || txn.to_location || "No address provided"}</span>
-                                  {txn.from_location && <span className="text-muted-foreground">From: {txn.from_location}</span>}
-                                  {txn.reference_no && <span className="text-muted-foreground font-mono">DR/SI: {txn.reference_no}</span>}
+                                  {(txn.customer_name || txn.to_location) && <span className="text-muted-foreground">Customer: {txn.customer_name || txn.to_location}</span>}
+                                  <span className="text-muted-foreground">📍 {deliveryAddr || "No address provided"}</span>
+                                  <span className="text-muted-foreground font-mono">
+                                    DR/SI: {txn.deliveryReceiptNo && txn.salesInvoiceNo
+                                      ? `${txn.deliveryReceiptNo} / ${txn.salesInvoiceNo}`
+                                      : txn.reference_no || "—"}
+                                  </span>
                                 </>
                               )}
                               {isReturn && (

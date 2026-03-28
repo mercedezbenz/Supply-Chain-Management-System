@@ -975,6 +975,11 @@ export function InventoryDashboard() {
           setScanDialogOpen(false)
           setOutgoingDialogOpen(true)
         }}
+        onReturnItem={(item) => {
+          setScannedItem(item || null)
+          setScanDialogOpen(false)
+          setReturnDialogOpen(true)
+        }}
         onRegisterNew={() => {
           setScannedItem(null)
           setScanDialogOpen(false)

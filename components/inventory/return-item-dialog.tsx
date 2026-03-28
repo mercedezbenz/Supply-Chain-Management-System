@@ -252,12 +252,9 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
         category: selectedItem.category,
         type: (selectedItem as any).productType || (selectedItem as any).subcategory || "",
         unit_type: unitLabel.toUpperCase(),
-        incoming_qty: 0,
-        incoming_packs: 0,
-        incoming_weight: 0,
+        avg_weight: formData.weightKg ? Number(formData.weightKg) : 0,
         outgoing_qty: 0,
         outgoing_packs: 0,
-        outgoing_weight: 0,
         good_return: goodReturnNum,
         damage_return: badReturnNum,
         stock_left: newStock,
@@ -597,7 +594,7 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
 
                   {/* Weight */}
                   <div className="grid gap-1">
-                    <Label className="text-xs font-medium text-slate-600">Total Weight <span className="text-slate-400">(kg, optional)</span></Label>
+                    <Label className="text-xs font-medium text-slate-600">Average Weight <span className="text-slate-400">(kg, optional)</span></Label>
                     <div className="flex gap-2 items-center">
                       <Input
                         type="number"

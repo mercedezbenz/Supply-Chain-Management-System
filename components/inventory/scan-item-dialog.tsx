@@ -38,6 +38,7 @@ interface ScanItemDialogProps {
   inventoryItems: InventoryItem[]
   onAddStock?: (item: InventoryItem) => void
   onProductOut?: (item: InventoryItem) => void
+  onReturnItem?: (item: InventoryItem) => void
   onRegisterNew?: (barcode: string) => void
 }
 
@@ -82,6 +83,7 @@ export function ScanItemDialog({
   inventoryItems,
   onAddStock,
   onProductOut,
+  onReturnItem,
   onRegisterNew,
 }: ScanItemDialogProps) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -152,6 +154,13 @@ export function ScanItemDialog({
   const handleProductOut = () => {
     if (foundItem && onProductOut) {
       onProductOut(foundItem)
+      onOpenChange(false)
+    }
+  }
+
+  const handleReturnItem = () => {
+    if (foundItem && onReturnItem) {
+      onReturnItem(foundItem)
       onOpenChange(false)
     }
   }
@@ -385,11 +394,11 @@ export function ScanItemDialog({
               )}
 
               {/* ── Action Buttons ────────────────────────────────── */}
-              <div className="grid grid-cols-2 gap-3 pt-1">
+              <div className="grid grid-cols-3 gap-3 pt-1">
                 <Button
                   type="button"
                   onClick={handleAddStock}
-                  className="h-12 gap-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-xl"
+                  className="h-12 gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-xl"
                 >
                   <PackagePlus className="h-5 w-5" />
                   Add Stock (Incoming)
@@ -399,7 +408,7 @@ export function ScanItemDialog({
                   onClick={handleProductOut}
                   disabled={stockLeft <= 0}
                   className={cn(
-                    "h-12 gap-2.5 font-semibold text-sm rounded-xl",
+                    "h-12 gap-2 font-semibold text-sm rounded-xl",
                     stockLeft <= 0
                       ? "bg-slate-200 text-slate-400 cursor-not-allowed hover:bg-slate-200"
                       : "bg-orange-500 hover:bg-orange-600 text-white"
@@ -407,6 +416,14 @@ export function ScanItemDialog({
                 >
                   <Truck className="h-5 w-5" />
                   Product Out
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleReturnItem}
+                  className="h-12 gap-2 bg-sky-600 hover:bg-sky-700 text-white font-semibold text-sm rounded-xl"
+                >
+                  <RotateCcw className="h-5 w-5" />
+                  Return Item
                 </Button>
               </div>
 

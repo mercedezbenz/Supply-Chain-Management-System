@@ -115,17 +115,27 @@ export interface InventoryTransaction {
   incoming_qty: number       // default 0
   incoming_packs?: number    // packs/boxes incoming
   incoming_unit?: "box" | "pack"  // unit type for incoming stock
-  incoming_weight?: number   // total incoming weight in kg
   outgoing_qty: number       // default 0
   outgoing_packs?: number    // packs/boxes outgoing
   outgoing_unit?: "box" | "pack"  // unit type for outgoing stock
-  outgoing_weight?: number   // total outgoing weight in kg
+  avg_weight?: number        // average weight in kg
   good_return: number        // default 0
   damage_return: number      // default 0
   stock_left: number         // computed at write time
-  from_location?: string     // origin location
-  to_location?: string       // destination location
+  to_location?: string       // destination location / delivery address
   location: string           // current storage location
+  customer_name?: string     // customer name (outgoing)
+  customer_address?: string  // full delivery address string (outgoing)
+  delivery_address?: string  // alias for customer_address
+  addressDetails?: {         // structured address components
+    houseNumber?: string
+    streetName?: string
+    barangay?: string
+    city?: string
+    province?: string
+    region?: string
+    zipCode?: string
+  }
   expiry_date: Date | any
   reference_no: string       // Supplier DR / Sales Invoice / Transfer Slip / Return Ref
   production_date?: Date | any
