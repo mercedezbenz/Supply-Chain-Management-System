@@ -639,13 +639,19 @@ export function InventoryTable({
                                             <span className="text-red-600 dark:text-red-400 font-semibold">-{formatNumber(outPacks)} {deriveUnitType(txn) === "PACK" ? "Packs" : "Boxes"}</span>
                                           </div>
                                           <div>
-                                            <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Weight</span>
+                                            <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Total Weight</span>
                                             <span className="text-foreground font-medium">{outWeight > 0 ? `${formatWeight(outWeight)} kg` : "\u2014"}</span>
                                           </div>
                                           <div>
                                             <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Customer</span>
-                                            <span className="text-foreground truncate block max-w-[160px]" title={txn.to_location || txn.customer_name || ""}>
-                                              {txn.to_location || txn.customer_name || "\u2014"}
+                                            <span className="text-foreground truncate block max-w-[160px]" title={txn.customer_name || ""}>
+                                              {txn.customer_name || "\u2014"}
+                                            </span>
+                                          </div>
+                                          <div>
+                                            <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Delivery Address</span>
+                                            <span className="text-foreground truncate block max-w-[200px]" title={txn.customer_address || txn.to_location || ""}>
+                                              {txn.customer_address || txn.to_location || "No address provided"}
                                             </span>
                                           </div>
                                           {txn.reference_no && (
@@ -654,7 +660,7 @@ export function InventoryTable({
                                               <span className="text-foreground font-mono truncate block max-w-[140px]" title={txn.reference_no}>{txn.reference_no}</span>
                                             </div>
                                           )}
-                                          {txn.location && (
+                                          {(txn.from_location || txn.location) && (
                                             <div>
                                               <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">From Location</span>
                                               <span className="text-foreground">{txn.from_location || txn.location}</span>
@@ -901,10 +907,10 @@ export function InventoryTable({
                             <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1 text-[10px]">
                               {isOutgoing && (
                                 <>
-                                  {(txn.to_location || txn.customer_name) && <span className="text-muted-foreground">Customer: {txn.to_location || txn.customer_name}</span>}
+                                  {txn.customer_name && <span className="text-muted-foreground">Customer: {txn.customer_name}</span>}
+                                  <span className="text-muted-foreground">📍 {txn.customer_address || txn.to_location || "No address provided"}</span>
                                   {txn.from_location && <span className="text-muted-foreground">From: {txn.from_location}</span>}
                                   {txn.reference_no && <span className="text-muted-foreground font-mono">DR/SI: {txn.reference_no}</span>}
-                                  {txn.location && !txn.from_location && <span className="text-muted-foreground">📍 {txn.location}</span>}
                                 </>
                               )}
                               {isReturn && (

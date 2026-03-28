@@ -11,7 +11,7 @@ import { useRouter } from "next/navigation"
 import { subscribeToCollection, CustomerTransactionService } from "@/services/firebase-service"
 import { useAuth } from "@/hooks/use-auth"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import type { InventoryItem, Delivery, CustomerTransaction } from "@/lib/types"
+import type { InventoryItem, CustomerTransaction } from "@/lib/types"
 import { formatExpirationDate as formatExpDate } from "@/lib/utils"
 import { DashboardOverviewSkeleton } from "@/components/skeletons/dashboard-skeleton"
 
@@ -87,20 +87,23 @@ export function DashboardOverview() {
   })
   const [stockAlerts, setStockAlerts] = useState<InventoryItem[]>([])
   const [recentlyAdded, setRecentlyAdded] = useState<InventoryItem[]>([])
-  const [recentDeliveries, setRecentDeliveries] = useState<Delivery[]>([])
-  const [recentlyAddedDeliveries, setRecentlyAddedDeliveries] = useState<(Delivery | CustomerTransaction)[]>([])
-  const [activeTransactions, setActiveTransactions] = useState<CustomerTransaction[]>([])
+  const [pendingTransactions, setPendingTransactions] = useState<CustomerTransaction[]>([])
+  const [onDeliveryTransactions, setOnDeliveryTransactions] = useState<CustomerTransaction[]>([])
   const [loading, setLoading] = useState(true)
   const [hasPermissionError, setHasPermissionError] = useState(false)
   const [showNotificationBanner, setShowNotificationBanner] = useState(false)
 
-  // Delivery status tab
-  const [deliveryTab, setDeliveryTab] = useState<"ALL" | "PRODUCT_OUT" | "IN_PROGRESS" | "DELIVERED">("ALL")
+  // Delivery status tab (only Pending + On Delivery, no Completed)
+  const [deliveryTab, setDeliveryTab] = useState<"ALL" | "PRODUCT_OUT" | "IN_PROGRESS">("ALL")
 
   // Pagination state for Stock Alert & Updates table
   const [stockCurrentPage, setStockCurrentPage] = useState(1)
   const FIRST_PAGE_ITEMS = 7
   const OTHER_PAGE_ITEMS = 5
+
+  // Pagination state for Delivery Status cards
+  const [deliveryCurrentPage, setDeliveryCurrentPage] = useState(1)
+  const DELIVERY_ITEMS_PER_PAGE = 6
 
   // Helper function to calculate paginated items
   const getPaginatedStockItems = () => {
@@ -141,6 +144,11 @@ export function DashboardOverview() {
     setStockCurrentPage(1)
   }, [recentlyAdded.length, stockAlerts.length])
 
+  // Reset delivery page to 1 when tab changes
+  useEffect(() => {
+    setDeliveryCurrentPage(1)
+  }, [deliveryTab])
+
   useEffect(() => {
     if (!user || firebaseError) {
       setLoading(false)
@@ -151,8 +159,8 @@ export function DashboardOverview() {
     }
 
     let unsubscribeInventory: (() => void) | undefined
-    let unsubscribeDeliveries: (() => void) | undefined
-    let unsubscribeTransactions: (() => void) | undefined
+    let unsubscribePending: (() => void) | undefined
+    let unsubscribeOnDelivery: (() => void) | undefined
 
     // Helper function to parse dates
     const parseDate = (d: any) => {
@@ -164,30 +172,7 @@ export function DashboardOverview() {
       return null
     }
 
-    // Function to calculate deliveryToday from both collections
-    // "Delivery Today" means deliveries currently in progress (on delivery)
-    const calculateDeliveryToday = (
-      deliveries: Delivery[],
-      transactions: CustomerTransaction[]
-    ) => {
-      const today = new Date().toDateString()
 
-      // Count from deliveries collection (status = "on_delivery" and updated today)
-      const deliveriesToday = deliveries.filter((d) => {
-        if (d.status !== "on_delivery") return false
-        const deliveryDate = parseDate(d.updatedAt)
-        if (!deliveryDate) return false
-        return deliveryDate.toDateString() === today
-      }).length
-
-      // Count from customer_transactions with IN_PROGRESS status (currently on delivery)
-      // Count all IN_PROGRESS transactions as they are currently being delivered
-      const transactionsToday = transactions.filter((tx) => {
-        return tx.transactionType === "IN_PROGRESS"
-      }).length
-
-      return deliveriesToday + transactionsToday
-    }
 
     try {
       // Fetch ONLY from "inventory" collection - 1 row per 1 Firestore document (no aggregation)
@@ -256,87 +241,49 @@ export function DashboardOverview() {
         setLoading(false)
       })
 
-      // Track deliveries and transactions separately
-      let currentDeliveries: Delivery[] = []
-      let currentTransactions: CustomerTransaction[] = []
+      // Subscribe to customer_transactions for Pending (PRODUCT_OUT) and On Delivery (IN_PROGRESS)
+      // Same data source as the Delivery Tracking page
+      let currentPending: CustomerTransaction[] = []
+      let currentOnDelivery: CustomerTransaction[] = []
 
       const updateDeliveryToday = () => {
-        const count = calculateDeliveryToday(currentDeliveries, currentTransactions)
-        setStats((prev) => ({ ...prev, deliveryToday: count }))
+        // "Delivery Today" = count of IN_PROGRESS transactions (currently being delivered)
+        setStats((prev) => ({ ...prev, deliveryToday: currentOnDelivery.length }))
       }
 
       try {
-        unsubscribeDeliveries = subscribeToCollection("deliveries", (deliveries: Delivery[]) => {
-          currentDeliveries = deliveries || []
-          // Only get deliveries that are in transit (on_delivery status)
-          const active = currentDeliveries.filter(
-            (d) => d.status === "on_delivery",
-          )
-          setRecentDeliveries(active.slice(0, 5))
-
-          // Combine with transactions for recently added - only in transit/on delivery items
-          const inTransitDeliveries = currentDeliveries.filter((d) => d.status === "on_delivery")
-          const inTransitTransactions = currentTransactions.filter((tx) => tx.transactionType === "IN_PROGRESS")
-
-          // Remove duplicates by id
-          const seenIds = new Set<string>()
-          const allRecent = [...inTransitDeliveries, ...inTransitTransactions]
-            .filter((item) => {
-              if (seenIds.has(item.id)) {
-                return false
-              }
-              seenIds.add(item.id)
-              return true
-            })
-            .sort((a, b) => {
-              const ad = parseDate((a as any).createdAt)?.getTime() || 0
-              const bd = parseDate((b as any).createdAt)?.getTime() || 0
+        unsubscribePending = CustomerTransactionService.subscribeToPendingDeliveries(
+          (transactions: CustomerTransaction[]) => {
+            currentPending = transactions || []
+            // Sort by latest date descending
+            const sorted = [...currentPending].sort((a, b) => {
+              const ad = parseDate(a.transactionDate || (a as any).createdAt)?.getTime() || 0
+              const bd = parseDate(b.transactionDate || (b as any).createdAt)?.getTime() || 0
               return bd - ad
             })
-            .slice(0, 10)
-          setRecentlyAddedDeliveries(allRecent)
-
-          updateDeliveryToday()
-        })
-      } catch (error) {
-        console.log("[Dashboard] Deliveries collection not accessible, skipping...")
-      }
-
-      try {
-        unsubscribeTransactions = CustomerTransactionService.subscribeToAllTransactions(
-          (transactions: CustomerTransaction[]) => {
-            currentTransactions = transactions || []
-            updateDeliveryToday()
-
-            // Set active transactions (IN_PROGRESS) for Delivery Status card
-            const inProgress = transactions.filter((tx) => tx.transactionType === "IN_PROGRESS")
-            setActiveTransactions(inProgress.slice(0, 5)) // Show top 5
-
-            // Update recently added with transactions - only in transit/on delivery items
-            const inTransitDeliveries = currentDeliveries.filter((d) => d.status === "on_delivery")
-            const inTransitTransactions = transactions.filter((tx) => tx.transactionType === "IN_PROGRESS")
-
-            // Remove duplicates by id
-            const seenIds = new Set<string>()
-            const allRecent = [...inTransitDeliveries, ...inTransitTransactions]
-              .filter((item) => {
-                if (seenIds.has(item.id)) {
-                  return false
-                }
-                seenIds.add(item.id)
-                return true
-              })
-              .sort((a, b) => {
-                const ad = parseDate((a as any).createdAt)?.getTime() || 0
-                const bd = parseDate((b as any).createdAt)?.getTime() || 0
-                return bd - ad
-              })
-              .slice(0, 10)
-            setRecentlyAddedDeliveries(allRecent)
+            setPendingTransactions(sorted)
           }
         )
       } catch (error) {
-        console.log("[Dashboard] Customer transactions collection not accessible, skipping...")
+        console.log("[Dashboard] Pending deliveries subscription not accessible, skipping...")
+      }
+
+      try {
+        unsubscribeOnDelivery = CustomerTransactionService.subscribeToInProgressDeliveries(
+          (transactions: CustomerTransaction[]) => {
+            currentOnDelivery = transactions || []
+            // Sort by latest date descending
+            const sorted = [...currentOnDelivery].sort((a, b) => {
+              const ad = parseDate(a.transactionDate || (a as any).createdAt)?.getTime() || 0
+              const bd = parseDate(b.transactionDate || (b as any).createdAt)?.getTime() || 0
+              return bd - ad
+            })
+            setOnDeliveryTransactions(sorted)
+            updateDeliveryToday()
+          }
+        )
+      } catch (error) {
+        console.log("[Dashboard] On Delivery subscription not accessible, skipping...")
       }
     } catch (error) {
       console.error("[v0] Dashboard subscription error:", error)
@@ -346,8 +293,8 @@ export function DashboardOverview() {
 
     return () => {
       unsubscribeInventory?.()
-      unsubscribeDeliveries?.()
-      unsubscribeTransactions?.()
+      unsubscribePending?.()
+      unsubscribeOnDelivery?.()
     }
   }, [user, firebaseError])
 
@@ -650,43 +597,34 @@ export function DashboardOverview() {
           </CardHeader>
           <CardContent className="px-6 pb-6">
             {(() => {
-              // Combine all deliveries into a single flat list
-              const allCards: CustomerTransaction[] = []
-
-              // Add recently added deliveries (only CustomerTransaction type)
-              recentlyAddedDeliveries.forEach((item) => {
-                if ('transactionType' in item) {
-                  allCards.push(item as CustomerTransaction)
-                }
-              })
-
-              // Add active transactions not already in recently added
-              const recentIds = new Set(allCards.map(c => c.id))
-              activeTransactions.forEach((tx) => {
-                if (!recentIds.has(tx.id)) {
-                  allCards.push(tx)
-                }
-              })
+              // Combine Pending + On Delivery into a single flat list (no Completed)
+              const allCards: CustomerTransaction[] = [...pendingTransactions, ...onDeliveryTransactions]
 
               // Count per status
               const counts = {
                 ALL: allCards.length,
-                PRODUCT_OUT: allCards.filter(c => c.transactionType === "PRODUCT_OUT").length,
-                IN_PROGRESS: allCards.filter(c => c.transactionType === "IN_PROGRESS").length,
-                DELIVERED: allCards.filter(c => c.transactionType === "DELIVERED").length,
+                PRODUCT_OUT: pendingTransactions.length,
+                IN_PROGRESS: onDeliveryTransactions.length,
               }
 
               // Filter by selected tab
               const filteredCards = deliveryTab === "ALL"
                 ? allCards
-                : allCards.filter(c => c.transactionType === deliveryTab)
+                : deliveryTab === "PRODUCT_OUT"
+                  ? pendingTransactions
+                  : onDeliveryTransactions
 
-              // Tab definitions
+              // Pagination logic
+              const totalFilteredItems = filteredCards.length
+              const deliveryTotalPages = Math.max(1, Math.ceil(totalFilteredItems / DELIVERY_ITEMS_PER_PAGE))
+              const deliveryStartIndex = (deliveryCurrentPage - 1) * DELIVERY_ITEMS_PER_PAGE
+              const paginatedCards = filteredCards.slice(deliveryStartIndex, deliveryStartIndex + DELIVERY_ITEMS_PER_PAGE)
+
+              // Tab definitions (no Completed)
               const tabs: { key: typeof deliveryTab; label: string }[] = [
                 { key: "ALL", label: "All" },
                 { key: "PRODUCT_OUT", label: "Pending" },
                 { key: "IN_PROGRESS", label: "On Delivery" },
-                { key: "DELIVERED", label: "Completed" },
               ]
 
               // Helper: get status config
@@ -735,7 +673,6 @@ export function DashboardOverview() {
                 ALL: "No active deliveries",
                 PRODUCT_OUT: "No pending deliveries",
                 IN_PROGRESS: "No deliveries in transit",
-                DELIVERED: "No completed deliveries",
               }
 
               return (
@@ -746,19 +683,17 @@ export function DashboardOverview() {
                       <button
                         key={tab.key}
                         onClick={() => setDeliveryTab(tab.key)}
-                        className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 ${
-                          deliveryTab === tab.key
+                        className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 ${deliveryTab === tab.key
                             ? "bg-sky-500 text-white shadow-sm"
                             : "text-[#6B7280] dark:text-muted-foreground hover:text-[#111827] dark:hover:text-foreground hover:bg-white/60 dark:hover:bg-secondary/60"
-                        }`}
+                          }`}
                       >
                         {tab.label}
                         {counts[tab.key] > 0 && (
-                          <span className={`ml-0.5 text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 ${
-                            deliveryTab === tab.key
+                          <span className={`ml-0.5 text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 ${deliveryTab === tab.key
                               ? "bg-white/25 text-white"
                               : "bg-[#E5E7EB] dark:bg-secondary text-[#6B7280] dark:text-muted-foreground"
-                          }`}>
+                            }`}>
                             {counts[tab.key]}
                           </span>
                         )}
@@ -776,8 +711,9 @@ export function DashboardOverview() {
                       <p className="text-xs text-[#9CA3AF] dark:text-muted-foreground mt-1">Deliveries will appear here when dispatched</p>
                     </div>
                   ) : (
+                    <>
                     <div className="grid gap-3 md:grid-cols-2 transition-all duration-200">
-                      {filteredCards.map((tx) => {
+                      {paginatedCards.map((tx) => {
                         const status = getStatusConfig(tx.transactionType)
                         const dateInfo = getDateBadge(tx.transactionDate)
                         const drNo = (tx as any).deliveryReceiptNo
@@ -876,6 +812,43 @@ export function DashboardOverview() {
                         )
                       })}
                     </div>
+
+                    {/* Pagination Controls — same style as Stock Alert & Updates */}
+                    {deliveryTotalPages > 1 && (
+                      <div className="flex items-center justify-between pt-4 mt-2 border-t border-[#E5E7EB] dark:border-border">
+                        <div className="text-xs text-[#9CA3AF] dark:text-muted-foreground">
+                          Showing {paginatedCards.length} of {totalFilteredItems} items
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setDeliveryCurrentPage(prev => Math.max(1, prev - 1))}
+                            disabled={deliveryCurrentPage === 1}
+                            className="h-8 px-3 text-sm font-medium rounded-lg border-[#E5E7EB] dark:border-border hover:bg-[#F3F4F6] dark:hover:bg-secondary/50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                          >
+                            <ChevronLeft className="h-4 w-4 mr-1" />
+                            Previous
+                          </Button>
+                          <div className="flex items-center gap-1 px-3 py-1.5 bg-[#F3F4F6] dark:bg-secondary/50 rounded-lg">
+                            <span className="text-sm font-semibold text-[#111827] dark:text-foreground">{deliveryCurrentPage}</span>
+                            <span className="text-sm text-[#9CA3AF] dark:text-muted-foreground">/</span>
+                            <span className="text-sm text-[#9CA3AF] dark:text-muted-foreground">{deliveryTotalPages}</span>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setDeliveryCurrentPage(prev => Math.min(deliveryTotalPages, prev + 1))}
+                            disabled={deliveryCurrentPage === deliveryTotalPages}
+                            className="h-8 px-3 text-sm font-medium rounded-lg border-[#E5E7EB] dark:border-border hover:bg-[#F3F4F6] dark:hover:bg-secondary/50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                          >
+                            Next
+                            <ChevronRight className="h-4 w-4 ml-1" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                    </>
                   )}
                 </div>
               )

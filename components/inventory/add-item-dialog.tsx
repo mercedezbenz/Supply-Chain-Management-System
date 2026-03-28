@@ -589,6 +589,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         productionDate: formData.productionDate || null,
         location: formData.storageLocation,
         storageLocation: formData.storageLocation,
+        incoming_weight: formData.weightKg ? parseFloat(formData.weightKg) : 0,
         avgWeightMin: formData.avgWeightMin ? parseFloat(formData.avgWeightMin) : null,
         avgWeightMax: formData.avgWeightMax ? parseFloat(formData.avgWeightMax) : null,
         qualityStatus: "GOOD" as const,
