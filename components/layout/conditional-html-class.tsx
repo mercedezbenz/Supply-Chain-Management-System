@@ -1,39 +1,21 @@
 "use client"
 
 import { usePathname } from "next/navigation"
-import { useEffect, useLayoutEffect } from "react"
+import { useLayoutEffect } from "react"
 
 export function ConditionalHtmlClass() {
   const pathname = usePathname()
   const isLoginRoute = pathname === "/login" || pathname?.startsWith("/login") || pathname?.startsWith("/auth")
 
-  // Use useLayoutEffect to run synchronously before paint
+  // Ensure login/auth routes never have the dark class.
+  // For other routes, let next-themes handle theming via ThemeProvider.
   useLayoutEffect(() => {
-    const html = document.documentElement
     if (isLoginRoute) {
-      // Remove dark class and any theme classes for login route
+      const html = document.documentElement
       html.classList.remove("dark")
-      // Clean up any remaining dark-related classes
-      const classes = html.className.split(" ").filter(cls => cls !== "dark" && !cls.includes("dark"))
-      html.className = classes.join(" ")
-    } else {
-      // Ensure dark class is present for other routes
-      if (!html.classList.contains("dark")) {
-        html.classList.add("dark")
-      }
+      html.style.colorScheme = "light"
     }
   }, [isLoginRoute])
 
-  // Also run on mount to handle initial route
-  useEffect(() => {
-    const html = document.documentElement
-    if (isLoginRoute) {
-      html.classList.remove("dark")
-      const classes = html.className.split(" ").filter(cls => cls !== "dark" && !cls.includes("dark"))
-      html.className = classes.join(" ")
-    }
-  }, [])
-
   return null
 }
-

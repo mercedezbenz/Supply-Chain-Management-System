@@ -17,7 +17,7 @@ export function ConditionalLayout({ children }: { children: React.ReactNode }) {
 
   // For all other routes, use full layout with theme and sidebar
   return (
-    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+    <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
       <SidebarProvider>
         <AuthProvider>{children}</AuthProvider>
       </SidebarProvider>

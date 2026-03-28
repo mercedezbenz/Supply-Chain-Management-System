@@ -22,6 +22,24 @@ export const metadata: Metadata = {
   generator: "v0.app",
 }
 
+// Anti-flicker script: runs before React hydrates to set the correct theme class
+// on <html> immediately. Prevents the flash of dark/light before next-themes loads.
+const themeInitScript = `
+(function() {
+  try {
+    var theme = localStorage.getItem('theme');
+    // Default to light if no theme stored or if stored value isn't valid
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+      document.documentElement.style.colorScheme = 'dark';
+    } else {
+      document.documentElement.classList.remove('dark');
+      document.documentElement.style.colorScheme = 'light';
+    }
+  } catch (e) {}
+})();
+`
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -29,6 +47,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
       <body className="font-sans antialiased">
         <ConditionalHtmlClass />
         <ConditionalLayout>{children}</ConditionalLayout>
