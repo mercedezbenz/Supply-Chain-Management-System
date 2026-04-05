@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { TrendingUp, TrendingDown, AlertCircle, X, ChevronLeft, ChevronRight } from "lucide-react"
+import { TrendingUp, TrendingDown, AlertCircle, X, ChevronLeft, ChevronRight, Clock, Package, AlertTriangle } from "lucide-react"
 import { TotalStocksIcon, LowStockIcon, ExpiringSoonIcon } from "./dashboard-icons"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
@@ -556,11 +556,58 @@ export function DashboardOverview() {
             )}
           </CardHeader>
           <CardContent className="px-6 pb-5 pt-4">
+
+            {/* ── Summary Bar ── */}
+            {(() => {
+              const allItems = [...recentlyAdded, ...stockAlerts].filter((item, index, self) =>
+                index === self.findIndex((t) => t.id === item.id)
+              )
+              const outOfStockCount = allItems.filter(i => ((i as any).stockLeft ?? 0) <= 0).length
+              const lowStockCount = allItems.filter(i => {
+                const s = (i as any).stockLeft ?? 0
+                return s > 0 && s <= 5
+              }).length
+              const now = new Date()
+              const sevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+              const expiringCount = allItems.filter(i => {
+                const expDate = (i as any).expiryDate ?? (i as any).expirationDate
+                if (!expDate) return false
+                const d = expDate instanceof Date ? expDate : expDate?.toDate ? expDate.toDate() : new Date(expDate)
+                return !isNaN(d.getTime()) && d > now && d <= sevenDays
+              }).length
+
+              if (outOfStockCount > 0 || lowStockCount > 0 || expiringCount > 0) {
+                return (
+                  <div className="flex items-center gap-2 flex-wrap mb-4">
+                    {outOfStockCount > 0 && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/30 dark:text-red-400 dark:border-red-800">
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                        {outOfStockCount} Out of Stock
+                      </span>
+                    )}
+                    {lowStockCount > 0 && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-600 border border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-800">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                        {lowStockCount} Low Stock
+                      </span>
+                    )}
+                    {expiringCount > 0 && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-orange-50 text-orange-600 border border-orange-200 dark:bg-orange-950/30 dark:text-orange-400 dark:border-orange-800">
+                        <Clock className="h-3 w-3" />
+                        {expiringCount} Expiring Soon
+                      </span>
+                    )}
+                  </div>
+                )
+              }
+              return null
+            })()}
+
             {/* Table Header */}
-            <div className="grid grid-cols-[2fr_1.2fr_0.8fr_1fr] gap-3 text-[11px] font-semibold text-gray-400 dark:text-muted-foreground uppercase tracking-wider pb-3 border-b border-gray-100 dark:border-border">
+            <div className="grid grid-cols-[2fr_1.4fr_1.2fr_0.9fr] gap-3 text-[11px] font-semibold text-gray-400 dark:text-muted-foreground uppercase tracking-wider pb-3 border-b border-gray-100 dark:border-border">
               <div>Product Name</div>
-              <div className="text-center">Expiration Date</div>
-              <div className="text-center">Stock Left</div>
+              <div className="text-center">Expiration</div>
+              <div className="text-center">Stock Status</div>
               <div className="text-right">Last Update</div>
             </div>
 
@@ -584,12 +631,66 @@ export function DashboardOverview() {
                   <>
                     {items.map((item, index) => {
                       const stockLeft = (item as any).stockLeft ?? 0
-                      const isLowStock = stockLeft < 10
+                      const maxStock = Math.max(stockLeft, (item as any).incoming ?? 10, 10)
+                      const stockPercent = Math.min(100, Math.round((stockLeft / maxStock) * 100))
+
+                      // Status badge logic
+                      let statusLabel = "In Stock"
+                      let statusColor = "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-400 dark:border-emerald-800"
+                      let barColor = "bg-emerald-500"
+                      let borderColor = "border-l-emerald-400"
+                      if (stockLeft <= 0) {
+                        statusLabel = "Out of Stock"
+                        statusColor = "bg-red-50 text-red-600 border-red-200 dark:bg-red-950/30 dark:text-red-400 dark:border-red-800"
+                        barColor = "bg-red-500"
+                        borderColor = "border-l-red-400"
+                      } else if (stockLeft <= 5) {
+                        statusLabel = "Low Stock"
+                        statusColor = "bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-800"
+                        barColor = "bg-amber-500"
+                        borderColor = "border-l-amber-400"
+                      }
+
+                      // Expiry logic
+                      const rawExp = (item as any).expiryDate ?? (item as any).expirationDate
+                      let expiryDisplay = "—"
+                      let expiryIcon: React.ReactNode = null
+                      let expiryStyle = "text-gray-400"
+                      if (rawExp) {
+                        const expDate = rawExp instanceof Date ? rawExp : rawExp?.toDate ? rawExp.toDate() : new Date(rawExp)
+                        if (!isNaN(expDate.getTime())) {
+                          const now = new Date()
+                          const diffMs = expDate.getTime() - now.getTime()
+                          const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24))
+                          if (diffDays < 0) {
+                            expiryDisplay = "Expired"
+                            expiryIcon = <AlertTriangle className="h-3 w-3 text-red-500" />
+                            expiryStyle = "text-red-600 font-semibold dark:text-red-400"
+                          } else if (diffDays <= 3) {
+                            expiryDisplay = `${diffDays}d left`
+                            expiryIcon = <AlertTriangle className="h-3 w-3 text-red-500" />
+                            expiryStyle = "text-red-600 font-semibold dark:text-red-400"
+                          } else if (diffDays <= 7) {
+                            expiryDisplay = `${diffDays}d left`
+                            expiryIcon = <Clock className="h-3 w-3 text-amber-500" />
+                            expiryStyle = "text-amber-600 font-medium dark:text-amber-400"
+                          } else if (diffDays <= 30) {
+                            expiryDisplay = `${diffDays}d left`
+                            expiryIcon = <Clock className="h-3 w-3 text-gray-400" />
+                            expiryStyle = "text-gray-500"
+                          } else {
+                            expiryDisplay = formatExpDate(rawExp)
+                            expiryStyle = "text-gray-500"
+                          }
+                        }
+                      }
+
                       return (
                         <div
                           key={`stock-${item.id}-${index}`}
-                          className="grid grid-cols-[2fr_1.2fr_0.8fr_1fr] gap-3 py-3.5 items-center transition-colors hover:bg-gray-50/50 dark:hover:bg-secondary/20 group"
+                          className={`grid grid-cols-[2fr_1.4fr_1.2fr_0.9fr] gap-3 py-3 items-center transition-all duration-200 hover:bg-blue-50/40 dark:hover:bg-secondary/30 hover:shadow-[0_1px_4px_rgba(0,0,0,0.04)] group border-l-[3px] ${borderColor} rounded-r-md -ml-px pl-3`}
                         >
+                          {/* Product Name */}
                           <div className="min-w-0">
                             <p className="font-medium text-sm text-gray-800 dark:text-foreground truncate leading-snug">
                               {(item as any).name ?? (item as any).itemName ?? item.category ?? "General"}
@@ -600,20 +701,31 @@ export function DashboardOverview() {
                               </p>
                             )}
                           </div>
-                          <div className="text-center text-sm text-gray-500 dark:text-foreground">
-                            {formatExpDate((item as any).expiryDate ?? (item as any).expirationDate)}
-                          </div>
-                          <div className="text-center">
-                            <span
-                              className={`inline-flex items-center justify-center min-w-[36px] px-2 py-0.5 rounded-full text-sm font-bold ${
-                                isLowStock
-                                  ? "bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400"
-                                  : "text-gray-800 dark:text-foreground"
-                              }`}
-                            >
-                              {stockLeft}
+
+                          {/* Expiration — relative time with icon */}
+                          <div className="flex items-center justify-center gap-1.5">
+                            {expiryIcon}
+                            <span className={`text-[13px] ${expiryStyle}`}>
+                              {expiryDisplay}
                             </span>
                           </div>
+
+                          {/* Stock Status — badge + progress bar */}
+                          <div className="flex flex-col items-center gap-1.5">
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${statusColor}`}>
+                              {stockLeft > 0 && <span className="font-bold text-[11px]">{stockLeft}</span>}
+                              {statusLabel}
+                            </span>
+                            {/* Progress bar */}
+                            <div className="w-full max-w-[80px] h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+                                style={{ width: `${Math.max(stockLeft <= 0 ? 0 : 4, stockPercent)}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          {/* Last Update */}
                           <div className="text-right text-[13px] text-gray-400 dark:text-muted-foreground">
                             {formatTimeAgo((item as any).updatedAt)}
                           </div>
