@@ -4,10 +4,9 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { EditItemDialog } from "./edit-item-dialog"
 import type { InventoryItem, InventoryTransaction, Category } from "@/lib/types"
 import { formatTimestamp, formatExpirationDate } from "@/lib/utils"
-import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Pencil, Trash2, Loader2, Barcode, MessageSquareWarning, Package, History } from "lucide-react"
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Pencil, Trash2, Loader2, Barcode, MessageSquareWarning, Package, History, Printer } from "lucide-react"
 import { getItemStatus } from "./inventory-dashboard"
 import { buildProductDisplayName } from "@/lib/product-data"
 import { useToast } from "@/hooks/use-toast"
@@ -39,7 +38,20 @@ interface InventoryTableProps {
 function formatTxnDate(d: any): string {
   if (!d) return "\u2014"
   try {
-    const date = d instanceof Date ? d : d?.toDate ? d.toDate() : new Date(d)
+    let date: Date
+    if (d instanceof Date) {
+      date = d
+    } else if (d?.toDate && typeof d.toDate === "function") {
+      // Firestore Timestamp object
+      date = d.toDate()
+    } else if (d?.seconds != null) {
+      // Firestore Timestamp serialized as { seconds, nanoseconds }
+      date = new Date(d.seconds * 1000)
+    } else if (typeof d === "string" || typeof d === "number") {
+      date = new Date(d)
+    } else {
+      return "\u2014"
+    }
     if (isNaN(date.getTime())) return "\u2014"
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     return `${months[date.getMonth()]} ${String(date.getDate()).padStart(2, "0")}, ${date.getFullYear()}`
@@ -63,7 +75,16 @@ function formatDateFull(d: any): string {
 function parseDateToMs(d: any): number {
   if (!d) return 0
   try {
-    const date = d instanceof Date ? d : d?.toDate ? d.toDate() : new Date(d)
+    let date: Date
+    if (d instanceof Date) {
+      date = d
+    } else if (d?.toDate && typeof d.toDate === "function") {
+      date = d.toDate()
+    } else if (d?.seconds != null) {
+      date = new Date(d.seconds * 1000)
+    } else {
+      date = new Date(d)
+    }
     return isNaN(date.getTime()) ? 0 : date.getTime()
   } catch { return 0 }
 }
@@ -103,6 +124,7 @@ function deriveUnitType(txn: any): string {
 // ─── Grouped Product type ────────────────────────────────────────────────────
 interface GroupedProduct {
   barcode: string
+  batchNumber: string
   productName: string
   category: string
   movementOrigin: string       // How item ENTERED system (Supplier/Production) — NOT latest action
@@ -124,6 +146,134 @@ interface GroupedProduct {
   supplierName: string
 }
 
+
+
+function formatNumber(value: number | undefined | null): string {
+  const num = value || 0
+  return Math.max(0, num).toLocaleString()
+}
+
+function formatWeight(value: number | undefined | null): string {
+  const num = value || 0
+  if (num === 0) return "0"
+  return num.toFixed(2)
+}
+
+// ─── Transaction History List Component ───
+function TransactionHistoryList({ transactions, setCancellingItem }: { transactions: any[], setCancellingItem: (txn: any) => void }) {
+  const expandedTxns = useMemo(() => {
+    return transactions.flatMap((txn: any) => {
+      const parts = []
+      const mt = getMovementType(txn).toLowerCase()
+      const isOutgoing = mt.includes("outgoing")
+      const isReturn = mt.includes("return")
+      const isIncoming = mt.includes("supplier") || mt.includes("production") || mt.includes("packing") || ((txn.source || "").toLowerCase() === "incoming") || mt.includes("incoming")
+      const dateStr = formatTxnDate(txn.transaction_date || txn.created_at || new Date())
+      const unit = deriveUnitType(txn) === "PACK" ? "packs" : "boxes"
+      const rem = txn.stock_left ?? "\u2014"
+      const loc = txn.location || "\u2014"
+
+      if (isOutgoing) {
+          parts.push({ txn, id: `${txn.id}-out`, type: 'OUT', qty: txn.outgoing_packs ?? txn.outgoing_qty ?? 0, rem, date: dateStr, unit, loc: null })
+      } else if (isReturn) {
+          if ((txn.good_return ?? 0) > 0) {
+              parts.push({ txn, id: `${txn.id}-good`, type: 'GOOD_RETURN', qty: txn.good_return, loc, rem, date: dateStr, unit })
+          }
+          if ((txn.damage_return ?? 0) > 0) {
+              parts.push({ txn, id: `${txn.id}-bad`, type: 'BAD_RETURN', qty: txn.damage_return, loc, reason: txn.bad_return_details?.reason || "Damaged", rem: null, date: dateStr, unit })
+          }
+      } else if (isIncoming) {
+          parts.push({ txn, id: `${txn.id}-in`, type: 'IN', qty: txn.incoming_packs ?? txn.incoming_qty ?? 0, loc, rem, date: dateStr, unit })
+      } else {
+          parts.push({ txn, id: `${txn.id}-other`, type: 'OTHER', qty: 0, rem, date: dateStr, unit, loc: null })
+      }
+      return parts
+    }).filter(part => part.qty > 0 || part.type === 'OTHER')
+  }, [transactions])
+
+  return (
+    <div className="divide-y divide-border/40">
+      {expandedTxns.map(part => {
+          let colorClass = ""
+          let label = ""
+          let qtyStr = ""
+          if (part.type === "IN") {
+              colorClass = "border-l-green-500 bg-green-50/20"
+              label = "IN"
+              qtyStr = `+${formatNumber(part.qty)}`
+          } else if (part.type === "OUT") {
+              colorClass = "border-l-red-500 bg-red-50/20"
+              label = "OUT"
+              qtyStr = `-${formatNumber(part.qty)}`
+          } else if (part.type === "GOOD_RETURN") {
+              colorClass = "border-l-blue-500 bg-blue-50/20"
+              label = "GOOD RETURN"
+              qtyStr = `+${formatNumber(part.qty)}`
+          } else if (part.type === "BAD_RETURN") {
+              colorClass = "border-l-slate-400 bg-slate-50/20"
+              label = "BAD RETURN"
+              qtyStr = `${formatNumber(part.qty)}`
+          }
+
+          return (
+              <div key={part.id} className={`px-5 py-3 border-l-[3px] flex items-center justify-between gap-4 ${colorClass}`}>
+                  {/* Left Side: Date, Label, Qty, Details */}
+                  <div className="flex flex-col gap-1">
+                     <div className="flex items-center gap-2">
+                         <span className="text-xs text-muted-foreground font-medium">{part.date}</span>
+                         <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider border ${
+                             part.type === 'IN' ? 'bg-green-100 text-green-700 border-green-200' :
+                             part.type === 'OUT' ? 'bg-red-100 text-red-700 border-red-200' :
+                             part.type === 'GOOD_RETURN' ? 'bg-blue-100 text-blue-700 border-blue-200' :
+                             'bg-slate-100 text-slate-700 border-slate-200'
+                         }`}>
+                             {label}
+                         </span>
+                     </div>
+                     <div className="flex items-center gap-2 mt-0.5 text-sm">
+                         <span className={`font-bold ${
+                             part.type === 'IN' || part.type === 'GOOD_RETURN' ? 'text-green-600' :
+                             part.type === 'OUT' ? 'text-red-600' : 'text-slate-600'
+                         }`}>
+                             {qtyStr} {part.unit}
+                         </span>
+                         {(part.loc || part.reason) && (
+                             <div className="flex flex-wrap gap-1.5 text-xs text-muted-foreground ml-2 items-center">
+                                 {part.loc && <span className="font-medium">| Location: {part.loc}</span>}
+                                 {part.reason && <span className="font-medium">| Reason: <span className="text-red-500">{part.reason}</span></span>}
+                             </div>
+                         )}
+                     </div>
+                  </div>
+
+                  {/* Right Side: Remaining Stock & Actions */}
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                      <div className="flex gap-1 shrink-0 mb-1">
+                          <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); setCancellingItem(part.txn) }}>
+                            <Trash2 className="h-3 w-3 text-muted-foreground hover:text-red-600" />
+                          </Button>
+                      </div>
+                      {part.rem !== null && part.rem !== "\u2014" ? (
+                          <span className="text-xs font-semibold text-slate-700 bg-white shadow-sm px-2 py-0.5 rounded-md border border-slate-200">
+                              Remaining: {formatNumber(Number(part.rem))} {part.unit}
+                          </span>
+                      ) : part.rem === "\u2014" ? (
+                          <span className="text-xs font-semibold text-slate-700 bg-white shadow-sm px-2 py-0.5 rounded-md border border-slate-200">
+                              Remaining: {"\u2014"} {part.unit}
+                          </span>
+                      ) : (
+                          <span className="text-[10px] text-muted-foreground italic font-medium pt-1">
+                              (Does not affect stock)
+                          </span>
+                      )}
+                  </div>
+              </div>
+          )
+      })}
+    </div>
+  )
+}
+
 export function InventoryTable({
   items,
   transactions = [],
@@ -134,7 +284,6 @@ export function InventoryTable({
   newItemIds,
 }: InventoryTableProps) {
   const { toast } = useToast()
-  const [editingItem, setEditingItem] = useState<InventoryTransaction | null>(null)
   const [cancellingItem, setCancellingItem] = useState<InventoryTransaction | null>(null)
   const [cancelLoading, setCancelLoading] = useState(false)
   const [expandedBarcodes, setExpandedBarcodes] = useState<Set<string>>(new Set())
@@ -149,7 +298,7 @@ export function InventoryTable({
   const hasScrolledOnce = useRef(false)
   const itemRowRefs = useRef<Map<string, HTMLElement>>(new Map())
 
-  const itemsPerPage = 50
+  const itemsPerPage = 10
 
   // ─── Group transactions by barcode ──────────────────────────────────────
   const groupedProducts: GroupedProduct[] = useMemo(() => {
@@ -168,6 +317,7 @@ export function InventoryTable({
       if (!groupMap.has(bc)) {
         groupMap.set(bc, {
           barcode: bc,
+          batchNumber: (txn as any).batch_number || "-",
           productName: (txn as any).product_name || "-",
           category: (txn as any).category || "",
           movementOrigin: "",  // Will be set from the EARLIEST incoming transaction
@@ -212,6 +362,7 @@ export function InventoryTable({
         group.location = (txn as any).location || group.location
         group.productName = (txn as any).product_name || group.productName
       }
+      group.batchNumber = (txn as any).batch_number || group.batchNumber
 
       // Track bad return details
       if ((txn as any).bad_return_details) {
@@ -225,18 +376,27 @@ export function InventoryTable({
     for (const group of groupMap.values()) {
       // Since we sorted oldest-first during iteration, the first incoming txn in the array
       // IS the chronologically earliest. But let's be explicit:
+      // Detect from the EARLIEST incoming transaction (includes 'incoming' source from add-item form)
       const earliestIncoming = group.transactions.find((txn: any) => {
         const mt = getMovementType(txn).toLowerCase()
-        return mt.includes("supplier") || mt.includes("production") || mt.includes("packing")
+        const src = ((txn as any).source || "").toLowerCase()
+        return mt.includes("supplier") || mt.includes("production") || mt.includes("packing") || src === "incoming"
       })
       if (earliestIncoming) {
         group.movementOrigin = getMovementType(earliestIncoming)
         // Extract context fields from the earliest incoming transaction
-        group.dateAdded = (earliestIncoming as any).transaction_date || (earliestIncoming as any).created_at || null
+        group.dateAdded = (earliestIncoming as any).created_at || (earliestIncoming as any).transaction_date || null
         group.expiryDate = (earliestIncoming as any).expiry_date || null
         group.productionDate = (earliestIncoming as any).production_date || null
         group.supplierName = (earliestIncoming as any).supplier_name || ""
         if (!group.location) group.location = (earliestIncoming as any).location || ""
+      }
+
+      // Fallback: if no incoming source match, use the very first transaction
+      if (!group.dateAdded && group.transactions.length > 0) {
+        const first = group.transactions[group.transactions.length - 1] // oldest (sorted newest-first later)
+        group.dateAdded = (first as any).created_at || (first as any).transaction_date || null
+        group.expiryDate = group.expiryDate || (first as any).expiry_date || null
       }
 
       // Now sort newest-first for display in the UI
@@ -332,17 +492,6 @@ export function InventoryTable({
     return () => clearTimeout(timeoutId)
   }, [scrollToItemId, onItemScrolled, items])
 
-  const formatNumber = (value: number | undefined | null): string => {
-    const num = value || 0
-    return Math.max(0, num).toLocaleString()
-  }
-
-  const formatWeight = (value: number | undefined | null): string => {
-    const num = value || 0
-    if (num === 0) return "0"
-    return num.toFixed(2)
-  }
-
   if (loading) {
     return (
       <div className="space-y-2">
@@ -369,20 +518,23 @@ export function InventoryTable({
     )
   }
 
-  // ─── Summary table columns (context-aware: incoming summary only) ────
+  // ─── Summary table columns (inventory tracking layout) ────
   const SUMMARY_COLUMNS = [
     { key: "expand", label: "", align: "center" as const, width: "w-10" },
     { key: "dateAdded", label: "Date Added", align: "left" as const },
     { key: "product", label: "Product Name", align: "left" as const },
+    { key: "batch", label: "Batch", align: "center" as const, width: "min-w-[80px]" },
     { key: "barcode", label: "Barcode", align: "left" as const },
-    { key: "movementOrigin", label: "Movement Origin", align: "left" as const },
-    { key: "totalIn", label: "Total In", align: "center" as const },
-    { key: "unit", label: "Unit", align: "center" as const },
-    { key: "avgWeight", label: "Average Weight (kg)", align: "center" as const },
+    { key: "location", label: "Location", align: "left" as const, width: "max-w-[120px]" },
     { key: "expiryDate", label: "Expiry Date", align: "left" as const },
-    { key: "stockLeft", label: "Stock Left", align: "center" as const },
-    { key: "location", label: "Location", align: "left" as const },
-    { key: "actions", label: "Actions", align: "right" as const },
+    { key: "incoming", label: "Incoming", align: "right" as const, width: "min-w-[110px]" },
+    { key: "outgoing", label: "Outgoing", align: "right" as const, width: "min-w-[110px]" },
+    { key: "goodReturn", label: "Good Rtn", align: "right" as const, width: "min-w-[110px]" },
+    { key: "badReturn", label: "Bad Rtn", align: "right" as const, width: "min-w-[110px]" },
+    { key: "remainingStock", label: "Remaining", align: "right" as const, width: "min-w-[120px]" },
+    { key: "weight", label: "Weight", align: "right" as const, width: "min-w-[100px]" },
+    { key: "unit", label: "Unit", align: "center" as const, width: "min-w-[80px]" },
+    { key: "actions", label: "Actions", align: "center" as const, width: "min-w-[140px]" },
   ]
 
 
@@ -392,25 +544,26 @@ export function InventoryTable({
       <div className="space-y-4">
         {/* ─── INFO BANNER ──────────────────────────────────────────────────── */}
         <div className="text-xs text-muted-foreground px-1">
-          Showing <span className="font-medium text-foreground">{dataLength}</span> products
+          Showing <span className="font-medium text-foreground">{((currentPage - 1) * itemsPerPage) + 1}</span>–<span className="font-medium text-foreground">{Math.min(currentPage * itemsPerPage, dataLength)}</span> of{" "}
+          <span className="font-medium text-foreground">{dataLength}</span> products
           {" "}({transactions.length} transactions)
           {totalPages > 1 && <> · Page {currentPage} of {totalPages}</>}
         </div>
 
         {/* ─── DESKTOP TABLE ───────────────────────────────────────────────── */}
-        <div className="hidden lg:block relative rounded-xl border border-border/50 bg-card overflow-hidden shadow-sm">
+        <div className="hidden lg:block relative rounded-xl border border-border/40 bg-card overflow-hidden shadow-sm">
           <div
             ref={scrollContainerRef}
             className="overflow-auto max-h-[65vh]"
             style={{ scrollbarWidth: "thin" }}
           >
-            <table className="w-full text-left">
+            <table className="w-full text-left min-w-max">
               <thead className="sticky top-0 z-20 bg-gray-50 dark:bg-muted/50 border-b border-border/60">
                 <tr>
                   {SUMMARY_COLUMNS.map((col) => (
                     <th
                       key={col.key}
-                      className={`h-12 px-3 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap ${
+                      className={`h-12 px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap ${
                         col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left"
                       } ${col.width || ""} ${col.key === "actions" ? "bg-gray-50 dark:bg-muted/50" : ""}`}
                     >
@@ -423,11 +576,7 @@ export function InventoryTable({
                 {paginatedGroups.map((group, groupIndex) => {
                   const isExpanded = expandedBarcodes.has(group.barcode)
 
-                  // Filter: only show outgoing + return in dropdown (not initial incoming)
-                  const historyTransactions = group.transactions.filter((txn: any) => {
-                    const mt = getMovementType(txn).toLowerCase()
-                    return mt.includes("outgoing") || mt.includes("return")
-                  })
+                  const historyTransactions = group.transactions
                   const hasHistory = historyTransactions.length > 0
                   return (
                     <>{/* Fragment for summary + expanded rows */}
@@ -437,20 +586,20 @@ export function InventoryTable({
                         id={`inventory-item-${group.barcode}`}
                         ref={(el) => { if (el) itemRowRefs.current.set(group.barcode, el) }}
                         className={[
-                          "group border-b border-border/40 transition-all duration-200",
+                          "group border-b border-border/30 transition-colors duration-150",
                           hasHistory ? "cursor-pointer" : "",
                           isExpanded
-                            ? "bg-blue-50/80 dark:bg-blue-950/30 shadow-sm"
+                            ? "bg-blue-50/70 dark:bg-blue-950/20"
                             : groupIndex % 2 === 0
                               ? "bg-white dark:bg-card"
-                              : "bg-gray-50/50 dark:bg-muted/20",
-                          hasHistory ? "hover:bg-blue-50/60 dark:hover:bg-blue-950/30" : "",
+                              : "bg-gray-50/40 dark:bg-muted/10",
+                          "hover:bg-slate-100/70 dark:hover:bg-muted/30",
                         ].join(" ")}
                         onClick={() => hasHistory && toggleExpand(group.barcode)}
                         title={hasHistory ? "Click to view transaction history" : ""}      
                       >
                         {/* Expand Icon */}
-                        <td className="h-14 px-2 py-2 align-middle text-center w-10">
+                        <td className="h-14 px-4 py-2 align-middle text-center w-10">
                           {hasHistory ? (
                             <div className={`inline-flex items-center justify-center w-6 h-6 rounded-md transition-all duration-200 ${
                               isExpanded
@@ -468,61 +617,54 @@ export function InventoryTable({
                         </td>
 
                         {/* Date Added */}
-                        <td className="h-14 px-3 py-3 text-sm text-foreground/70 align-middle whitespace-nowrap">
+                        <td className="h-14 px-4 py-2 text-sm text-foreground/70 align-middle whitespace-nowrap">
                           {formatTxnDate(group.dateAdded)}
                         </td>
 
-                        {/* Product Name */}
-                        <td className="h-14 px-3 py-3 font-medium text-sm text-foreground align-middle">
+                        {/* Product Name — with type icon */}
+                        <td className="h-14 px-4 py-2 font-medium text-sm text-foreground align-middle">
                           <div className="flex items-center gap-2">
-                            <Package className="h-4 w-4 text-slate-400 shrink-0" />
+                            <span className="text-base shrink-0" aria-hidden="true">
+                              {(() => {
+                                const name = (group.productName || "").toLowerCase();
+                                if (name.includes("chicken")) return "🐔";
+                                if (name.includes("pork") || name.includes("belly") || name.includes("back fat")) return "🥩";
+                                if (name.includes("beef")) return "🐄";
+                                if (name.includes("raw")) return "📦";
+                                return "📦";
+                              })()}
+                            </span>
                             <span className="line-clamp-1" title={group.productName}>{group.productName}</span>
                           </div>
                         </td>
 
-                        {/* Barcode */}
-                        <td className="h-14 px-3 py-3 font-mono text-sm text-foreground align-middle">
-                          <div className="truncate max-w-[180px]" title={group.barcode}>{group.barcode}</div>
-                        </td>
-
-                        {/* Movement Origin */}
-                        <td className="h-14 px-3 py-3 align-middle whitespace-nowrap">
-                          <div className="flex items-center gap-2">
-                            {group.movementOrigin ? (
-                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-[11px] font-semibold border ${getMovementBadgeStyle(group.movementOrigin)}`}>
-                                {group.movementOrigin}
-                              </span>
-                            ) : (
-                              <span className="text-muted-foreground text-xs">{"\u2014"}</span>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Total In */}
-                        <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
-                          {group.totalIncoming > 0 ? (
-                            <span className="text-green-600 dark:text-green-400 font-semibold">{formatNumber(group.totalIncoming)}</span>
+                        {/* Batch */}
+                        <td className="h-14 px-2 py-2 font-mono text-[11px] text-foreground align-middle text-center">
+                          {group.batchNumber !== "-" ? (
+                            <span className="inline-flex items-center rounded bg-blue-50/80 px-1.5 py-0.5 font-semibold text-blue-700 border border-blue-200/60">
+                              {group.batchNumber}
+                            </span>
                           ) : (
                             <span className="text-muted-foreground">{"\u2014"}</span>
                           )}
                         </td>
 
-                        {/* Unit (Box / Pack) */}
-                        <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle whitespace-nowrap">
-                          <span className="text-foreground/70 text-xs">{group.unitType === "PACK" ? "Packs" : "Boxes"}</span>
+                        {/* Barcode */}
+                        <td className="h-14 px-4 py-2 font-mono text-sm text-foreground align-middle">
+                          <div className="truncate max-w-[150px]" title={group.barcode}>{group.barcode}</div>
                         </td>
 
-                        {/* Average Weight */}
-                        <td className="text-center h-14 px-2 py-2 font-medium text-sm align-middle">
-                          {group.avgWeight > 0 ? (
-                            <span className="text-green-600 dark:text-green-400">{formatWeight(group.avgWeight)} kg</span>
+                        {/* Location */}
+                        <td className="h-14 px-4 py-2 text-sm align-middle whitespace-nowrap">
+                          {group.location ? (
+                            <div className="truncate max-w-[120px] text-foreground" title={group.location}>{group.location}</div>
                           ) : (
                             <span className="text-muted-foreground">{"\u2014"}</span>
                           )}
                         </td>
 
                         {/* Expiry Date */}
-                        <td className="h-14 px-3 py-3 text-sm align-middle whitespace-nowrap">
+                        <td className="h-14 px-4 py-2 text-sm align-middle whitespace-nowrap">
                           {formatTxnDate(group.expiryDate) !== "\u2014" ? (
                             <span className="text-foreground/70 text-xs">{formatTxnDate(group.expiryDate)}</span>
                           ) : (
@@ -530,42 +672,106 @@ export function InventoryTable({
                           )}
                         </td>
 
-                        {/* Stock Left */}
-                        <td className="text-center h-14 px-2 py-2 align-middle">
-                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border ${
-                            group.stockLeft <= 0
-                              ? "bg-red-100 text-red-700 border-red-200 dark:bg-red-900/40 dark:text-red-400"
-                              : group.stockLeft <= 5
-                                ? "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/40 dark:text-orange-400"
-                                : "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-400"
-                          }`}>
-                            {formatNumber(group.stockLeft)}
+                        {/* Incoming Stock (with unit label) */}
+                        <td className="text-right h-14 px-4 py-2 font-medium text-sm align-middle">
+                          <span className={group.totalIncoming > 0 ? "text-green-600 dark:text-green-400 font-semibold" : "text-muted-foreground"}>
+                            {formatNumber(group.totalIncoming)} <span className="text-[11px] font-normal opacity-80">{group.unitType === "PACK" ? "packs" : "boxes"}</span>
                           </span>
                         </td>
 
-                        {/* Location */}
-                        <td className="h-14 px-3 py-3 text-sm align-middle whitespace-nowrap">
-                          {group.location ? (
-                            <div className="truncate max-w-[100px] text-foreground" title={group.location}>{group.location}</div>
+                        {/* Outgoing Stock (with unit label) */}
+                        <td className="text-right h-14 px-4 py-2 font-medium text-sm align-middle">
+                          <span className={group.totalOutgoing > 0 ? "text-red-600 dark:text-red-400 font-semibold" : "text-muted-foreground"}>
+                            {formatNumber(group.totalOutgoing)} <span className="text-[11px] font-normal opacity-80">{group.unitType === "PACK" ? "packs" : "boxes"}</span>
+                          </span>
+                        </td>
+
+                        {/* Good Return Stock — BLUE */}
+                        <td className="text-right h-14 px-4 py-2 font-medium text-sm align-middle">
+                          <span className={group.totalGoodReturn > 0 ? "text-blue-600 dark:text-blue-400 font-semibold" : "text-muted-foreground"}>
+                            {group.totalGoodReturn > 0 ? "+" : ""}{formatNumber(group.totalGoodReturn)} <span className="text-[11px] font-normal opacity-80">{group.unitType === "PACK" ? "packs" : "boxes"}</span>
+                          </span>
+                        </td>
+
+                        {/* Bad Return Stock — GRAY */}
+                        <td className="text-right h-14 px-4 py-2 font-medium text-sm align-middle">
+                          <span className={group.totalDamageReturn > 0 ? "text-slate-500 dark:text-slate-400 font-semibold" : "text-muted-foreground"}>
+                            {formatNumber(group.totalDamageReturn)} <span className="text-[11px] font-normal opacity-80">{group.unitType === "PACK" ? "packs" : "boxes"}</span>
+                          </span>
+                        </td>
+
+                        {/* Remaining Stock — Dynamic color: green (healthy ≥10), yellow (low 1-9), red (0) */}
+                        <td className="text-right h-14 px-4 py-2 font-medium text-sm align-middle">
+                          {(() => {
+                            const stock = group.stockLeft;
+                            const unit = group.unitType === "PACK" ? "packs" : "boxes";
+                            let colorClass = "text-green-700 dark:text-green-400";
+                            let bgClass = "bg-green-50 dark:bg-green-950/20";
+                            let dotClass = "bg-green-500";
+                            if (stock <= 0) {
+                              colorClass = "text-red-700 dark:text-red-400";
+                              bgClass = "bg-red-50 dark:bg-red-950/20";
+                              dotClass = "bg-red-500";
+                            } else if (stock < 10) {
+                              colorClass = "text-amber-700 dark:text-amber-400";
+                              bgClass = "bg-amber-50 dark:bg-amber-950/20";
+                              dotClass = "bg-amber-500";
+                            }
+                            return (
+                              <span className={`inline-flex items-center gap-1.5 font-bold px-2 py-0.5 rounded-md ${colorClass} ${bgClass}`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${dotClass} shrink-0`} />
+                                {formatNumber(stock)} <span className="text-[11px] font-normal opacity-80">{unit}</span>
+                              </span>
+                            );
+                          })()}
+                        </td>
+
+                        {/* Weight */}
+                        <td className="text-right h-14 px-4 py-2 font-medium text-sm align-middle">
+                          {group.avgWeight > 0 ? (
+                            <span className="text-foreground/80">{formatWeight(group.avgWeight)} kg</span>
                           ) : (
                             <span className="text-muted-foreground">{"\u2014"}</span>
                           )}
                         </td>
 
-                        {/* Actions */}
-                        <td className="h-14 px-3 py-2 align-middle whitespace-nowrap">
-                          <div className="flex items-center gap-1.5 justify-end" onClick={(e) => e.stopPropagation()}>
+                        {/* Unit (Box / Pack) */}
+                        <td className="text-center h-14 px-4 py-2 font-medium text-sm align-middle whitespace-nowrap">
+                          <span className="text-foreground/70 text-xs">{group.unitType === "PACK" ? "Packs" : "Boxes"}</span>
+                        </td>
+
+                        {/* Actions — Show Barcode + Print Barcode */}
+                        <td className="h-14 px-4 py-2 align-middle whitespace-nowrap text-center">
+                          <div className="flex items-center justify-center gap-2" onClick={(e) => e.stopPropagation()}>
                             {group.barcode && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-8 px-2.5 gap-1.5 text-xs font-medium text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:text-emerald-300 dark:hover:bg-emerald-950/30"
-                                onClick={() => setBarcodeViewItem({ barcode: group.barcode, productName: group.productName })}
-                                title="View Barcode"
-                              >
-                                <Barcode className="h-3.5 w-3.5" />
-                                Barcode
-                              </Button>
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 px-3 gap-1.5 text-xs font-medium text-emerald-700 border-emerald-200 hover:text-emerald-800 hover:bg-emerald-50 hover:border-emerald-300 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-950/30 transition-colors"
+                                  onClick={() => setBarcodeViewItem({ barcode: group.barcode, productName: group.productName })}
+                                  title="Show Barcode"
+                                >
+                                  <Barcode className="h-3.5 w-3.5" />
+                                  Show
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 px-3 gap-1.5 text-xs font-medium text-blue-700 border-blue-200 hover:text-blue-800 hover:bg-blue-50 hover:border-blue-300 dark:text-blue-400 dark:border-blue-800 dark:hover:bg-blue-950/30 transition-colors"
+                                  onClick={() => {
+                                    setBarcodeViewItem({ barcode: group.barcode, productName: group.productName })
+                                    setTimeout(() => {
+                                      const printBtn = document.querySelector('[data-barcode-print]') as HTMLButtonElement
+                                      if (printBtn) printBtn.click()
+                                    }, 500)
+                                  }}
+                                  title="Print Barcode"
+                                >
+                                  <Printer className="h-3.5 w-3.5" />
+                                  Print
+                                </Button>
+                              </>
                             )}
                           </div>
                         </td>
@@ -587,160 +793,11 @@ export function InventoryTable({
                                 </span>
                               </div>
 
-                              {/* Sub-table: type-specific columns per row */}
-                              <div className="overflow-x-auto">
-                                {historyTransactions.map((txn: any, txnIdx: number) => {
-                                  const movementType = getMovementType(txn)
-                                  const mt = movementType.toLowerCase()
-                                  const isOutgoing = mt.includes("outgoing")
-                                  const isReturn = mt.includes("return")
-                                  const outPacks = txn.outgoing_packs ?? txn.outgoing_qty ?? 0
-                                  const txnAvgWeight = txn.avg_weight ?? txn.outgoing_weight ?? txn.incoming_weight ?? 0
-
-                                  // Construct delivery address from addressDetails if customer_address is missing
-                                  const deliveryAddr = txn.customer_address || txn.delivery_address || (() => {
-                                    const ad = txn.addressDetails
-                                    if (!ad) return ""
-                                    return [ad.houseNumber, ad.streetName, ad.barangay ? `Brgy. ${ad.barangay}` : "", ad.city, ad.province, ad.region].filter(Boolean).join(", ")
-                                  })() || ""
-
-                                  return (
-                                    <div
-                                      key={txn.id}
-                                      className={[
-                                        "border-b border-slate-200/60 dark:border-slate-700/40",
-                                        isReturn
-                                          ? "bg-teal-50/40 dark:bg-teal-950/10"
-                                          : "bg-red-50/20 dark:bg-red-950/5",
-                                      ].join(" ")}
-                                    >
-                                      {/* Row header: date + type badge + actions */}
-                                      <div className="flex items-center justify-between px-5 py-2">
-                                        <div className="flex items-center gap-3">
-                                          <span className="text-xs text-foreground/70 font-medium">{formatTxnDate(txn.transaction_date)}</span>
-                                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border ${getMovementBadgeStyle(movementType)}`}>
-                                            {movementType}
-                                          </span>
-                                        </div>
-                                        <div className="flex items-center gap-1">
-                                          <Button
-                                            size="sm"
-                                            variant="ghost"
-                                            className="h-7 px-2 gap-1 text-[11px] font-medium text-muted-foreground hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30"
-                                            onClick={(e) => { e.stopPropagation(); setEditingItem(txn as any) }}
-                                            title="Edit Transaction"
-                                          >
-                                            <Pencil className="h-3 w-3" />
-                                            Edit
-                                          </Button>
-                                          <Button
-                                            size="sm"
-                                            variant="ghost"
-                                            className="h-7 px-2 gap-1 text-[11px] font-medium text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
-                                            onClick={(e) => { e.stopPropagation(); setCancellingItem(txn as any) }}
-                                            title="Delete Transaction"
-                                          >
-                                            <Trash2 className="h-3 w-3" />
-                                            Delete
-                                          </Button>
-                                        </div>
-                                      </div>
-
-                                      {/* Type-specific detail grid */}
-                                      {isOutgoing && (
-                                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-x-4 gap-y-2 px-5 pb-3 text-xs">
-                                          <div>
-                                            <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Quantity</span>
-                                            <span className="text-red-600 dark:text-red-400 font-semibold">-{formatNumber(outPacks)} {deriveUnitType(txn) === "PACK" ? "Packs" : "Boxes"}</span>
-                                          </div>
-                                          <div>
-                                            <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Average Weight</span>
-                                            <span className="text-foreground font-medium">{txnAvgWeight > 0 ? `${formatWeight(txnAvgWeight)} kg` : "\u2014"}</span>
-                                          </div>
-                                          <div>
-                                            <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Customer</span>
-                                            <span className="text-foreground truncate block max-w-[160px]" title={txn.customer_name || txn.to_location || ""}>
-                                              {txn.customer_name || txn.to_location || "\u2014"}
-                                            </span>
-                                          </div>
-                                          <div>
-                                            <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Delivery Address</span>
-                                            <span className="text-foreground truncate block max-w-[200px]" title={deliveryAddr || ""}>
-                                              {deliveryAddr || "No address provided"}
-                                            </span>
-                                          </div>
-                                          <div>
-                                            <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">DR / SI No.</span>
-                                            <span className="text-foreground font-mono truncate block max-w-[180px]" title={txn.reference_no || `${txn.deliveryReceiptNo || ""} / ${txn.salesInvoiceNo || ""}`}>
-                                              {txn.deliveryReceiptNo && txn.salesInvoiceNo
-                                                ? `${txn.deliveryReceiptNo} / ${txn.salesInvoiceNo}`
-                                                : txn.reference_no || "\u2014"}
-                                            </span>
-                                          </div>
-                                          {txn.transferSlipNo && (
-                                            <div>
-                                              <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Transfer Slip</span>
-                                              <span className="text-foreground font-mono truncate block max-w-[120px]" title={txn.transferSlipNo}>{txn.transferSlipNo}</span>
-                                            </div>
-                                          )}
-                                        </div>
-                                      )}
-
-                                      {isReturn && (
-                                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-x-4 gap-y-2 px-5 pb-3 text-xs">
-                                          {(txn.good_return ?? 0) > 0 && (
-                                            <div>
-                                              <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Good Return</span>
-                                              <span className="text-green-600 dark:text-green-400 font-semibold">+{formatNumber(txn.good_return)}</span>
-                                            </div>
-                                          )}
-                                          {(txn.damage_return ?? 0) > 0 && (
-                                            <div>
-                                              <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Bad Return</span>
-                                              <button
-                                                type="button"
-                                                onClick={(e) => {
-                                                  e.stopPropagation()
-                                                  setBadReturnDetailsView({
-                                                    productName: txn.product_name || "Unknown Product",
-                                                    details: txn.bad_return_details || null,
-                                                    quantity: txn.damage_return ?? 0,
-                                                  })
-                                                }}
-                                                className="text-red-600 dark:text-red-400 font-semibold underline underline-offset-2 decoration-dotted cursor-pointer"
-                                              >
-                                                {formatNumber(txn.damage_return)}
-                                              </button>
-                                            </div>
-                                          )}
-                                          {txn.bad_return_details?.reason && (
-                                            <div>
-                                              <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Return Reason</span>
-                                              <span className="text-red-600 dark:text-red-400 font-medium">{txn.bad_return_details.reason}</span>
-                                            </div>
-                                          )}
-                                          <div>
-                                            <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Customer</span>
-                                            <span className="text-foreground">{txn.customer_name || "\u2014"}</span>
-                                          </div>
-                                          {txn.reference_no && (
-                                            <div>
-                                              <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Reference No.</span>
-                                              <span className="text-foreground font-mono">{txn.reference_no}</span>
-                                            </div>
-                                          )}
-                                          {txn.location && (
-                                            <div>
-                                              <span className="text-muted-foreground block text-[10px] uppercase tracking-wider">Location</span>
-                                              <span className="text-foreground">{txn.location}</span>
-                                            </div>
-                                          )}
-                                        </div>
-                                      )}
-                                    </div>
-                                  )
-                                })}
-                              </div>
+                              {/* Sub-table: Stacked transaction cards/rows */}
+                              <TransactionHistoryList 
+                                transactions={historyTransactions} 
+                                setCancellingItem={setCancellingItem} 
+                              />
                             </div>
                           </td>
                         </tr>
@@ -776,11 +833,7 @@ export function InventoryTable({
           {paginatedGroups.map((group, index) => {
             const isExpanded = expandedBarcodes.has(group.barcode)
 
-            // Filter: only show outgoing + return in dropdown (not initial incoming)
-            const historyTransactions = group.transactions.filter((txn: any) => {
-              const mt = getMovementType(txn).toLowerCase()
-              return mt.includes("outgoing") || mt.includes("return")
-            })
+            const historyTransactions = group.transactions
             const hasHistory = historyTransactions.length > 0
 
             return (
@@ -809,15 +862,11 @@ export function InventoryTable({
                     <div className="flex-1 min-w-0">
                       <h3 className="font-semibold text-sm text-foreground line-clamp-1">{group.productName}</h3>
                       <p className="text-xs text-muted-foreground font-mono mt-0.5">{group.barcode}</p>
+                      {group.location && (
+                        <p className="text-[10px] text-muted-foreground mt-0.5">📍 {group.location}</p>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      {group.movementOrigin ? (
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border ${getMovementBadgeStyle(group.movementOrigin)}`}>
-                          {group.movementOrigin}
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-muted-foreground">{"\u2014"}</span>
-                      )}
                       {hasHistory ? (
                         <div className={`w-6 h-6 rounded-md flex items-center justify-center transition-all ${
                           isExpanded ? "bg-blue-500 text-white" : "bg-slate-100 text-slate-500"
@@ -829,39 +878,58 @@ export function InventoryTable({
                   </div>
 
                   {/* Quick stats */}
-                  <div className="grid grid-cols-4 gap-2 mt-3 pt-3 border-t border-border/40">
+                  <div className="grid grid-cols-5 gap-2 mt-3 pt-3 border-t border-border/40">
                     <div className="text-center">
-                      <span className="text-[10px] text-muted-foreground block">Total In</span>
-                      <span className="text-xs font-semibold text-green-600">{group.totalIncoming > 0 ? formatNumber(group.totalIncoming) : "\u2014"}</span>
+                      <span className="text-[10px] text-muted-foreground block">Incoming</span>
+                      <span className="text-xs font-semibold text-green-600">{group.totalIncoming > 0 ? `${formatNumber(group.totalIncoming)} ${group.unitType === "PACK" ? "pk" : "bx"}` : "\u2014"}</span>
                     </div>
                     <div className="text-center">
-                      <span className="text-[10px] text-muted-foreground block">Unit</span>
-                      <span className="text-xs font-semibold text-foreground/70">{group.unitType === "PACK" ? "Packs" : "Boxes"}</span>
+                      <span className="text-[10px] text-muted-foreground block">Outgoing</span>
+                      <span className="text-xs font-semibold text-red-600">{group.totalOutgoing > 0 ? `${formatNumber(group.totalOutgoing)} ${group.unitType === "PACK" ? "pk" : "bx"}` : "\u2014"}</span>
+                    </div>
+                    <div className="text-center bg-blue-50/50 dark:bg-blue-900/10 rounded pb-1">
+                      <span className="text-[10px] text-blue-700/70 font-semibold block pt-1">Remaining</span>
+                      <span className="text-xs font-bold text-blue-700 dark:text-blue-400">{formatNumber(group.stockLeft)} <span className="font-normal text-[10px]">{group.unitType === "PACK" ? "pk" : "bx"}</span></span>
                     </div>
                     <div className="text-center">
-                      <span className="text-[10px] text-muted-foreground block">Avg Weight</span>
+                      <span className="text-[10px] text-muted-foreground block">Weight</span>
                       <span className="text-xs font-semibold text-foreground/70">{group.avgWeight > 0 ? `${formatWeight(group.avgWeight)} kg` : "\u2014"}</span>
                     </div>
                     <div className="text-center">
-                      <span className="text-[10px] text-muted-foreground block">Stock Left</span>
-                      <span className={`text-xs font-bold ${group.stockLeft <= 0 ? "text-red-600" : group.stockLeft <= 5 ? "text-orange-600" : "text-emerald-600"}`}>
-                        {formatNumber(group.stockLeft)}
-                      </span>
+                      <span className="text-[10px] text-muted-foreground block">Expiry</span>
+                      <span className="text-xs font-semibold text-foreground/70">{formatTxnDate(group.expiryDate) !== "\u2014" ? formatTxnDate(group.expiryDate) : "\u2014"}</span>
                     </div>
                   </div>
 
-                  {/* View Barcode action */}
+                  {/* Barcode actions - Show + Print */}
                   {group.barcode && (
-                    <div className="mt-2 pt-2 border-t border-border/30">
+                    <div className="mt-2 pt-2 border-t border-border/30 flex items-center gap-2">
                       <Button
                         size="sm"
                         variant="ghost"
                         className="h-7 px-2.5 gap-1.5 text-xs font-medium text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:text-emerald-300 dark:hover:bg-emerald-950/30"
                         onClick={(e) => { e.stopPropagation(); setBarcodeViewItem({ barcode: group.barcode, productName: group.productName }) }}
-                        title="View Barcode"
+                        title="Show Barcode"
                       >
                         <Barcode className="h-3.5 w-3.5" />
-                        Barcode
+                        Show Barcode
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2.5 gap-1.5 text-xs font-medium text-blue-700 hover:text-blue-800 hover:bg-blue-50 dark:text-blue-400 dark:hover:text-blue-300 dark:hover:bg-blue-950/30"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setBarcodeViewItem({ barcode: group.barcode, productName: group.productName })
+                          setTimeout(() => {
+                            const printBtn = document.querySelector('[data-barcode-print]') as HTMLButtonElement
+                            if (printBtn) printBtn.click()
+                          }, 500)
+                        }}
+                        title="Print Barcode"
+                      >
+                        <Printer className="h-3.5 w-3.5" />
+                        Print
                       </Button>
                     </div>
                   )}
@@ -876,102 +944,11 @@ export function InventoryTable({
                         History ({historyTransactions.length})
                       </span>
                     </div>
-                    <div className="divide-y divide-border/40">
-                      {historyTransactions.map((txn: any) => {
-                        const movementType = getMovementType(txn)
-                        const mt = movementType.toLowerCase()
-                        const isOutgoing = mt.includes("outgoing")
-                        const isReturn = mt.includes("return")
-                        const outPacks = txn.outgoing_packs ?? txn.outgoing_qty ?? 0
-                        const txnAvgWeight = txn.avg_weight ?? txn.outgoing_weight ?? txn.incoming_weight ?? 0
-
-                        // Construct delivery address from addressDetails if customer_address is missing
-                        const deliveryAddr = txn.customer_address || txn.delivery_address || (() => {
-                          const ad = txn.addressDetails
-                          if (!ad) return ""
-                          return [ad.houseNumber, ad.streetName, ad.barangay ? `Brgy. ${ad.barangay}` : "", ad.city, ad.province, ad.region].filter(Boolean).join(", ")
-                        })() || ""
-
-                        const borderColor = isOutgoing ? "border-l-red-500" : "border-l-teal-500"
-
-                        return (
-                          <div
-                            key={txn.id}
-                            className={`px-4 py-3 border-l-[3px] ${borderColor} ${
-                              isReturn ? "bg-teal-50/30" : "bg-red-50/15"
-                            }`}
-                          >
-                            {/* Header: Date + Badge + Actions */}
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-[11px] text-muted-foreground font-medium">{formatTxnDate(txn.transaction_date)}</span>
-                                <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold border ${getMovementBadgeStyle(movementType)}`}>
-                                  {movementType}
-                                </span>
-                                {isOutgoing && outPacks > 0 && (
-                                  <span className="text-xs font-semibold text-red-600">
-                                    −{formatNumber(outPacks)} {(txn.outgoing_unit || "box") === "box" ? "Box" : "Pack"}
-                                    {txnAvgWeight > 0 && <span className="text-[10px] font-normal text-red-500/70 ml-0.5">({formatWeight(txnAvgWeight)} kg)</span>}
-                                  </span>
-                                )}
-                                {isReturn && (
-                                  <>
-                                    {(txn.good_return ?? 0) > 0 && (
-                                      <span className="text-xs font-semibold text-green-600">+{formatNumber(txn.good_return)} Good</span>
-                                    )}
-                                    {(txn.damage_return ?? 0) > 0 && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          setBadReturnDetailsView({
-                                            productName: txn.product_name || "Unknown",
-                                            details: txn.bad_return_details || null,
-                                            quantity: txn.damage_return ?? 0,
-                                          })
-                                        }}
-                                        className="text-xs font-semibold text-red-600 underline underline-offset-2 decoration-dotted"
-                                      >
-                                        +{formatNumber(txn.damage_return)} Damaged
-                                      </button>
-                                    )}
-                                  </>
-                                )}
-                              </div>
-                              <div className="flex gap-1 shrink-0">
-                                <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); setEditingItem(txn as any) }}>
-                                  <Pencil className="h-3 w-3 text-muted-foreground" />
-                                </Button>
-                                <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); setCancellingItem(txn as any) }}>
-                                  <Trash2 className="h-3 w-3 text-muted-foreground" />
-                                </Button>
-                              </div>
-                            </div>
-                            {/* Contextual details */}
-                            <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1 text-[10px]">
-                              {isOutgoing && (
-                                <>
-                                  {(txn.customer_name || txn.to_location) && <span className="text-muted-foreground">Customer: {txn.customer_name || txn.to_location}</span>}
-                                  <span className="text-muted-foreground">📍 {deliveryAddr || "No address provided"}</span>
-                                  <span className="text-muted-foreground font-mono">
-                                    DR/SI: {txn.deliveryReceiptNo && txn.salesInvoiceNo
-                                      ? `${txn.deliveryReceiptNo} / ${txn.salesInvoiceNo}`
-                                      : txn.reference_no || "—"}
-                                  </span>
-                                </>
-                              )}
-                              {isReturn && (
-                                <>
-                                  {txn.customer_name && <span className="text-muted-foreground">Customer: {txn.customer_name}</span>}
-                                  {txn.reference_no && <span className="text-muted-foreground font-mono">Ref: {txn.reference_no}</span>}
-                                  {txn.bad_return_details?.reason && <span className="text-red-500">Reason: {txn.bad_return_details.reason}</span>}
-                                  {txn.location && <span className="text-muted-foreground">📍 {txn.location}</span>}
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        )
-                      })}
+                    <div className="bg-white/50 dark:bg-black/10">
+                      <TransactionHistoryList 
+                        transactions={historyTransactions} 
+                        setCancellingItem={setCancellingItem} 
+                      />
                     </div>
                   </div>
                 )}
@@ -1016,12 +993,6 @@ export function InventoryTable({
           </div>
         )}
       </div>
-
-      <EditItemDialog
-        transaction={editingItem}
-        open={!!editingItem}
-        onOpenChange={(open) => !open && setEditingItem(null)}
-      />
 
       <ConfirmationDialog
         open={!!cancellingItem}

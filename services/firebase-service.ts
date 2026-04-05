@@ -466,3 +466,73 @@ export const BarcodeService = {
     }
   },
 }
+
+// ─── Batch Number Service ──────────────────────────────────────────────────────
+// Manages auto-incrementing batch numbers per barcode base.
+// Each product with the same barcode_base gets a unique batch (001, 002, 003...).
+
+export const BatchNumberService = {
+  /**
+   * Get the next batch number for a given product ID.
+   * Queries the `inventory` collection for existing items with the same product_id,
+   * finds the highest batch_number, and returns the next one.
+   * Returns "001" if no existing items are found.
+   */
+  getNextBatchNumber: async (productId: string): Promise<string> => {
+    try {
+      const db = getFirebaseDb()
+      const ref = fbCollection(db, "inventory")
+      const q = fbQuery(ref, where("product_id", "==", productId))
+      const snapshot = await fbGetDocs(q)
+
+      if (snapshot.empty) {
+        console.log(`[BatchNumberService] No existing items for product_id="${productId}", starting at 001`)
+        return "001"
+      }
+
+      // Find the highest batch number among all documents with this product_id
+      let maxBatch = 0
+      snapshot.docs.forEach((doc) => {
+        const data = doc.data()
+        const batchStr = data.batch_number || "000"
+        const batchNum = parseInt(batchStr, 10)
+        if (!isNaN(batchNum) && batchNum > maxBatch) {
+          maxBatch = batchNum
+        }
+      })
+
+      const nextBatch = String(maxBatch + 1).padStart(3, "0")
+      console.log(`[BatchNumberService] Found ${snapshot.docs.length} existing items, highest batch=${maxBatch}, next=${nextBatch}`)
+      return nextBatch
+    } catch (error) {
+      console.error("[BatchNumberService] Error getting next batch number:", error)
+      // Fallback to 001 on error to avoid blocking the user
+      return "001"
+    }
+  },
+
+  /**
+   * Also check the generated_barcodes collection for the final combined barcode
+   * to make sure it doesn't already exist.
+   */
+  checkFinalBarcodeExists: async (finalBarcode: string): Promise<boolean> => {
+    try {
+      const db = getFirebaseDb()
+      // Check inventory collection
+      const invRef = fbCollection(db, "inventory")
+      const invQ = fbQuery(invRef, where("barcode", "==", finalBarcode))
+      const invSnapshot = await fbGetDocs(invQ)
+      if (!invSnapshot.empty) return true
+
+      // Also check generated_barcodes collection
+      const bcRef = fbCollection(db, "generated_barcodes")
+      const bcQ = fbQuery(bcRef, where("barcode", "==", finalBarcode))
+      const bcSnapshot = await fbGetDocs(bcQ)
+      return !bcSnapshot.empty
+    } catch (error) {
+      console.error("[BatchNumberService] Error checking final barcode:", error)
+      return true // Assume exists on error to be safe
+    }
+  },
+}
+

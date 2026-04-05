@@ -21,7 +21,10 @@ export interface Category {
 
 export interface InventoryItem {
   id: string
+  product_id?: string // Identifier for the product used for batch generation (e.g. slugified name)
   barcode: string
+  barcode_base?: string  // Original generated barcode before batch suffix (e.g., FPPBB-KCY2H7)
+  batch_number?: string  // Auto-incremented batch (e.g., "001", "002")
   name?: string
   category: string // "Raw Material" | "Finished Product" | "By-product" (new system) or legacy ALL CAPS
   subcategory?: string // Legacy field — kept for backward compatibility
@@ -107,11 +110,14 @@ export interface InventoryTransaction {
   id: string
   transaction_date: Date | any
   movement_type?: string     // From Supplier / From Production / From Packing / Outgoing / Return
+  product_id?: string        // Identifier for the product
   product_name: string
   barcode: string
   category: string
   type: string               // beef, pork, chicken
   unit_type?: "BOX" | "PACK" // consolidated unit type for display
+  batch_number?: string      // batch number (e.g., "001")
+  barcode_base?: string      // original barcode before batch suffix
   incoming_qty: number       // default 0
   incoming_packs?: number    // packs/boxes incoming
   incoming_unit?: "box" | "pack"  // unit type for incoming stock

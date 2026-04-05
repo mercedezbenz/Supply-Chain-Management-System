@@ -36,7 +36,6 @@ interface ScanItemDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   inventoryItems: InventoryItem[]
-  onAddStock?: (item: InventoryItem) => void
   onProductOut?: (item: InventoryItem) => void
   onReturnItem?: (item: InventoryItem) => void
   onRegisterNew?: (barcode: string) => void
@@ -81,7 +80,6 @@ export function ScanItemDialog({
   open,
   onOpenChange,
   inventoryItems,
-  onAddStock,
   onProductOut,
   onReturnItem,
   onRegisterNew,
@@ -140,14 +138,6 @@ export function ScanItemDialog({
     if (e.key === "Enter") {
       e.preventDefault()
       handleScan(barcodeValue)
-    }
-  }
-
-  // ── Actions ──────────────────────────────────────────────────────────
-  const handleAddStock = () => {
-    if (foundItem && onAddStock) {
-      onAddStock(foundItem)
-      onOpenChange(false)
     }
   }
 
@@ -393,16 +383,8 @@ export function ScanItemDialog({
                 </div>
               )}
 
-              {/* ── Action Buttons ────────────────────────────────── */}
-              <div className="grid grid-cols-3 gap-3 pt-1">
-                <Button
-                  type="button"
-                  onClick={handleAddStock}
-                  className="h-12 gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-xl"
-                >
-                  <PackagePlus className="h-5 w-5" />
-                  Add Stock (Incoming)
-                </Button>
+              {/* ── Action Buttons ── Product Out (primary) + Return (secondary) ── */}
+              <div className="grid grid-cols-2 gap-3 pt-1">
                 <Button
                   type="button"
                   onClick={handleProductOut}
@@ -411,7 +393,7 @@ export function ScanItemDialog({
                     "h-12 gap-2 font-semibold text-sm rounded-xl",
                     stockLeft <= 0
                       ? "bg-slate-200 text-slate-400 cursor-not-allowed hover:bg-slate-200"
-                      : "bg-orange-500 hover:bg-orange-600 text-white"
+                      : "bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-200"
                   )}
                 >
                   <Truck className="h-5 w-5" />
@@ -419,8 +401,9 @@ export function ScanItemDialog({
                 </Button>
                 <Button
                   type="button"
+                  variant="outline"
                   onClick={handleReturnItem}
-                  className="h-12 gap-2 bg-sky-600 hover:bg-sky-700 text-white font-semibold text-sm rounded-xl"
+                  className="h-12 gap-2 font-semibold text-sm rounded-xl border-2 border-slate-300 text-slate-700 hover:bg-slate-50 hover:border-slate-400"
                 >
                   <RotateCcw className="h-5 w-5" />
                   Return Item

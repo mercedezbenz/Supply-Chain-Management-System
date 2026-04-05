@@ -3,7 +3,7 @@
 import type React from "react"
 import { useState, useRef, useEffect, useCallback } from "react"
 import { format } from "date-fns"
-import { CalendarIcon, Barcode, RefreshCw, CheckCircle2, Loader2, Printer, Plus, FileText } from "lucide-react"
+import { CalendarIcon, Barcode, RefreshCw, CheckCircle2, Loader2, Printer, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -27,7 +27,7 @@ import {
 import { Calendar } from "@/components/ui/calendar"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/hooks/use-auth"
-import { InventoryService, BarcodeService, TransactionService } from "@/services/firebase-service"
+import { InventoryService, BarcodeService, BatchNumberService, TransactionService } from "@/services/firebase-service"
 import { useToast } from "@/hooks/use-toast"
 import {
   CATEGORIES,
@@ -121,30 +121,20 @@ async function generateUniqueBarcode(
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-const STOCK_SOURCE_OPTIONS = [
-  "From Supplier (Received)",
-  "From Production (Recovery)",
-]
-
 const EMPTY_FORM = {
   barcode: "",
+  barcodeBase: "",
+  batchNumber: "",
   category: "",
   productType: "",
   productName: "",
   expirationDate: undefined as Date | undefined,
-  productionDate: undefined as Date | undefined,
-  stockSource: "",
   incomingStock: "",
   incomingUnit: "box" as "box" | "pack",
   weightKg: "",
   avgWeightMin: "",
   avgWeightMax: "",
   storageLocation: "",
-  // Transaction Document fields
-  supplierName: "",
-  deliveryReceiptNo: "",
-  supplierInvoiceNo: "",
-  deliveryDate: undefined as Date | undefined,
 }
 
 // Special sentinel value for "+ Add Item" option
@@ -250,6 +240,12 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
     }
     return ""
   })()
+
+  // Generate a deterministic product ID based on the product name for batch grouping
+  const productId = (autoProductName || formData.category)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
 
   // ── Change handlers ───────────────────────────────────────────────────────
   const handleCategoryChange = (value: string) => {
@@ -365,27 +361,40 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
     if (!canGenerate || isGenerating) return
     setIsGenerating(true)
     setBarcodeReady(false)
-    setFormData((prev) => ({ ...prev, barcode: "" }))
+    setFormData((prev) => ({ ...prev, barcode: "", barcodeBase: "", batchNumber: "" }))
     setErrors((prev) => ({ ...prev, barcode: "" }))
 
     try {
-      const unique = await generateUniqueBarcode(
+      // Step 1: Generate a unique base barcode (e.g., FPPBB-KCY2H7)
+      const barcodeBase = await generateUniqueBarcode(
         formData.category,
         formData.productType,
         formData.productName || undefined,
       )
 
+      // Step 2: Get the next batch number for this product ID
+      const batchNumber = await BatchNumberService.getNextBatchNumber(productId)
+
+      // Step 3: Combine into final barcode: [BASE]-[BATCH]
+      const finalBarcode = `${barcodeBase}-${batchNumber}`
+
+      // Step 4: Save the final barcode to generated_barcodes collection
       await BarcodeService.saveBarcodeRecord({
-        barcode: unique,
+        barcode: finalBarcode,
         category: formData.category,
         productName: autoProductName || formData.category,
       })
 
-      setFormData((prev) => ({ ...prev, barcode: unique }))
+      setFormData((prev) => ({
+        ...prev,
+        barcode: finalBarcode,
+        barcodeBase: barcodeBase,
+        batchNumber: batchNumber,
+      }))
       setBarcodeReady(true)
       toast({
         title: "Barcode Generated & Saved",
-        description: `Unique barcode: ${unique}`,
+        description: `Barcode: ${finalBarcode} (Batch ${batchNumber})`,
       })
     } catch (error: any) {
       toast({
@@ -513,17 +522,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
       newErrors.productName = "Product name is required"
     }
     if (!formData.expirationDate) newErrors.expirationDate = "Expiration date is required"
-    if (!formData.stockSource) newErrors.stockSource = "Stock source is required"
 
-    // Transaction Document validation based on stock source
-    if (formData.stockSource === "From Supplier (Received)") {
-      if (!formData.supplierName.trim()) newErrors.supplierName = "Supplier name is required"
-      if (!formData.deliveryReceiptNo.trim()) newErrors.deliveryReceiptNo = "Delivery receipt no. is required"
-      if (!formData.deliveryDate) newErrors.deliveryDate = "Delivery date is required"
-    }
-    if (formData.stockSource === "From Production (Recovery)") {
-      if (!formData.productionDate) newErrors.productionDate = "Production date is required"
-    }
     const incomingNum = Number(formData.incomingStock.trim())
     if (formData.incomingStock.trim() === "" || isNaN(incomingNum) || incomingNum < 0) {
       newErrors.incomingStock = "Incoming stock must be a valid number (0 or greater)"
@@ -579,6 +578,9 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
 
       const itemData: any = {
         barcode: formData.barcode.trim(),
+        barcode_base: formData.barcodeBase || formData.barcode.trim(),
+        batch_number: formData.batchNumber || "001",
+        product_id: productId,
         name: autoProductName || formData.category,
         category: formData.category,
         productType: formData.productType,
@@ -589,12 +591,11 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         outgoing: 0,
         stock: stockLeft,
         total: stockLeft,
-        stockSource: formData.stockSource,
+        stockSource: "incoming",
         goodReturnStock: 0,
         damageReturnStock: 0,
         expiryDate: formData.expirationDate || null,
         expirationDate: formData.expirationDate || null,
-        productionDate: formData.productionDate || null,
         location: formData.storageLocation,
         storageLocation: formData.storageLocation,
         unit_type: formData.incomingUnit.toUpperCase(),
@@ -602,21 +603,9 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         avgWeightMin: formData.avgWeightMin ? parseFloat(formData.avgWeightMin) : null,
         avgWeightMax: formData.avgWeightMax ? parseFloat(formData.avgWeightMax) : null,
         qualityStatus: "GOOD" as const,
-        // Transaction Documents
         transactionDocuments: {
           transaction_type: "incoming",
-          source: formData.stockSource === "From Supplier (Received)" ? "supplier"
-            : formData.stockSource === "From Production (Recovery)" ? "production"
-            : formData.stockSource === "From Customer (Return)" ? "customer_return" : "",
-          ...(formData.stockSource === "From Supplier (Received)" && {
-            supplier_name: formData.supplierName.trim(),
-            delivery_receipt_no: formData.deliveryReceiptNo.trim(),
-            invoice_no: formData.supplierInvoiceNo.trim() || null,
-            delivery_date: formData.deliveryDate || null,
-          }),
-          ...(formData.stockSource === "From Production (Recovery)" && {
-            production_date: formData.productionDate || null,
-          }),
+          source: "incoming",
         },
         createdBy: user.uid,
         createdAt: new Date(),
@@ -626,15 +615,6 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
       await InventoryService.addItem(itemData)
 
       // APPEND-ONLY LEDGER: Always create a NEW transaction row for every incoming event
-      const referenceNo =
-        formData.stockSource === "From Supplier (Received)"
-          ? [formData.deliveryReceiptNo.trim(), formData.supplierInvoiceNo.trim()].filter(Boolean).join(" / ")
-          : ""
-
-      const movementSource = formData.stockSource === "From Supplier (Received)" ? "supplier"
-        : formData.stockSource === "From Production (Recovery)" ? "production"
-        : formData.stockSource || ""
-
       const avgWeight = formData.weightKg ? parseFloat(formData.weightKg) : 0
 
       console.log("[AddItem] Payload avg_weight:", avgWeight)
@@ -642,7 +622,10 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
       await TransactionService.addTransaction({
         transaction_date: new Date(),
         product_name: autoProductName || formData.category,
+        product_id: productId,
         barcode: formData.barcode.trim(),
+        barcode_base: formData.barcodeBase || formData.barcode.trim(),
+        batch_number: formData.batchNumber || "001",
         category: formData.category,
         type: formData.productType,
         unit_type: formData.incomingUnit.toUpperCase(),
@@ -657,13 +640,9 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         stock_left: stockLeft,
         location: formData.storageLocation,
         expiry_date: formData.expirationDate || null,
-        reference_no: referenceNo,
-        source: movementSource,
-        production_date: formData.productionDate || null,
+        reference_no: "",
+        source: "incoming",
         process_date: null,
-        ...(formData.stockSource === "From Supplier (Received)" && {
-          supplier_name: formData.supplierName.trim() || null,
-        }),
         created_at: new Date(),
       } as any)
 
@@ -710,7 +689,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent
-        className="!w-[92vw] !max-w-[1200px] !max-h-[none] !overflow-visible !p-0"
+        className="!w-[92vw] !max-w-[1220px] !max-h-[92vh] !overflow-visible !p-0"
       >
         <div className="p-6 pb-0">
           <DialogHeader>
@@ -739,49 +718,18 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         </div>
 
         <form onSubmit={handleSubmit}>
-          {/* ── 2-COLUMN LANDSCAPE GRID ──────────────────────────────── */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 p-6 items-stretch">
+          {/* ── 2-COLUMN LAYOUT: 65/35 split ──────────────────────────── */}
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6 p-6 max-h-[calc(92vh-180px)] overflow-y-auto overflow-x-visible">
 
-            {/* ════════════════ LEFT COLUMN: Stock Entry + Transaction Docs ════════════════ */}
-            <div className="flex flex-col gap-4">
+            {/* ════════════════ LEFT COLUMN: All Form Sections ════════════════ */}
+            <div className="flex flex-col gap-5 min-w-0">
 
-              {/* Stock Source */}
-              <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-4 grid gap-3">
+              {/* ── 1. STOCK ENTRY ────────────────────────────────────────── */}
+              <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-5 grid gap-4">
                 <p className="text-xs font-semibold uppercase tracking-widest text-blue-500">Stock Entry</p>
 
-                <div className="grid gap-1.5">
-                  <Label className="text-sm font-medium text-slate-700">
-                    Stock Source <span className="text-red-500">*</span>
-                  </Label>
-                  <Select
-                    value={formData.stockSource}
-                    onValueChange={(value) => {
-                      setFormData((prev) => ({
-                        ...prev,
-                        stockSource: value,
-                        // Reset all document fields when switching source
-                        supplierName: "",
-                        deliveryReceiptNo: "",
-                        supplierInvoiceNo: "",
-                        deliveryDate: undefined,
-                      }))
-                      setErrors((prev) => ({ ...prev, stockSource: "", supplierName: "", deliveryReceiptNo: "", deliveryDate: "", productionDate: "" }))
-                    }}
-                  >
-                    <SelectTrigger className={cn("h-9", errors.stockSource ? "border-destructive" : "")}>
-                      <SelectValue placeholder="Select stock source" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {STOCK_SOURCE_OPTIONS.map((option) => (
-                        <SelectItem key={option} value={option}>{option}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {errors.stockSource && <p className="text-xs text-destructive">{errors.stockSource}</p>}
-                </div>
-
-                {/* Incoming Stock + Weight side-by-side */}
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Incoming Stock */}
                   <div className="grid gap-1.5">
                     <Label className="text-sm font-medium text-slate-700">
                       Incoming Stock <span className="text-red-500">*</span>
@@ -814,9 +762,11 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                     </div>
                     {errors.incomingStock && <p className="text-xs text-destructive">{errors.incomingStock}</p>}
                   </div>
+
+                  {/* Weight */}
                   <div className="grid gap-1.5">
                     <Label className="text-sm font-medium text-slate-700">
-                      Average Weight <span className="text-slate-400 font-normal">(kg)</span>
+                      Weight <span className="text-slate-400 font-normal">(kg)</span>
                     </Label>
                     <div className="flex gap-1.5 items-center">
                       <Input
@@ -837,10 +787,10 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                   </div>
                 </div>
 
-                {/* Average Weight Range */}
+                {/* Weight Range (optional) */}
                 <div className="grid gap-1.5">
                   <Label className="text-sm font-medium text-slate-700">
-                    Average Weight Range <span className="text-slate-400 font-normal">(kg per pack/box)</span>
+                    Weight Range <span className="text-slate-400 font-normal">(kg per pack/box, optional)</span>
                   </Label>
                   <div className="flex gap-2 items-center">
                     <Input
@@ -888,141 +838,14 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                     return null
                   })()}
                 </div>
-
-                {/* Production Date */}
-                <div className="grid gap-1.5">
-                  <Label className="text-sm font-medium text-slate-700">
-                    Production Date <span className="text-slate-400 font-normal">(optional)</span>
-                  </Label>
-                  <Input
-                    type="date"
-                    value={formData.productionDate ? format(formData.productionDate, "yyyy-MM-dd") : ""}
-                    onChange={(e) => {
-                      const val = e.target.value
-                      setFormData((prev) => ({
-                        ...prev,
-                        productionDate: val ? new Date(val + "T00:00:00") : undefined,
-                      }))
-                    }}
-                    className="h-9"
-                  />
-                </div>
-
-
-
-                {/* Stock Left compact preview */}
-                <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-2.5">
-                  <div>
-                    <p className="text-sm font-medium text-slate-600">Stock Left</p>
-                    <p className="text-[10px] text-slate-400">
-                      Incoming − Outgoing
-                    </p>
-                  </div>
-                  <div className="text-2xl font-bold text-primary">
-                    {formData.incomingStock.trim() === "" ? (
-                      <span className="text-muted-foreground font-normal text-lg">{"\u2014"}</span>
-                    ) : (
-                      stockLeft.toLocaleString()
-                    )}
-                  </div>
-                </div>
               </div>
 
-              {/* ── TRANSACTION DOCUMENTS (conditional) ─────────────────── */}
-              {formData.stockSource === "From Supplier (Received)" && (
-                <div className="rounded-xl border border-teal-100 bg-teal-50/30 p-4 grid gap-3">
-                  <div className="flex items-center gap-2">
-                    <FileText className="h-4 w-4 text-teal-500" />
-                    <p className="text-xs font-semibold uppercase tracking-widest text-teal-600">Transaction Documents</p>
-                  </div>
-
-                  {/* FROM SUPPLIER */}
-                  {formData.stockSource === "From Supplier (Received)" && (
-                    <div className="grid gap-3">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="grid gap-1.5">
-                          <Label className="text-sm font-medium text-slate-700">
-                            Supplier Name <span className="text-red-500">*</span>
-                          </Label>
-                          <Input
-                            value={formData.supplierName}
-                            onChange={(e) => {
-                              setFormData((prev) => ({ ...prev, supplierName: e.target.value }))
-                              setErrors((prev) => ({ ...prev, supplierName: "" }))
-                            }}
-                            placeholder="e.g. ABC Meat Supply"
-                            className={cn("h-9", errors.supplierName ? "border-destructive" : "")}
-                          />
-                          {errors.supplierName && <p className="text-xs text-destructive">{errors.supplierName}</p>}
-                        </div>
-                        <div className="grid gap-1.5">
-                          <Label className="text-sm font-medium text-slate-700">
-                            Delivery Receipt No. <span className="text-red-500">*</span>
-                          </Label>
-                          <Input
-                            value={formData.deliveryReceiptNo}
-                            onChange={(e) => {
-                              setFormData((prev) => ({ ...prev, deliveryReceiptNo: e.target.value }))
-                              setErrors((prev) => ({ ...prev, deliveryReceiptNo: "" }))
-                            }}
-                            placeholder="e.g. DR-1023"
-                            className={cn("h-9", errors.deliveryReceiptNo ? "border-destructive" : "")}
-                          />
-                          {errors.deliveryReceiptNo && <p className="text-xs text-destructive">{errors.deliveryReceiptNo}</p>}
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="grid gap-1.5">
-                          <Label className="text-sm font-medium text-slate-700">
-                            Supplier Invoice No. <span className="text-slate-400 font-normal">(optional)</span>
-                          </Label>
-                          <Input
-                            value={formData.supplierInvoiceNo}
-                            onChange={(e) => setFormData((prev) => ({ ...prev, supplierInvoiceNo: e.target.value }))}
-                            placeholder="e.g. INV-558"
-                            className="h-9"
-                          />
-                        </div>
-                        <div className="grid gap-1.5">
-                          <Label className="text-sm font-medium text-slate-700">
-                            Delivery Date <span className="text-red-500">*</span>
-                          </Label>
-                          <Input
-                            type="date"
-                            value={formData.deliveryDate ? format(formData.deliveryDate, "yyyy-MM-dd") : ""}
-                            onChange={(e) => {
-                              const val = e.target.value
-                              setFormData((prev) => ({
-                                ...prev,
-                                deliveryDate: val ? new Date(val + "T00:00:00") : undefined,
-                              }))
-                              setErrors((prev) => ({ ...prev, deliveryDate: "" }))
-                            }}
-                            className={cn("h-9", errors.deliveryDate ? "border-destructive" : "")}
-                          />
-                          {errors.deliveryDate && <p className="text-xs text-destructive">{errors.deliveryDate}</p>}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* FROM PRODUCTION — no extra document fields needed;
-                     Production Date is already in the Stock Entry section above */}
-
-
-                </div>
-              )}
-            </div>
-
-            {/* ════════════════ RIGHT COLUMN: Classification + Barcode ════════════════ */}
-            <div className="flex flex-col gap-4">
-
-              {/* ── PRODUCT CLASSIFICATION ──────────────────────────────── */}
-              <div className="rounded-xl border border-indigo-100 bg-indigo-50/30 p-4 grid gap-3">
+              {/* ── 2. PRODUCT CLASSIFICATION ─────────────────────────────── */}
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50/30 p-5 grid gap-4">
                 <p className="text-xs font-semibold uppercase tracking-widest text-indigo-500">Product Classification</p>
 
                 {/* Category + Type side-by-side */}
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="grid gap-1.5">
                     <Label className="text-sm font-medium text-slate-700">
                       Category <span className="text-red-500">*</span>
@@ -1192,7 +1015,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
 
               {/* Product Name Preview */}
               {autoProductName && (
-                <div className="grid gap-1.5">
+                <div className="grid gap-1.5 -mt-1">
                   <Label className="text-sm font-medium text-slate-700">
                     Product Name <span className="text-slate-400 font-normal">(auto-generated)</span>
                   </Label>
@@ -1202,82 +1025,110 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                 </div>
               )}
 
-              {/* ── EXPIRATION DATE + STORAGE LOCATION ──────────────────── */}
-              <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-4 grid gap-3">
+              {/* ── 3. EXPIRATION & STORAGE ───────────────────────────────── */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-5 grid gap-4">
                 <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Expiration & Storage</p>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="relative grid gap-1.5">
                     <Label className="text-sm font-medium text-slate-700">
                       Expiration Date <span className="text-red-500">*</span>
                     </Label>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setDatePickerOpen(!datePickerOpen)}
-                      className={cn(
-                        "h-9 w-full justify-start text-left font-normal text-sm",
-                        !formData.expirationDate && "text-muted-foreground",
-                        errors.expirationDate && "border-destructive",
-                        datePickerOpen && "ring-2 ring-primary/20 border-primary"
-                      )}
-                    >
-                      <CalendarIcon className="mr-2 h-3.5 w-3.5 text-slate-500" />
-                      {formData.expirationDate ? (
-                        format(formData.expirationDate, "MMM dd, yyyy")
-                      ) : (
-                        <span>Pick a date</span>
-                      )}
-                    </Button>
-
-                    {datePickerOpen && (
-                      <div
-                        ref={datePickerRef}
-                        className="absolute top-full left-0 mt-2 z-[9999] w-[300px] rounded-xl border border-slate-200 bg-white p-3 shadow-2xl animate-in fade-in-0 zoom-in-95 slide-in-from-top-2"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <Calendar
-                          mode="single"
-                          selected={formData.expirationDate}
-                          onSelect={(date) => {
-                            setFormData((prev) => ({ ...prev, expirationDate: date }))
-                            if (errors.expirationDate) {
-                              setErrors((prev) => ({ ...prev, expirationDate: "" }))
+                    {/* Manual date input + calendar toggle */}
+                    <div className="flex gap-1.5">
+                      <Input
+                        type="date"
+                        value={formData.expirationDate ? format(formData.expirationDate, "yyyy-MM-dd") : ""}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          if (val) {
+                            const parsed = new Date(val + "T00:00:00")
+                            if (!isNaN(parsed.getTime())) {
+                              setFormData((prev) => ({ ...prev, expirationDate: parsed }))
+                              if (errors.expirationDate) {
+                                setErrors((prev) => ({ ...prev, expirationDate: "" }))
+                              }
                             }
-                            setDatePickerOpen(false)
-                          }}
-                          initialFocus
-                          className="rounded-lg"
+                          } else {
+                            setFormData((prev) => ({ ...prev, expirationDate: undefined }))
+                          }
+                        }}
+                        className={cn(
+                          "h-9 flex-1 text-sm",
+                          errors.expirationDate && "border-destructive",
+                          formData.expirationDate && "text-slate-800 font-medium"
+                        )}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => setDatePickerOpen(!datePickerOpen)}
+                        className={cn(
+                          "h-9 w-9 shrink-0",
+                          datePickerOpen && "ring-2 ring-primary/20 border-primary bg-primary/5"
+                        )}
+                      >
+                        <CalendarIcon className="h-4 w-4 text-slate-500" />
+                      </Button>
+                    </div>
+
+                    {/* Calendar popup — positioned below the input */}
+                    {datePickerOpen && (
+                      <>
+                        {/* Backdrop to close on click outside */}
+                        <div
+                          className="fixed inset-0 z-[9998]"
+                          onClick={() => setDatePickerOpen(false)}
                         />
-                        <div className="flex items-center justify-between border-t border-slate-100 pt-2 mt-2">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="text-slate-500 hover:text-slate-700 h-7 px-2 text-xs"
-                            onClick={() => {
-                              setFormData((prev) => ({ ...prev, expirationDate: undefined }))
-                              setDatePickerOpen(false)
-                            }}
-                          >
-                            Clear
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="text-primary hover:text-primary/80 h-7 px-2 text-xs"
-                            onClick={() => {
-                              setFormData((prev) => ({ ...prev, expirationDate: new Date() }))
+                        <div
+                          ref={datePickerRef}
+                          className="absolute top-full left-0 mt-1 z-[9999] w-[300px] rounded-xl border border-slate-200 bg-white p-3 shadow-2xl animate-in fade-in-0 zoom-in-95 slide-in-from-top-2"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Calendar
+                            mode="single"
+                            selected={formData.expirationDate}
+                            onSelect={(date) => {
+                              setFormData((prev) => ({ ...prev, expirationDate: date }))
                               if (errors.expirationDate) {
                                 setErrors((prev) => ({ ...prev, expirationDate: "" }))
                               }
                               setDatePickerOpen(false)
                             }}
-                          >
-                            Today
-                          </Button>
+                            initialFocus
+                            className="rounded-lg"
+                          />
+                          <div className="flex items-center justify-between border-t border-slate-100 pt-2 mt-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="text-slate-500 hover:text-slate-700 h-7 px-2 text-xs"
+                              onClick={() => {
+                                setFormData((prev) => ({ ...prev, expirationDate: undefined }))
+                                setDatePickerOpen(false)
+                              }}
+                            >
+                              Clear
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="text-primary hover:text-primary/80 h-7 px-2 text-xs"
+                              onClick={() => {
+                                setFormData((prev) => ({ ...prev, expirationDate: new Date() }))
+                                if (errors.expirationDate) {
+                                  setErrors((prev) => ({ ...prev, expirationDate: "" }))
+                                }
+                                setDatePickerOpen(false)
+                              }}
+                            >
+                              Today
+                            </Button>
+                          </div>
                         </div>
-                      </div>
+                      </>
                     )}
                     {errors.expirationDate && <p className="text-xs text-destructive">{errors.expirationDate}</p>}
                   </div>
@@ -1315,56 +1166,66 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                   </div>
                 </div>
               </div>
+            </div>
 
-              {/* ── BARCODE GENERATOR (flex-grow to fill remaining space) ── */}
-              <div className={`rounded-xl border border-slate-200 bg-slate-50/60 p-5 grid gap-4 flex-1 transition-opacity duration-200 ${!isScanned && !canGenerate ? 'opacity-40 pointer-events-none' : ''}`}>
-                <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-                  {isScanned ? "Barcode (from scan)" : "Barcode Generator"}
-                </p>
+            {/* ════════════════ RIGHT COLUMN: Barcode Generator ════════════════ */}
+            <div className="lg:sticky lg:top-0 lg:self-start">
+              <div className={`rounded-xl border-2 border-slate-200 bg-gradient-to-b from-slate-50 to-white p-6 grid gap-5 transition-opacity duration-200 shadow-sm ${!isScanned && !canGenerate ? 'opacity-40 pointer-events-none' : ''}`}>
+                <div className="flex items-center gap-2.5 pb-1 border-b border-slate-100">
+                  <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                    <Barcode className="h-4.5 w-4.5 text-primary" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-700">
+                      {isScanned ? "Barcode (Scanned)" : "Barcode Generator"}
+                    </p>
+                    <p className="text-[10px] text-slate-400">CODE128 format</p>
+                  </div>
+                </div>
 
                 {/* Generate button — hidden when scanned */}
                 {!isScanned && (
                   <>
-                <Button
-                  type="button"
-                  onClick={handleGenerateBarcode}
-                  disabled={!canGenerate || isGenerating}
-                  className={cn(
-                    "h-11 w-full font-semibold transition-all duration-200 gap-2",
-                    barcodeReady
-                      ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                      : "bg-primary hover:bg-primary/90 text-primary-foreground",
-                    (!canGenerate && !isGenerating) && "opacity-50 cursor-not-allowed"
-                  )}
-                >
-                  {isGenerating ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Checking uniqueness…
-                    </>
-                  ) : barcodeReady ? (
-                    <>
-                      <RefreshCw className="h-4 w-4" />
-                      Re-generate Barcode
-                    </>
-                  ) : (
-                    <>
-                      <Barcode className="h-4 w-4" />
-                      Generate Unique Barcode
-                    </>
-                  )}
-                </Button>
-                {!canGenerate && (
-                  <p className="text-xs text-slate-400 text-center">
-                    {!formData.category
-                      ? "Select Category and Type first"
-                      : !formData.productType
-                        ? "Select Type first"
-                        : showProductDropdown && !formData.productName
-                          ? "Select Product Name first"
-                          : "Complete required fields first"}
-                  </p>
-                )}
+                    <Button
+                      type="button"
+                      onClick={handleGenerateBarcode}
+                      disabled={!canGenerate || isGenerating}
+                      className={cn(
+                        "h-12 w-full font-semibold transition-all duration-200 gap-2 text-sm shadow-sm",
+                        barcodeReady
+                          ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200"
+                          : "bg-primary hover:bg-primary/90 text-primary-foreground shadow-primary/20",
+                        (!canGenerate && !isGenerating) && "opacity-50 cursor-not-allowed"
+                      )}
+                    >
+                      {isGenerating ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Checking uniqueness…
+                        </>
+                      ) : barcodeReady ? (
+                        <>
+                          <RefreshCw className="h-4 w-4" />
+                          Re-generate Barcode
+                        </>
+                      ) : (
+                        <>
+                          <Barcode className="h-4 w-4" />
+                          Generate Unique Barcode
+                        </>
+                      )}
+                    </Button>
+                    {!canGenerate && (
+                      <p className="text-xs text-slate-400 text-center -mt-1">
+                        {!formData.category
+                          ? "Select Category and Type first"
+                          : !formData.productType
+                            ? "Select Type first"
+                            : showProductDropdown && !formData.productName
+                              ? "Select Product Name first"
+                              : "Complete required fields first"}
+                      </p>
+                    )}
                   </>
                 )}
 
@@ -1397,6 +1258,26 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                   {errors.barcode && <p className="text-xs text-destructive">{errors.barcode}</p>}
                 </div>
 
+                {/* Batch Number display (read-only) */}
+                {barcodeReady && formData.batchNumber && (
+                  <div className="grid gap-1.5">
+                    <Label className="text-sm font-medium text-slate-700 flex items-center gap-1.5">
+                      Batch Number
+                      <span className="inline-flex items-center text-[10px] font-normal text-slate-400 bg-slate-100 rounded-full px-2 py-0.5">
+                        Read-only
+                      </span>
+                    </Label>
+                    <div className="h-10 px-3 flex items-center justify-between rounded-md border border-blue-200 bg-blue-50 text-sm transition-colors">
+                      <span className="font-semibold text-blue-700 tracking-wide">
+                        Batch {formData.batchNumber}
+                      </span>
+                      <span className="text-[10px] text-blue-400 font-normal">
+                        Auto-incremented
+                      </span>
+                    </div>
+                  </div>
+                )}
+
                 {/* ── Large Barcode Preview (printable) ──────────────── */}
                 <div className="grid gap-1.5">
                   <Label className="text-sm font-medium text-slate-700 flex items-center gap-1.5">
@@ -1406,18 +1287,19 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                   <div
                     id="barcode-print-area"
                     className={cn(
-                      "rounded-xl border-2 flex flex-col items-center justify-center transition-colors min-h-[160px] bg-white",
+                      "rounded-xl border-2 flex flex-col items-center justify-center transition-colors min-h-[170px] bg-white p-4",
                       barcodeReady
-                        ? "border-emerald-200"
+                        ? "border-emerald-200 shadow-sm shadow-emerald-100"
                         : "border-dashed border-slate-200"
                     )}
                   >
                     {barcodeReady ? (
-                      <svg ref={barcodeSvgCallbackRef} className="max-w-full" />
+                      <svg ref={barcodeSvgCallbackRef} className="w-full max-w-full" />
                     ) : (
-                      <div className="flex flex-col items-center gap-1.5 py-8 text-slate-400">
-                        <Barcode className="h-10 w-10 opacity-30" />
+                      <div className="flex flex-col items-center gap-2 py-6 text-slate-400">
+                        <Barcode className="h-10 w-10 opacity-20" />
                         <p className="text-xs">No barcode generated yet</p>
+                        <p className="text-[10px] text-slate-300">Select category & type to begin</p>
                       </div>
                     )}
                   </div>
@@ -1429,7 +1311,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                     type="button"
                     variant="outline"
                     onClick={handlePrintBarcode}
-                    className="h-10 w-full gap-2 border-slate-300 hover:bg-slate-100 font-medium"
+                    className="h-11 w-full gap-2 border-slate-300 hover:bg-slate-50 font-medium text-sm"
                   >
                     <Printer className="h-4 w-4" />
                     Print Barcode

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
-import { Package, TrendingUp, TrendingDown, AlertTriangle, Search, X, Plus, ArrowDownUp, Clock, Truck, ScanLine, Tag, RotateCcw } from "lucide-react"
+import { Package, TrendingUp, TrendingDown, AlertTriangle, Search, X, Plus, ArrowDownUp, Clock, PackageMinus, ScanLine, Tag, RotateCcw } from "lucide-react"
 import { TodaysMovementIcon, StockOverviewIcon, ReturnsSummaryIcon, FastMovingIcon } from "./inventory-icons"
 import { Button } from "@/components/ui/button"
 import { InventoryTable } from "./inventory-table"
@@ -491,12 +491,13 @@ export function InventoryDashboard() {
     return { good: goodReturns, damaged: damagedReturns, total: goodReturns + damagedReturns }
   }, [transactions])
 
-  // Compute today's movement (incoming + outgoing totals for today)
-  const todayMovement = useMemo(() => {
+  // Compute today's transactions (incoming, outgoing, and returns)
+  const todayTransactions = useMemo(() => {
     const todayStart = new Date()
     todayStart.setHours(0, 0, 0, 0)
     let incoming = 0
     let outgoing = 0
+    let returns = 0
     transactions.forEach((txn) => {
       const txDate = txn.transaction_date instanceof Date
         ? txn.transaction_date
@@ -505,24 +506,26 @@ export function InventoryDashboard() {
       if (isNaN(txDate.getTime()) || txDate < todayStart) return
       incoming += (txn.incoming_qty ?? 0)
       outgoing += (txn.outgoing_qty ?? 0)
+      returns += (txn.good_return ?? 0) + (txn.damage_return ?? 0)
     })
-    return { incoming, outgoing, total: incoming + outgoing }
+    return { incoming, outgoing, returns, total: incoming + outgoing + returns }
   }, [transactions])
 
-  // Compute fast moving products (top 3 by outgoing quantity)
-  const fastMovingProducts = useMemo(() => {
-    const productMap = new Map<string, number>()
-    transactions.forEach((txn) => {
-      const qty = txn.outgoing_qty ?? 0
-      if (qty <= 0) return
-      const name = txn.product_name || "Unknown"
-      productMap.set(name, (productMap.get(name) || 0) + qty)
+  // Compute Low Stock Alert (items with stock < 10, sorted lowest to highest)
+  const lowStockAlertList = useMemo(() => {
+    const alerts = items.map(item => {
+      const incomingStock = (item as any).incoming ?? 0
+      const outgoingStock = (item as any).outgoing ?? 0
+      const goodReturnStock = (item as any).goodReturnStock ?? 0
+      const damageReturnStock = (item as any).damageReturnStock ?? 0
+      const stockLeft = incomingStock - outgoingStock + goodReturnStock - damageReturnStock
+      return { name: item.name || "Unknown", stock: stockLeft, type: (item as any).unitType === "PACK" ? "pk" : "bx" }
     })
-    return Array.from(productMap.entries())
-      .sort((a, b) => b[1] - a[1])
+    return alerts
+      .filter(item => item.stock < 10)
+      .sort((a, b) => a.stock - b.stock)
       .slice(0, 3)
-      .map(([name, qty]) => ({ name, qty }))
-  }, [transactions])
+  }, [items])
 
   // Calculate weekly changes using correct stock formula
   const totalStockWeeklyChange = useMemo(() => {
@@ -583,8 +586,8 @@ export function InventoryDashboard() {
       <div className="space-y-8">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-balance">Inventory Management</h1>
-            <p className="text-muted-foreground">Monitor stock levels and manage categories</p>
+            <h1 className="text-3xl font-bold text-balance">Inventory Tracking</h1>
+            <p className="text-muted-foreground">Track stock movement, expiration, and barcode management</p>
           </div>
           {!isGuest && (
             <div className="flex items-center gap-2">
@@ -603,8 +606,8 @@ export function InventoryDashboard() {
                 onClick={() => setOutgoingDialogOpen(true)}
                 className="gap-2 bg-orange-500 hover:bg-orange-600 text-white"
               >
-                <Truck className="h-4 w-4" />
-                Outgoing Stock
+                <PackageMinus className="h-4 w-4" />
+                Product Out
               </Button>
               <Button
                 onClick={() => setReturnDialogOpen(true)}
@@ -618,9 +621,9 @@ export function InventoryDashboard() {
         </div>
 
         <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
-          {/* 1. Today's Movement */}
+          {/* 1. Today's Transactions */}
           <Card
-            className="shadow-md hover:shadow-lg transition-shadow cursor-pointer"
+            className="shadow-sm hover:shadow-md transition-shadow duration-200 cursor-pointer rounded-xl bg-white dark:bg-card"
             onClick={() => {
               setRecentlyAddedFilter("today")
               setPendingSearch("")
@@ -630,22 +633,22 @@ export function InventoryDashboard() {
             }}
           >
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Today&apos;s Movement</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Today&apos;s Transactions</CardTitle>
               <TodaysMovementIcon />
             </CardHeader>
             <CardContent>
-              {todayMovement.total === 0 ? (
+              {todayTransactions.total === 0 ? (
                 <>
-                  <div className="text-2xl font-bold text-muted-foreground/60">0</div>
-                  <p className="text-xs text-muted-foreground">No transactions today</p>
+                  <div className="text-3xl font-bold text-muted-foreground/40">0</div>
+                  <p className="text-xs text-muted-foreground mt-1">No transactions today</p>
                 </>
               ) : (
                 <>
-                  <div className="text-2xl font-bold">{todayMovement.total}</div>
-                  <div className="flex items-center gap-3 mt-1">
-                    <span className="text-xs font-semibold text-green-600 dark:text-green-400">↑ {todayMovement.incoming} In</span>
-                    <div className="w-px h-4 bg-border" />
-                    <span className="text-xs font-semibold text-orange-600 dark:text-orange-400">↓ {todayMovement.outgoing} Out</span>
+                  <div className="text-3xl font-bold tracking-tight">{todayTransactions.total}</div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/30 px-1.5 py-0.5 rounded-md">↑ {todayTransactions.incoming} In</span>
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 px-1.5 py-0.5 rounded-md">↓ {todayTransactions.outgoing} Out</span>
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 px-1.5 py-0.5 rounded-md">↺ {todayTransactions.returns} Rtn</span>
                   </div>
                 </>
               )}
@@ -653,20 +656,19 @@ export function InventoryDashboard() {
           </Card>
 
           {/* 2. Stock Overview */}
-          <Card className="shadow-md hover:shadow-lg transition-shadow">
+          <Card className="shadow-sm hover:shadow-md transition-shadow duration-200 rounded-xl bg-white dark:bg-card">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Stock Overview</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Stock Overview</CardTitle>
               <StockOverviewIcon />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{totalStock.toLocaleString()}</div>
-              <div className="flex items-center gap-2 mt-1">
-                <span className="text-xs text-muted-foreground">{totalItems} items</span>
-                <div className="w-px h-3 bg-border" />
+              <div className="text-3xl font-bold tracking-tight">{totalStock.toLocaleString()}</div>
+              <div className="flex items-center gap-2 mt-2">
+                <span className="inline-flex items-center text-xs text-muted-foreground bg-slate-50 dark:bg-slate-900/40 px-1.5 py-0.5 rounded-md">{totalItems} items</span>
                 {lowStockItems > 0 ? (
-                  <span className="text-xs font-semibold text-destructive">{lowStockItems} low stock</span>
+                  <span className="inline-flex items-center text-xs font-semibold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-1.5 py-0.5 rounded-md">⚠ {lowStockItems} low</span>
                 ) : (
-                  <span className="text-xs text-green-600 dark:text-green-400">All stocked</span>
+                  <span className="inline-flex items-center text-xs font-semibold text-green-600 bg-green-50 dark:bg-green-950/30 px-1.5 py-0.5 rounded-md">✓ All stocked</span>
                 )}
               </div>
             </CardContent>
@@ -674,7 +676,7 @@ export function InventoryDashboard() {
 
           {/* 3. Returns Summary */}
           <Card
-            className="shadow-md hover:shadow-lg transition-shadow cursor-pointer"
+            className="shadow-sm hover:shadow-md transition-shadow duration-200 cursor-pointer rounded-xl bg-white dark:bg-card"
             onClick={() => {
               setPendingSearch("")
               setSearchQuery("")
@@ -684,63 +686,54 @@ export function InventoryDashboard() {
             }}
           >
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Returns Today</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Returns Summary</CardTitle>
               <ReturnsSummaryIcon />
             </CardHeader>
             <CardContent>
               {todayReturns.total === 0 ? (
                 <>
-                  <div className="text-2xl font-bold text-muted-foreground/60">0</div>
-                  <p className="text-xs text-muted-foreground">No returns today</p>
+                  <div className="text-3xl font-bold text-muted-foreground/40">0</div>
+                  <p className="text-xs text-muted-foreground mt-1">No returns today</p>
                 </>
               ) : (
                 <>
-                  <div className="text-2xl font-bold">{todayReturns.total}</div>
-                  <div className="flex items-center gap-3 mt-1">
-                    <div className="flex flex-col">
-                      <span className="text-xs font-semibold text-green-600 dark:text-green-400">
-                        +{todayReturns.good} Good
-                      </span>
-                      <span className="text-[10px] text-muted-foreground leading-tight">Adds back to stock</span>
-                    </div>
-                    <div className="w-px h-6 bg-border" />
-                    <div className="flex flex-col">
-                      <span className="text-xs font-semibold text-orange-600 dark:text-orange-400">
-                        +{todayReturns.damaged} Damaged
-                      </span>
-                      <span className="text-[10px] text-muted-foreground leading-tight">Loss / damaged items</span>
-                    </div>
+                  <div className="text-3xl font-bold tracking-tight">{todayReturns.total}</div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/30 px-1.5 py-0.5 rounded-md">
+                      +{todayReturns.good} Good
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 px-1.5 py-0.5 rounded-md">
+                      +{todayReturns.damaged} Bad
+                    </span>
                   </div>
                 </>
               )}
             </CardContent>
           </Card>
 
-          {/* 4. Fast Moving Products */}
-          <Card className="shadow-md hover:shadow-lg transition-shadow">
+          {/* 4. Low Stock Alert */}
+          <Card className="shadow-sm hover:shadow-md transition-shadow duration-200 rounded-xl bg-white dark:bg-card">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Fast Moving</CardTitle>
+              <CardTitle className="text-sm font-medium text-orange-600 dark:text-orange-400">Low Stock Alert</CardTitle>
               <FastMovingIcon />
             </CardHeader>
             <CardContent>
-              {fastMovingProducts.length === 0 ? (
+              {lowStockAlertList.length === 0 ? (
                 <>
-                  <div className="text-2xl font-bold text-muted-foreground/60">—</div>
-                  <p className="text-xs text-muted-foreground">No outgoing data yet</p>
+                  <div className="text-3xl font-bold text-muted-foreground/40">✔</div>
+                  <p className="text-xs text-green-600 mt-1">All items have sufficient stock</p>
                 </>
               ) : (
-                <div className="space-y-1.5">
-                  {fastMovingProducts.map((p, i) => (
-                    <div key={p.name} className="flex items-center justify-between gap-2">
+                <div className="space-y-2">
+                  {lowStockAlertList.map((p, i) => (
+                    <div key={p.name + i} className="flex items-center justify-between gap-2 p-1.5 rounded-lg bg-orange-50/60 dark:bg-orange-950/20">
                       <div className="flex items-center gap-1.5 min-w-0">
-                        <span className={`text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center shrink-0 ${
-                          i === 0 ? "bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400"
-                            : i === 1 ? "bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-400"
-                            : "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400"
-                        }`}>{i + 1}</span>
-                        <span className="text-xs font-medium truncate">{p.name}</span>
+                        <span className="text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center shrink-0 bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400">
+                          !
+                        </span>
+                        <span className="text-xs font-medium truncate" title={p.name}>{p.name}</span>
                       </div>
-                      <span className="text-xs font-semibold text-muted-foreground shrink-0">{p.qty}</span>
+                      <span className={`text-xs font-bold shrink-0 px-1.5 py-0.5 rounded ${p.stock <= 0 ? 'text-red-700 bg-red-100 dark:text-red-400 dark:bg-red-950/40' : 'text-orange-700 bg-orange-100 dark:text-orange-400 dark:bg-orange-950/40'}`}>{p.stock} {p.type}</span>
                     </div>
                   ))}
                 </div>
@@ -750,7 +743,7 @@ export function InventoryDashboard() {
         </div>
 
         {/* Main Content - Inventory Section */}
-        <Card className="border-border/50 shadow-md bg-white dark:bg-card">
+        <Card className="shadow-sm rounded-xl bg-white dark:bg-card">
           <CardHeader className="pb-6 px-6 pt-6">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
               <div>
@@ -965,11 +958,6 @@ export function InventoryDashboard() {
         open={scanDialogOpen}
         onOpenChange={setScanDialogOpen}
         inventoryItems={items}
-        onAddStock={(item) => {
-          setScannedItem(item || null)
-          setScanDialogOpen(false)
-          setAddItemDialogOpen(true)
-        }}
         onProductOut={(item) => {
           setScannedItem(item || null)
           setScanDialogOpen(false)

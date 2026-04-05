@@ -213,6 +213,7 @@ export function BarcodeModal({ open, onOpenChange, barcode, productName }: Barco
           <div className="flex items-center gap-3 pt-1">
             <Button
               onClick={handlePrint}
+              data-barcode-print
               className="flex-1 gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
             >
               <Printer className="h-4 w-4" />

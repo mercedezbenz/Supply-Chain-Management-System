@@ -53,8 +53,6 @@ const EMPTY_FORM = {
   badReturnNotes: "",
   weightKg: "",
   returnDate: new Date(),
-  customerName: "",
-  returnReferenceNo: "",
 }
 
 const BAD_RETURN_REASONS = [
@@ -75,8 +73,7 @@ function resolveStockLeft(item: InventoryItem): number {
   const incoming = (item as any).incoming ?? (item as any).incomingStock ?? 0
   const outgoing = (item as any).outgoing ?? (item as any).outgoingStock ?? 0
   const goodReturn = (item as any).goodReturnStock ?? 0
-  const damageReturn = (item as any).damageReturnStock ?? 0
-  return Math.max(0, incoming - outgoing + goodReturn - damageReturn)
+  return Math.max(0, incoming - outgoing + goodReturn)
 }
 
 function getProductName(item: InventoryItem): string {
@@ -210,8 +207,6 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
         newErrors.badReturnOtherReason = "Please specify the reason."
       }
     }
-    if (!formData.customerName.trim()) newErrors.customerName = "Customer name is required."
-    if (!formData.returnReferenceNo.trim()) newErrors.returnReferenceNo = "Reference no. is required."
     if (!formData.returnDate) newErrors.returnDate = "Return date is required."
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
@@ -259,10 +254,9 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
         damage_return: badReturnNum,
         stock_left: newStock,
         location: (selectedItem as any).storageLocation || (selectedItem as any).location || "",
-        reference_no: formData.returnReferenceNo.trim(),
-        source: "customer_return",
+        reference_no: "",
+        source: "inventory_return",
         ...(badReturnDetails && { bad_return_details: badReturnDetails }),
-        customer_name: formData.customerName.trim(),
         return_date: formData.returnDate || null,
         created_at: new Date(),
       } as any)
@@ -277,12 +271,10 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
         quantity: goodReturnNum + badReturnNum,
         previousStock: currentStock,
         newStock: newStock,
-        reason: `Return from ${formData.customerName.trim()} (Good: ${goodReturnNum}, Damaged: ${badReturnNum})`,
+        reason: `Returned to inventory (Good: ${goodReturnNum}, Damaged: ${badReturnNum})`,
         transactionDocuments: {
           transaction_type: "incoming",
-          source: "customer_return",
-          customer_name: formData.customerName.trim(),
-          return_reference_no: formData.returnReferenceNo.trim(),
+          source: "inventory_return",
           return_date: formData.returnDate || null,
           good_return: goodReturnNum,
           damage_return: badReturnNum,
@@ -610,43 +602,11 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
                   </div>
                 </div>
 
-                {/* Customer & Documents */}
+                {/* Return Date & Documents */}
                 <div className="rounded-xl border border-teal-100 bg-teal-50/30 p-4 grid gap-3">
                   <div className="flex items-center gap-2">
-                    <FileText className="h-4 w-4 text-teal-500" />
-                    <p className="text-xs font-semibold uppercase tracking-widest text-teal-600">Return Details</p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="grid gap-1.5">
-                      <Label className="text-xs font-medium text-slate-600">
-                        Customer Name <span className="text-red-500">*</span>
-                      </Label>
-                      <Input
-                        value={formData.customerName}
-                        onChange={(e) => {
-                          setFormData((p) => ({ ...p, customerName: e.target.value }))
-                          setErrors((p) => ({ ...p, customerName: "" }))
-                        }}
-                        placeholder="e.g. Juan Dela Cruz"
-                        className={cn("h-9", errors.customerName ? "border-destructive" : "")}
-                      />
-                      {errors.customerName && <p className="text-xs text-destructive">{errors.customerName}</p>}
-                    </div>
-                    <div className="grid gap-1.5">
-                      <Label className="text-xs font-medium text-slate-600">
-                        Return Reference No. <span className="text-red-500">*</span>
-                      </Label>
-                      <Input
-                        value={formData.returnReferenceNo}
-                        onChange={(e) => {
-                          setFormData((p) => ({ ...p, returnReferenceNo: e.target.value }))
-                          setErrors((p) => ({ ...p, returnReferenceNo: "" }))
-                        }}
-                        placeholder="e.g. RET-0045"
-                        className={cn("h-9", errors.returnReferenceNo ? "border-destructive" : "")}
-                      />
-                      {errors.returnReferenceNo && <p className="text-xs text-destructive">{errors.returnReferenceNo}</p>}
-                    </div>
+                     <FileText className="h-4 w-4 text-teal-500" />
+                     <p className="text-xs font-semibold uppercase tracking-widest text-teal-600">Return Details</p>
                   </div>
                   <div className="grid gap-1.5">
                     <Label className="text-xs font-medium text-slate-600">
@@ -726,27 +686,13 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
                 </div>
 
                 {/* Return info summary */}
-                {(formData.customerName.trim() || formData.returnReferenceNo.trim()) && (
-                  <div className="rounded-xl border border-slate-200 bg-white p-3 grid gap-1 text-[11px]">
-                    <p className="font-semibold uppercase tracking-widest text-slate-500">Return Info</p>
-                    {formData.customerName.trim() && (
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">Customer</span>
-                        <span className="text-slate-700 font-medium">{formData.customerName.trim()}</span>
-                      </div>
-                    )}
-                    {formData.returnReferenceNo.trim() && (
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">Ref No.</span>
-                        <span className="text-slate-700 font-mono">{formData.returnReferenceNo.trim()}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Date</span>
-                      <span className="text-slate-700">{fmtDate(formData.returnDate)}</span>
-                    </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-3 grid gap-1 text-[11px]">
+                  <p className="font-semibold uppercase tracking-widest text-slate-500">Return Info</p>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Date</span>
+                    <span className="text-slate-700">{fmtDate(formData.returnDate)}</span>
                   </div>
-                )}
+                </div>
               </>
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center text-slate-400 gap-2">
@@ -811,7 +757,6 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
                     {formData.badReturnNotes.trim() && <div className="flex justify-between"><span className="text-slate-500">Notes</span><span className="text-slate-700 text-right max-w-[160px] truncate">{formData.badReturnNotes.trim()}</span></div>}
                   </>
                 )}
-                <div className="flex justify-between"><span className="text-slate-500">Customer</span><span className="font-medium text-slate-800">{formData.customerName.trim()}</span></div>
                 <div className="border-t border-slate-200 pt-1 mt-1 flex justify-between"><span className="text-slate-500">New Stock</span><span className="font-bold text-teal-600">{newStock}</span></div>
               </div>
             </div>

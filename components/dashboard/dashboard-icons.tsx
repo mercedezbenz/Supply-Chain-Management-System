@@ -102,6 +102,50 @@ export function LowStockIcon({ className }: DashboardIconProps) {
 }
 
 /**
+ * Expiring Soon Icon - Amber/Yellow palette with clock/calendar symbol
+ * Features soft gradient, rounded edges, and tick animation on hover
+ */
+export function ExpiringSoonIcon({ className }: DashboardIconProps) {
+    return (
+        <div
+            className={`group relative flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-300 hover:scale-110 overflow-hidden ${className}`}
+            style={{
+                background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
+                boxShadow: "0 4px 12px rgba(245, 158, 11, 0.3)",
+            }}
+        >
+            {/* Glow effect on hover */}
+            <div
+                className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+                style={{
+                    background: "linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)",
+                    boxShadow: "0 0 20px rgba(245, 158, 11, 0.6)",
+                }}
+            />
+
+            {/* Icon SVG - Clock/Timer symbol */}
+            <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                className="relative z-10 transition-transform duration-300 group-hover:rotate-[12deg]"
+            >
+                <circle cx="12" cy="12" r="9" stroke="white" strokeWidth="2" />
+                <path
+                    d="M12 7V12L15 15"
+                    stroke="white"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                />
+            </svg>
+        </div>
+    )
+}
+
+/**
  * Delivery Today Icon - Teal palette with delivery truck symbol
  * Features soft gradient, rounded edges, and slide animation on hover
  */
@@ -179,5 +223,6 @@ export function DeliveryTodayIcon({ className }: DashboardIconProps) {
 export const DashboardIcons = {
     TotalStocks: TotalStocksIcon,
     LowStock: LowStockIcon,
+    ExpiringSoon: ExpiringSoonIcon,
     DeliveryToday: DeliveryTodayIcon,
 }

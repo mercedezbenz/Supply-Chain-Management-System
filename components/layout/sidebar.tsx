@@ -13,8 +13,6 @@ import { useAuth } from "@/hooks/use-auth"
 const navigation = [
   { name: "Overview", href: "/", icon: BarChart3 },
   { name: "Inventory", href: "/inventory", icon: Package },
-  { name: "Delivery", href: "/deliveries", icon: Truck },
-  { name: "Users", href: "/users", icon: Users },
 ]
 
 export function Sidebar() {
@@ -23,10 +21,8 @@ export function Sidebar() {
   const { isCollapsed, toggleSidebar } = useSidebar()
   const { isGuest } = useAuth()
 
-  // Filter navigation items based on role
-  const filteredNavigation = isGuest
-    ? navigation.filter((item) => item.name !== "Users")
-    : navigation
+  // Navigation is explicitly static with removed unused models
+  const filteredNavigation = navigation
 
   return (
     <>

@@ -3,78 +3,93 @@
 import { useEffect, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { TrendingUp, TrendingDown, AlertCircle, X, ChevronLeft, ChevronRight, Package, Calendar, FileText, Truck, MapPin, User } from "lucide-react"
-import { TotalStocksIcon, LowStockIcon, DeliveryTodayIcon } from "./dashboard-icons"
+import { TrendingUp, TrendingDown, AlertCircle, X, ChevronLeft, ChevronRight } from "lucide-react"
+import { TotalStocksIcon, LowStockIcon, ExpiringSoonIcon } from "./dashboard-icons"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { subscribeToCollection, CustomerTransactionService } from "@/services/firebase-service"
+import { TransactionService } from "@/services/firebase-service"
 import { useAuth } from "@/hooks/use-auth"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import type { InventoryItem, CustomerTransaction } from "@/lib/types"
+import type { InventoryItem, InventoryTransaction } from "@/lib/types"
 import { formatExpirationDate as formatExpDate } from "@/lib/utils"
 import { DashboardOverviewSkeleton } from "@/components/skeletons/dashboard-skeleton"
 
 interface DashboardStats {
   totalItems: number
   lowStockItems: number
-  deliveryToday: number
+  expiringSoon: number
 }
 
-const TrendChart = ({ trend, type }: { trend: "up" | "down"; type: "total" | "low" }) => {
-  const bars =
-    type === "total"
-      ? [
-        { height: 20, color: "#FDE047" }, // yellow
-        { height: 35, color: "#FB923C" }, // orange
-        { height: 50, color: "#4ADE80" }, // green
-        { height: 65, color: "#60A5FA" }, // blue
-      ]
-      : [
-        { height: 65, color: "#F87171" }, // red
-        { height: 45, color: "#FB923C" }, // orange
-        { height: 30, color: "#A78BFA" }, // purple
-        { height: 20, color: "#34D399" }, // green
-      ]
+// Mini sparkline bar chart for KPI cards
+const TrendChart = ({ trend, type }: { trend: "up" | "down"; type: "total" | "low" | "expiring" }) => {
+  const palettes: Record<string, { height: number; color: string }[]> = {
+    total: [
+      { height: 25, color: "#93C5FD" },
+      { height: 45, color: "#60A5FA" },
+      { height: 35, color: "#3B82F6" },
+      { height: 60, color: "#2563EB" },
+      { height: 75, color: "#1D4ED8" },
+    ],
+    low: [
+      { height: 70, color: "#FCA5A5" },
+      { height: 50, color: "#F87171" },
+      { height: 35, color: "#EF4444" },
+      { height: 25, color: "#FB923C" },
+      { height: 15, color: "#FBBF24" },
+    ],
+    expiring: [
+      { height: 20, color: "#FDE68A" },
+      { height: 40, color: "#FCD34D" },
+      { height: 55, color: "#FBBF24" },
+      { height: 45, color: "#F59E0B" },
+      { height: 70, color: "#D97706" },
+    ],
+  }
+
+  const bars = palettes[type] || palettes.total
 
   return (
-    <div className="relative h-16 w-20 flex items-end justify-center gap-1 opacity-60">
+    <div className="relative h-14 w-20 flex items-end justify-center gap-[3px] opacity-50">
       {bars.map((bar, index) => (
         <div
           key={index}
-          className="w-3 rounded-t-sm"
+          className="w-2.5 rounded-t-sm transition-all duration-500"
           style={{
             height: `${bar.height}%`,
             backgroundColor: bar.color,
+            animationDelay: `${index * 80}ms`,
           }}
         />
       ))}
-      {/* Trend Arrow */}
-      <div className="absolute -top-2 -right-2 opacity-50">
-        {trend === "up" ? (
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-            <path
-              d="M7 17L17 7M17 7H7M17 7V17"
-              stroke="#EF4444"
-              strokeWidth="3"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        ) : (
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-            <path
-              d="M17 7L7 17M7 17H17M7 17V7"
-              stroke="#3B82F6"
-              strokeWidth="3"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        )}
-      </div>
     </div>
   )
+}
+
+// Action badge component for stock movements
+const ActionBadge = ({ action }: { action: string }) => {
+  const normalized = action?.toUpperCase()?.trim() || ""
+
+  let label = action
+  let className = "inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold tracking-wide uppercase "
+
+  if (normalized.includes("INCOMING") || normalized === "IN" || normalized.includes("FROM")) {
+    label = "IN"
+    className += "bg-emerald-50 text-emerald-700 border border-emerald-200"
+  } else if (normalized.includes("OUTGOING") || normalized === "OUT" || normalized === "PRODUCT_OUT") {
+    label = "OUT"
+    className += "bg-red-50 text-red-600 border border-red-200"
+  } else if (normalized.includes("GOOD") || normalized === "GOOD_RETURN" || normalized === "GOOD RETURN") {
+    label = "RETURN"
+    className += "bg-blue-50 text-blue-600 border border-blue-200"
+  } else if (normalized.includes("BAD") || normalized.includes("DAMAGE") || normalized === "BAD_RETURN" || normalized === "BAD RETURN") {
+    label = "BAD RETURN"
+    className += "bg-gray-100 text-gray-500 border border-gray-200"
+  } else {
+    className += "bg-gray-50 text-gray-600 border border-gray-200"
+  }
+
+  return <span className={className}>{label}</span>
 }
 
 export function DashboardOverview() {
@@ -83,59 +98,57 @@ export function DashboardOverview() {
   const [stats, setStats] = useState<DashboardStats>({
     totalItems: 0,
     lowStockItems: 0,
-    deliveryToday: 0,
+    expiringSoon: 0,
   })
   const [stockAlerts, setStockAlerts] = useState<InventoryItem[]>([])
   const [recentlyAdded, setRecentlyAdded] = useState<InventoryItem[]>([])
-  const [pendingTransactions, setPendingTransactions] = useState<CustomerTransaction[]>([])
-  const [onDeliveryTransactions, setOnDeliveryTransactions] = useState<CustomerTransaction[]>([])
+  const [recentMovements, setRecentMovements] = useState<InventoryTransaction[]>([])
   const [loading, setLoading] = useState(true)
   const [hasPermissionError, setHasPermissionError] = useState(false)
   const [showNotificationBanner, setShowNotificationBanner] = useState(false)
 
-  // Delivery status tab (only Pending + On Delivery, no Completed)
-  const [deliveryTab, setDeliveryTab] = useState<"ALL" | "PRODUCT_OUT" | "IN_PROGRESS">("ALL")
-
   // Pagination state for Stock Alert & Updates table
   const [stockCurrentPage, setStockCurrentPage] = useState(1)
-  const FIRST_PAGE_ITEMS = 7
-  const OTHER_PAGE_ITEMS = 5
+  const STOCK_ITEMS_PER_PAGE = 6
 
-  // Pagination state for Delivery Status cards
-  const [deliveryCurrentPage, setDeliveryCurrentPage] = useState(1)
-  const DELIVERY_ITEMS_PER_PAGE = 6
+  // Pagination state for Recent Stock Movements
+  const [movementCurrentPage, setMovementCurrentPage] = useState(1)
+  const MOVEMENT_ITEMS_PER_PAGE = 6
 
-  // Helper function to calculate paginated items
+  // Helper function to calculate paginated stock items
   const getPaginatedStockItems = () => {
-    // Combine recentlyAdded and stockAlerts for pagination
     const allStockItems = [...recentlyAdded, ...stockAlerts]
-    const totalItems = allStockItems.length
-
-    // Calculate pagination
-    let startIndex = 0
-    let endIndex = 0
-
-    if (stockCurrentPage === 1) {
-      startIndex = 0
-      endIndex = Math.min(FIRST_PAGE_ITEMS, totalItems)
-    } else {
-      // First page has FIRST_PAGE_ITEMS, subsequent pages have OTHER_PAGE_ITEMS each
-      startIndex = FIRST_PAGE_ITEMS + (stockCurrentPage - 2) * OTHER_PAGE_ITEMS
-      endIndex = Math.min(startIndex + OTHER_PAGE_ITEMS, totalItems)
-    }
-
-    // Calculate total pages
-    let totalPages = 1
-    if (totalItems > FIRST_PAGE_ITEMS) {
-      totalPages = 1 + Math.ceil((totalItems - FIRST_PAGE_ITEMS) / OTHER_PAGE_ITEMS)
-    }
+    // Remove duplicates by id
+    const unique = allStockItems.filter((item, index, self) =>
+      index === self.findIndex((t) => t.id === item.id)
+    )
+    const totalItems = unique.length
+    const totalPages = Math.max(1, Math.ceil(totalItems / STOCK_ITEMS_PER_PAGE))
+    const startIndex = (stockCurrentPage - 1) * STOCK_ITEMS_PER_PAGE
+    const endIndex = Math.min(startIndex + STOCK_ITEMS_PER_PAGE, totalItems)
 
     return {
-      items: allStockItems.slice(startIndex, endIndex),
+      items: unique.slice(startIndex, endIndex),
       totalPages,
       totalItems,
       startIndex,
-      endIndex
+      endIndex,
+    }
+  }
+
+  // Helper function to calculate paginated movement items
+  const getPaginatedMovements = () => {
+    const totalItems = recentMovements.length
+    const totalPages = Math.max(1, Math.ceil(totalItems / MOVEMENT_ITEMS_PER_PAGE))
+    const startIndex = (movementCurrentPage - 1) * MOVEMENT_ITEMS_PER_PAGE
+    const endIndex = Math.min(startIndex + MOVEMENT_ITEMS_PER_PAGE, totalItems)
+
+    return {
+      items: recentMovements.slice(startIndex, endIndex),
+      totalPages,
+      totalItems,
+      startIndex,
+      endIndex,
     }
   }
 
@@ -144,10 +157,9 @@ export function DashboardOverview() {
     setStockCurrentPage(1)
   }, [recentlyAdded.length, stockAlerts.length])
 
-  // Reset delivery page to 1 when tab changes
   useEffect(() => {
-    setDeliveryCurrentPage(1)
-  }, [deliveryTab])
+    setMovementCurrentPage(1)
+  }, [recentMovements.length])
 
   useEffect(() => {
     if (!user || firebaseError) {
@@ -159,8 +171,7 @@ export function DashboardOverview() {
     }
 
     let unsubscribeInventory: (() => void) | undefined
-    let unsubscribePending: (() => void) | undefined
-    let unsubscribeOnDelivery: (() => void) | undefined
+    let unsubscribeTransactions: (() => void) | undefined
 
     // Helper function to parse dates
     const parseDate = (d: any) => {
@@ -172,44 +183,33 @@ export function DashboardOverview() {
       return null
     }
 
-
-
     try {
-      // Fetch ONLY from "inventory" collection - 1 row per 1 Firestore document (no aggregation)
+      // Subscribe to inventory collection
       unsubscribeInventory = subscribeToCollection("inventory", (items: InventoryItem[]) => {
-        // Each item in items array represents a single Firestore document from "inventory" collection
-        // Normalize items to ensure proper field mapping - no grouping or aggregation by category
         const normalizedItems = items.map((it: any) => {
-          // Normalize field names (same as inventory dashboard)
           const incomingStock = it.incoming ?? it.stockIncoming ?? it.incomingStock ?? 0
           const outgoingStock = it.outgoing ?? it.stockOutgoing ?? it.outgoingStock ?? 0
           const goodReturnStock = it.goodReturnStock ?? 0
           const damageReturnStock = it.damageReturnStock ?? 0
-
-          // Correct stock calculation: incomingStock - outgoingStock + goodReturnStock - damageReturnStock
-          // Each document shows its own computed totalStock (no aggregation)
-          // Use Math.max(0, ...) to ensure no negative values are displayed
           const stockLeft = Math.max(0, incomingStock - outgoingStock + goodReturnStock - damageReturnStock)
 
-          // Get updatedAt with proper fallbacks, ensuring it's never null/undefined
           let updatedAt = it.updatedAt || it.lastUpdated || it.createdAt
           if (!updatedAt) {
             updatedAt = new Date()
           }
 
-          // Preserve all original fields including name, expiryDate, etc.
           return {
-            ...it, // Preserve ALL original fields from Firestore
+            ...it,
             incoming: incomingStock,
             outgoing: outgoingStock,
             goodReturnStock,
             damageReturnStock,
-            stockLeft, // Add calculated stockLeft using correct formula
+            stockLeft,
             updatedAt,
           }
         })
 
-        // Filter low stock items using correct stock calculation (no aggregation)
+        // Filter low stock items
         const lowStockItems = normalizedItems.filter((item) => {
           const incomingStock = (item as any).incoming ?? 0
           const outgoingStock = (item as any).outgoing ?? 0
@@ -218,7 +218,16 @@ export function DashboardOverview() {
           const stockLeft = Math.max(0, incomingStock - outgoingStock + goodReturnStock - damageReturnStock)
           return stockLeft < 10
         })
-        setStockAlerts(lowStockItems.slice(0, 5))
+        setStockAlerts(lowStockItems.slice(0, 10))
+
+        // Filter expiring soon (within 30 days)
+        const now = new Date()
+        const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+        const expiringItems = normalizedItems.filter((item) => {
+          const expDate = parseDate((item as any).expiryDate ?? (item as any).expirationDate)
+          if (!expDate) return false
+          return expDate > now && expDate <= thirtyDaysFromNow
+        })
 
         // Recently added: top 10 by createdAt desc
         const recent = [...normalizedItems]
@@ -235,66 +244,42 @@ export function DashboardOverview() {
           ...prev,
           totalItems: items.length,
           lowStockItems: lowStock,
+          expiringSoon: expiringItems.length,
         }))
 
         setShowNotificationBanner(lowStock > 0)
         setLoading(false)
       })
 
-      // Subscribe to customer_transactions for Pending (PRODUCT_OUT) and On Delivery (IN_PROGRESS)
-      // Same data source as the Delivery Tracking page
-      let currentPending: CustomerTransaction[] = []
-      let currentOnDelivery: CustomerTransaction[] = []
-
-      const updateDeliveryToday = () => {
-        // "Delivery Today" = count of IN_PROGRESS transactions (currently being delivered)
-        setStats((prev) => ({ ...prev, deliveryToday: currentOnDelivery.length }))
-      }
-
+      // Subscribe to transactions for Recent Stock Movements
       try {
-        unsubscribePending = CustomerTransactionService.subscribeToPendingDeliveries(
-          (transactions: CustomerTransaction[]) => {
-            currentPending = transactions || []
-            // Sort by latest date descending
-            const sorted = [...currentPending].sort((a, b) => {
-              const ad = parseDate(a.transactionDate || (a as any).createdAt)?.getTime() || 0
-              const bd = parseDate(b.transactionDate || (b as any).createdAt)?.getTime() || 0
+        unsubscribeTransactions = TransactionService.subscribeToTransactions(
+          (txns: InventoryTransaction[]) => {
+            // Sort by most recent first
+            const sorted = [...txns].sort((a, b) => {
+              const ad = parseDate(a.transaction_date || a.created_at)?.getTime() || 0
+              const bd = parseDate(b.transaction_date || b.created_at)?.getTime() || 0
               return bd - ad
             })
-            setPendingTransactions(sorted)
+            setRecentMovements(sorted.slice(0, 50)) // Keep last 50 movements
+          },
+          () => {
+            console.log("[Dashboard] Transactions subscription not accessible, skipping...")
+            setRecentMovements([])
           }
         )
       } catch (error) {
-        console.log("[Dashboard] Pending deliveries subscription not accessible, skipping...")
-      }
-
-      try {
-        unsubscribeOnDelivery = CustomerTransactionService.subscribeToInProgressDeliveries(
-          (transactions: CustomerTransaction[]) => {
-            currentOnDelivery = transactions || []
-            // Sort by latest date descending
-            const sorted = [...currentOnDelivery].sort((a, b) => {
-              const ad = parseDate(a.transactionDate || (a as any).createdAt)?.getTime() || 0
-              const bd = parseDate(b.transactionDate || (b as any).createdAt)?.getTime() || 0
-              return bd - ad
-            })
-            setOnDeliveryTransactions(sorted)
-            updateDeliveryToday()
-          }
-        )
-      } catch (error) {
-        console.log("[Dashboard] On Delivery subscription not accessible, skipping...")
+        console.log("[Dashboard] Transactions subscription error, skipping...")
       }
     } catch (error) {
-      console.error("[v0] Dashboard subscription error:", error)
+      console.error("[Dashboard] Subscription error:", error)
       setHasPermissionError(true)
       setLoading(false)
     }
 
     return () => {
       unsubscribeInventory?.()
-      unsubscribePending?.()
-      unsubscribeOnDelivery?.()
+      unsubscribeTransactions?.()
     }
   }, [user, firebaseError])
 
@@ -330,13 +315,11 @@ export function DashboardOverview() {
 
     if (diffInMinutes < 1) return "Just now"
     if (diffInMinutes < 60) return `${diffInMinutes} min ago`
-    if (diffInHours < 1) return "Just now"
     if (diffInHours === 1) return "1 hour ago"
     if (diffInHours < 24) return `${diffInHours} hours ago`
     if (diffInDays === 1) return "1 day ago"
     if (diffInDays < 7) return `${diffInDays} days ago`
 
-    // For older dates, show actual date
     return dateObj.toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
@@ -344,7 +327,7 @@ export function DashboardOverview() {
     })
   }
 
-  const formatTransactionDate = (date: Date | string | any) => {
+  const formatMovementDateTime = (date: Date | string | any) => {
     let dateObj: Date
 
     if (date && typeof date === "object" && date.toDate) {
@@ -356,18 +339,55 @@ export function DashboardOverview() {
     } else if (date instanceof Date) {
       dateObj = date
     } else {
-      return "N/A"
+      return { date: "N/A", time: "" }
     }
 
-    return dateObj.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    })
+    if (isNaN(dateObj.getTime())) {
+      return { date: "N/A", time: "" }
+    }
+
+    return {
+      date: dateObj.toLocaleDateString("en-US", {
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      }),
+      time: dateObj.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      }),
+    }
   }
 
+  // Determine movement type label from transaction data
+  const getMovementAction = (txn: InventoryTransaction) => {
+    const mt = (txn.movement_type || txn.source || "").toUpperCase()
+    if (mt.includes("RETURN") && mt.includes("DAMAGE")) return "BAD RETURN"
+    if (mt.includes("GOOD") || (mt.includes("RETURN") && !mt.includes("DAMAGE"))) return "GOOD RETURN"
+    if (mt.includes("OUTGOING") || mt.includes("OUT")) return "OUT"
+    if (mt.includes("INCOMING") || mt.includes("SUPPLIER") || mt.includes("PRODUCTION") || mt.includes("FROM")) return "IN"
+    // Fallback: check quantities
+    if ((txn.outgoing_qty || 0) > 0) return "OUT"
+    if ((txn.incoming_qty || 0) > 0) return "IN"
+    if ((txn.good_return || 0) > 0) return "GOOD RETURN"
+    if ((txn.damage_return || 0) > 0) return "BAD RETURN"
+    return mt || "IN"
+  }
+
+  // Get the relevant quantity for a movement
+  const getMovementQuantity = (txn: InventoryTransaction) => {
+    const action = getMovementAction(txn)
+    if (action === "OUT") return txn.outgoing_qty || txn.incoming_qty || 0
+    if (action === "IN") return txn.incoming_qty || txn.outgoing_qty || 0
+    if (action === "GOOD RETURN") return txn.good_return || 0
+    if (action === "BAD RETURN") return txn.damage_return || 0
+    return txn.incoming_qty || txn.outgoing_qty || 0
+  }
+
+  const getMovementUnit = (txn: InventoryTransaction) => {
+    return txn.unit_type?.toLowerCase() || "pack"
+  }
 
   if (hasPermissionError || firebaseError) {
     return (
@@ -388,15 +408,16 @@ export function DashboardOverview() {
   }
 
   return (
-    <div className="space-y-8 pb-8">
+    <div className="space-y-6 pb-8">
       {/* Alert Banner */}
       {showNotificationBanner && (
-        <div className="flex items-center gap-4 rounded-2xl bg-[#FFF7ED] dark:bg-orange-950 border border-[#FED7AA] dark:border-orange-800 px-6 py-3 shadow-sm">
-          <div className="flex-shrink-0 h-8 w-8 rounded-full bg-white dark:bg-orange-900 flex items-center justify-center">
-            <AlertCircle className="h-4 w-4 text-orange-600 dark:text-orange-400" />
+        <div className="flex items-center gap-4 rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50 dark:from-orange-950/40 dark:to-amber-950/40 border border-amber-200/60 dark:border-orange-800 px-5 py-3.5 shadow-sm animate-in slide-in-from-top-2 duration-300">
+          <div className="flex-shrink-0 h-9 w-9 rounded-xl bg-white dark:bg-orange-900 flex items-center justify-center shadow-sm">
+            <AlertCircle className="h-4.5 w-4.5 text-amber-600 dark:text-amber-400" />
           </div>
-          <span className="text-sm text-[#111827] dark:text-orange-200 whitespace-nowrap">
-            <strong className="font-semibold">Low Stock Alert:</strong> {stats.lowStockItems} items require immediate attention.
+          <span className="text-sm text-gray-800 dark:text-orange-200">
+            <strong className="font-semibold">Low Stock Alert:</strong>{" "}
+            {stats.lowStockItems} items require immediate attention.
           </span>
           <div className="flex-1"></div>
           <Button
@@ -410,7 +431,7 @@ export function DashboardOverview() {
             size="sm"
             variant="ghost"
             onClick={() => setShowNotificationBanner(false)}
-            className="h-8 w-8 p-0 rounded-full text-[#9CA3AF] hover:text-[#6B7280] hover:bg-orange-100 dark:hover:bg-orange-900 flex-shrink-0"
+            className="h-8 w-8 p-0 rounded-full text-gray-400 hover:text-gray-600 hover:bg-orange-100 dark:hover:bg-orange-900 flex-shrink-0"
           >
             <X className="h-4 w-4" />
           </Button>
@@ -419,24 +440,36 @@ export function DashboardOverview() {
 
       {/* Page Header */}
       <div>
-        <h1 className="text-[30px] font-bold text-[#111827] dark:text-foreground leading-[1.4] mb-2">{isGuest ? "Guest Dashboard" : "Admin Dashboard"}</h1>
-        <p className="text-[#9CA3AF] dark:text-muted-foreground text-sm leading-[1.5]">Track stocks flow and delivery status</p>
+        <h1 className="text-[28px] font-bold text-gray-900 dark:text-foreground leading-tight">
+          {isGuest ? "Guest Dashboard" : "Admin Dashboard"}
+        </h1>
+        <p className="text-gray-400 dark:text-muted-foreground text-sm mt-1">
+          Track stocks flow and inventory status
+        </p>
       </div>
 
-      {/* KPI Cards */}
+      {/* ─── KPI Summary Cards ─── */}
       <div className="grid gap-5 md:grid-cols-3">
-        <Card className="rounded-2xl border border-[#E5E7EB] dark:border-border shadow-sm hover:shadow-md transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 px-4 pt-4 md:px-5 md:pt-5">
-            <CardTitle className="text-[15px] font-semibold text-[#111827] dark:text-foreground leading-[1.4]">Total Stocks</CardTitle>
+        {/* Total Stocks */}
+        <Card className="rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.08)] transition-all duration-300 group">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 px-5 pt-5">
+            <CardTitle className="text-sm font-semibold text-gray-500 dark:text-muted-foreground uppercase tracking-wide">
+              Total Stocks
+            </CardTitle>
             <TotalStocksIcon />
           </CardHeader>
-          <CardContent className="px-4 pb-4 md:px-5 md:pb-5">
-            <div className="flex items-center justify-between">
+          <CardContent className="px-5 pb-5">
+            <div className="flex items-end justify-between">
               <div>
-                <div className="text-[28px] font-bold text-[#111827] dark:text-foreground leading-[1.4] mb-1.5">{stats.totalItems}</div>
+                <div className="text-3xl font-bold text-gray-900 dark:text-foreground leading-none mb-2">
+                  {stats.totalItems.toLocaleString()}
+                </div>
                 <div className="flex items-center gap-1.5">
-                  <TrendingUp className="h-3 w-3 text-green-500" />
-                  <p className="text-xs text-[#9CA3AF] dark:text-muted-foreground leading-[1.5]">+5 increase this week</p>
+                  <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/30">
+                    <TrendingUp className="h-3 w-3 text-emerald-500" />
+                    <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">+5</span>
+                  </div>
+                  <span className="text-xs text-gray-400">this week</span>
                 </div>
               </div>
               <TrendChart trend="up" type="total" />
@@ -444,18 +477,26 @@ export function DashboardOverview() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-2xl border border-[#E5E7EB] dark:border-border shadow-sm hover:shadow-md transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 px-4 pt-4 md:px-5 md:pt-5">
-            <CardTitle className="text-[15px] font-semibold text-[#111827] dark:text-foreground leading-[1.4]">Low Stock</CardTitle>
+        {/* Low Stock */}
+        <Card className="rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.08)] transition-all duration-300 group">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 px-5 pt-5">
+            <CardTitle className="text-sm font-semibold text-gray-500 dark:text-muted-foreground uppercase tracking-wide">
+              Low Stock
+            </CardTitle>
             <LowStockIcon />
           </CardHeader>
-          <CardContent className="px-4 pb-4 md:px-5 md:pb-5">
-            <div className="flex items-center justify-between">
+          <CardContent className="px-5 pb-5">
+            <div className="flex items-end justify-between">
               <div>
-                <div className="text-[28px] font-bold text-destructive leading-[1.4] mb-1.5">{stats.lowStockItems}</div>
+                <div className="text-3xl font-bold text-red-500 leading-none mb-2">
+                  {stats.lowStockItems}
+                </div>
                 <div className="flex items-center gap-1.5">
-                  <TrendingDown className="h-3 w-3 text-destructive" />
-                  <p className="text-xs text-[#9CA3AF] dark:text-muted-foreground leading-[1.5]">-1 Decrease this week</p>
+                  <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-50 dark:bg-red-950/30">
+                    <TrendingDown className="h-3 w-3 text-red-500" />
+                    <span className="text-xs font-semibold text-red-500 dark:text-red-400">-1</span>
+                  </div>
+                  <span className="text-xs text-gray-400">this week</span>
                 </div>
               </div>
               <TrendChart trend="down" type="low" />
@@ -463,399 +504,308 @@ export function DashboardOverview() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-2xl border border-[#E5E7EB] dark:border-border shadow-sm hover:shadow-md transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 px-4 pt-4 md:px-5 md:pt-5">
-            <CardTitle className="text-[15px] font-semibold text-[#111827] dark:text-foreground leading-[1.4]">Delivery Today</CardTitle>
-            <DeliveryTodayIcon />
+        {/* Expiring Soon */}
+        <Card className="rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.08)] transition-all duration-300 group">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 px-5 pt-5">
+            <CardTitle className="text-sm font-semibold text-gray-500 dark:text-muted-foreground uppercase tracking-wide">
+              Expiring Soon
+            </CardTitle>
+            <ExpiringSoonIcon />
           </CardHeader>
-          <CardContent className="px-4 pb-4 md:px-5 md:pb-5">
-            <div className="text-[28px] font-bold text-[#111827] dark:text-foreground leading-[1.4] mb-1.5">{stats.deliveryToday}</div>
-            <div className="flex items-center gap-1.5">
-              <TrendingUp className="h-3 w-3 text-green-500" />
-              <p className="text-xs text-[#9CA3AF] dark:text-muted-foreground leading-[1.5]">On schedule</p>
+          <CardContent className="px-5 pb-5">
+            <div className="flex items-end justify-between">
+              <div>
+                <div className="text-3xl font-bold text-amber-500 leading-none mb-2">
+                  {stats.expiringSoon}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/30">
+                    <AlertCircle className="h-3 w-3 text-amber-500" />
+                    <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">30d</span>
+                  </div>
+                  <span className="text-xs text-gray-400">window</span>
+                </div>
+              </div>
+              <TrendChart trend="up" type="expiring" />
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Main Content Cards */}
-      <div className="grid gap-5 md:grid-cols-2">
-        {/* Stock Alert & Updates */}
-        <Card className="rounded-2xl border border-[#E5E7EB] dark:border-border shadow-sm">
-          <CardHeader className="flex flex-row items-start justify-between gap-4 pb-4 px-6 pt-6">
+      {/* ─── Main Content: Two-Panel Layout ─── */}
+      <div className="grid gap-5 lg:grid-cols-2">
+
+        {/* ──────── LEFT: Stock Alert & Updates ──────── */}
+        <Card className="rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] overflow-hidden">
+          <CardHeader className="flex flex-row items-start justify-between gap-4 pb-0 px-6 pt-6">
             <div className="flex-1 min-w-0">
-              <CardTitle className="text-[19px] font-semibold text-[#111827] dark:text-foreground leading-[1.4] mb-1.5">Stock Alert & Updates</CardTitle>
-              <CardDescription className="text-sm text-[#9CA3AF] dark:text-muted-foreground leading-[1.5]">Items requiring immediate attention</CardDescription>
+              <CardTitle className="text-lg font-bold text-gray-900 dark:text-foreground mb-0.5">
+                Stock Alert & Updates
+              </CardTitle>
+              <CardDescription className="text-sm text-gray-400 dark:text-muted-foreground">
+                Items requiring immediate attention
+              </CardDescription>
             </div>
             {!isGuest && (
-              <Button asChild className="h-9 px-4 rounded-full bg-sky-500 hover:bg-sky-600 text-white font-medium text-sm flex-shrink-0 transition-all hover:scale-[1.02] hover:shadow-md">
+              <Button
+                asChild
+                className="h-9 px-5 rounded-full bg-sky-500 hover:bg-sky-600 text-white font-semibold text-sm flex-shrink-0 transition-all hover:scale-[1.02] hover:shadow-md"
+              >
                 <Link href="/inventory">Manage Stock</Link>
               </Button>
             )}
           </CardHeader>
-          <CardContent className="px-6 pb-6">
-            <div className="space-y-0">
-              {/* Table Header */}
-              <div className="grid grid-cols-[2.5fr_1.3fr_0.7fr_1fr] gap-4 text-xs font-semibold text-[#4B5563] dark:text-muted-foreground bg-[#F3F4F6] dark:bg-secondary/50 border-b border-[#E5E7EB] dark:border-border py-3 px-0 mb-0 uppercase tracking-wide">
-                <div className="flex items-center justify-start">Product Name</div>
-                <div className="flex items-center justify-center">Expiration Date</div>
-                <div className="flex items-center justify-center">Stock Left</div>
-                <div className="flex items-center justify-end pr-2">Last Update</div>
-              </div>
+          <CardContent className="px-6 pb-5 pt-4">
+            {/* Table Header */}
+            <div className="grid grid-cols-[2fr_1.2fr_0.8fr_1fr] gap-3 text-[11px] font-semibold text-gray-400 dark:text-muted-foreground uppercase tracking-wider pb-3 border-b border-gray-100 dark:border-border">
+              <div>Product Name</div>
+              <div className="text-center">Expiration Date</div>
+              <div className="text-center">Stock Left</div>
+              <div className="text-right">Last Update</div>
+            </div>
 
-              {/* Paginated Stock Items */}
-              <div className="space-y-0">
-                {(() => {
-                  const { items, totalPages, totalItems } = getPaginatedStockItems()
+            {/* Table Rows */}
+            <div className="divide-y divide-gray-50 dark:divide-border/50">
+              {(() => {
+                const { items, totalPages, totalItems } = getPaginatedStockItems()
 
-                  if (items.length === 0) {
-                    return (
-                      <p className="text-sm text-[#9CA3AF] dark:text-muted-foreground py-4">No stock items to display</p>
-                    )
-                  }
-
+                if (items.length === 0) {
                   return (
-                    <>
-                      {items.map((item, index) => (
+                    <div className="flex flex-col items-center justify-center py-12">
+                      <div className="h-12 w-12 rounded-full bg-gray-50 dark:bg-secondary/50 flex items-center justify-center mb-3">
+                        <AlertCircle className="h-5 w-5 text-gray-300" />
+                      </div>
+                      <p className="text-sm text-gray-400">No stock items to display</p>
+                    </div>
+                  )
+                }
+
+                return (
+                  <>
+                    {items.map((item, index) => {
+                      const stockLeft = (item as any).stockLeft ?? 0
+                      const isLowStock = stockLeft < 10
+                      return (
                         <div
                           key={`stock-${item.id}-${index}`}
-                          className={`grid grid-cols-[2.5fr_1.3fr_0.7fr_1fr] gap-4 text-sm py-3 px-0 border-b border-[#E5E7EB] dark:border-border last:border-0 transition-colors hover:bg-[#F9FAFB] dark:hover:bg-secondary/30 ${index % 2 === 1 ? 'bg-[#F9FAFB] dark:bg-secondary/20' : ''}`}
+                          className="grid grid-cols-[2fr_1.2fr_0.8fr_1fr] gap-3 py-3.5 items-center transition-colors hover:bg-gray-50/50 dark:hover:bg-secondary/20 group"
                         >
-                          <div className="flex flex-col justify-center items-start">
-                            <p className="font-medium text-sm text-[#111827] dark:text-foreground leading-[1.5] whitespace-normal break-words">
+                          <div className="min-w-0">
+                            <p className="font-medium text-sm text-gray-800 dark:text-foreground truncate leading-snug">
                               {(item as any).name ?? (item as any).itemName ?? item.category ?? "General"}
                             </p>
                             {item.subcategory && item.subcategory !== "N/A" && (
-                              <p className="text-xs text-[#9CA3AF] dark:text-muted-foreground leading-[1.5] mt-0.5">({item.subcategory})</p>
+                              <p className="text-[11px] text-gray-400 dark:text-muted-foreground mt-0.5 truncate">
+                                {item.subcategory}
+                              </p>
                             )}
                           </div>
-                          <div className="flex items-center justify-center text-sm text-[#4B5563] dark:text-foreground leading-[1.5]">
+                          <div className="text-center text-sm text-gray-500 dark:text-foreground">
                             {formatExpDate((item as any).expiryDate ?? (item as any).expirationDate)}
                           </div>
-                          <div className="flex items-center justify-center text-sm font-semibold text-[#111827] dark:text-foreground leading-[1.5]">
-                            {(item as any).stockLeft ?? 0}
-                          </div>
-                          <div className="flex items-center justify-end pr-2 text-sm text-[#9CA3AF] dark:text-muted-foreground leading-[1.5]">{formatTimeAgo((item as any).updatedAt)}</div>
-                        </div>
-                      ))}
-
-                      {/* Pagination Controls */}
-                      {totalPages > 1 && (
-                        <div className="flex items-center justify-between pt-4 mt-2 border-t border-[#E5E7EB] dark:border-border">
-                          <div className="text-xs text-[#9CA3AF] dark:text-muted-foreground">
-                            Showing {items.length} of {totalItems} items
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setStockCurrentPage(prev => Math.max(1, prev - 1))}
-                              disabled={stockCurrentPage === 1}
-                              className="h-8 px-3 text-sm font-medium rounded-lg border-[#E5E7EB] dark:border-border hover:bg-[#F3F4F6] dark:hover:bg-secondary/50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                          <div className="text-center">
+                            <span
+                              className={`inline-flex items-center justify-center min-w-[36px] px-2 py-0.5 rounded-full text-sm font-bold ${
+                                isLowStock
+                                  ? "bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400"
+                                  : "text-gray-800 dark:text-foreground"
+                              }`}
                             >
-                              <ChevronLeft className="h-4 w-4 mr-1" />
-                              Previous
-                            </Button>
-                            <div className="flex items-center gap-1 px-3 py-1.5 bg-[#F3F4F6] dark:bg-secondary/50 rounded-lg">
-                              <span className="text-sm font-semibold text-[#111827] dark:text-foreground">{stockCurrentPage}</span>
-                              <span className="text-sm text-[#9CA3AF] dark:text-muted-foreground">/</span>
-                              <span className="text-sm text-[#9CA3AF] dark:text-muted-foreground">{totalPages}</span>
-                            </div>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setStockCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                              disabled={stockCurrentPage === totalPages}
-                              className="h-8 px-3 text-sm font-medium rounded-lg border-[#E5E7EB] dark:border-border hover:bg-[#F3F4F6] dark:hover:bg-secondary/50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                            >
-                              Next
-                              <ChevronRight className="h-4 w-4 ml-1" />
-                            </Button>
+                              {stockLeft}
+                            </span>
+                          </div>
+                          <div className="text-right text-[13px] text-gray-400 dark:text-muted-foreground">
+                            {formatTimeAgo((item as any).updatedAt)}
                           </div>
                         </div>
-                      )}
-                    </>
-                  )
-                })()}
-              </div>
-            </div>
-          </CardContent>
-        </Card >
+                      )
+                    })}
 
-        {/* Delivery Status — Card-Based Layout with Tabs */}
-        <Card className="rounded-2xl border border-[#E5E7EB] dark:border-border shadow-sm">
-          <CardHeader className="flex flex-row items-start justify-between gap-4 pb-3 px-6 pt-6">
-            <div className="flex-1 min-w-0">
-              <CardTitle className="text-[19px] font-semibold text-[#111827] dark:text-foreground leading-[1.4] mb-1.5">Delivery Status</CardTitle>
-              <CardDescription className="text-sm text-[#9CA3AF] dark:text-muted-foreground leading-[1.5]">Active deliveries and transactions</CardDescription>
-            </div>
-            {!isGuest && (
-              <Button asChild className="h-9 px-4 rounded-full bg-sky-500 hover:bg-sky-600 text-white font-medium text-sm flex-shrink-0 transition-all hover:scale-[1.02] hover:shadow-md">
-                <Link href="/deliveries">Track All</Link>
-              </Button>
-            )}
-          </CardHeader>
-          <CardContent className="px-6 pb-6">
-            {(() => {
-              // Combine Pending + On Delivery into a single flat list (no Completed)
-              const allCards: CustomerTransaction[] = [...pendingTransactions, ...onDeliveryTransactions]
-
-              // Count per status
-              const counts = {
-                ALL: allCards.length,
-                PRODUCT_OUT: pendingTransactions.length,
-                IN_PROGRESS: onDeliveryTransactions.length,
-              }
-
-              // Filter by selected tab
-              const filteredCards = deliveryTab === "ALL"
-                ? allCards
-                : deliveryTab === "PRODUCT_OUT"
-                  ? pendingTransactions
-                  : onDeliveryTransactions
-
-              // Pagination logic
-              const totalFilteredItems = filteredCards.length
-              const deliveryTotalPages = Math.max(1, Math.ceil(totalFilteredItems / DELIVERY_ITEMS_PER_PAGE))
-              const deliveryStartIndex = (deliveryCurrentPage - 1) * DELIVERY_ITEMS_PER_PAGE
-              const paginatedCards = filteredCards.slice(deliveryStartIndex, deliveryStartIndex + DELIVERY_ITEMS_PER_PAGE)
-
-              // Tab definitions (no Completed)
-              const tabs: { key: typeof deliveryTab; label: string }[] = [
-                { key: "ALL", label: "All" },
-                { key: "PRODUCT_OUT", label: "Pending" },
-                { key: "IN_PROGRESS", label: "On Delivery" },
-              ]
-
-              // Helper: get status config
-              const getStatusConfig = (type: string) => {
-                switch (type) {
-                  case "PRODUCT_OUT":
-                    return { label: "Pending", color: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800", border: "border-l-amber-400" }
-                  case "IN_PROGRESS":
-                    return { label: "On Delivery", color: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800", border: "border-l-blue-500" }
-                  case "DELIVERED":
-                    return { label: "Completed", color: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800", border: "border-l-emerald-500" }
-                  default:
-                    return { label: type, color: "bg-gray-50 text-gray-700 border-gray-200", border: "border-l-gray-400" }
-                }
-              }
-
-              // Helper: format delivery date and check if today/tomorrow
-              const getDateBadge = (date: any) => {
-                if (!date) return null
-                let dateObj: Date
-                if (date && typeof date === "object" && date.toDate) dateObj = date.toDate()
-                else if (date && typeof date === "object" && date.seconds) dateObj = new Date(date.seconds * 1000)
-                else if (typeof date === "string") dateObj = new Date(date)
-                else if (date instanceof Date) dateObj = date
-                else return null
-
-                if (isNaN(dateObj.getTime())) return null
-
-                const today = new Date(); today.setHours(0, 0, 0, 0)
-                const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1)
-                const dateOnly = new Date(dateObj); dateOnly.setHours(0, 0, 0, 0)
-
-                const formatted = dateObj.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-
-                if (dateOnly.getTime() === today.getTime()) {
-                  return { text: formatted, badge: "Today", badgeColor: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400" }
-                }
-                if (dateOnly.getTime() === tomorrow.getTime()) {
-                  return { text: formatted, badge: "Tomorrow", badgeColor: "bg-sky-100 text-sky-700 dark:bg-sky-950/40 dark:text-sky-400" }
-                }
-                return { text: formatted, badge: null, badgeColor: "" }
-              }
-
-              // Tab empty-state labels
-              const emptyLabels: Record<string, string> = {
-                ALL: "No active deliveries",
-                PRODUCT_OUT: "No pending deliveries",
-                IN_PROGRESS: "No deliveries in transit",
-              }
-
-              return (
-                <div className="space-y-4">
-                  {/* ── Horizontal Tabs ── */}
-                  <div className="flex items-center gap-1 p-1 bg-[#F3F4F6] dark:bg-secondary/40 rounded-lg">
-                    {tabs.map((tab) => (
-                      <button
-                        key={tab.key}
-                        onClick={() => setDeliveryTab(tab.key)}
-                        className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 ${deliveryTab === tab.key
-                            ? "bg-sky-500 text-white shadow-sm"
-                            : "text-[#6B7280] dark:text-muted-foreground hover:text-[#111827] dark:hover:text-foreground hover:bg-white/60 dark:hover:bg-secondary/60"
-                          }`}
-                      >
-                        {tab.label}
-                        {counts[tab.key] > 0 && (
-                          <span className={`ml-0.5 text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 ${deliveryTab === tab.key
-                              ? "bg-white/25 text-white"
-                              : "bg-[#E5E7EB] dark:bg-secondary text-[#6B7280] dark:text-muted-foreground"
-                            }`}>
-                            {counts[tab.key]}
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* ── Card Grid or Empty State ── */}
-                  {filteredCards.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-12">
-                      <div className="h-14 w-14 rounded-full bg-[#F3F4F6] dark:bg-secondary/50 flex items-center justify-center mb-3">
-                        <Truck className="h-7 w-7 text-[#9CA3AF] dark:text-muted-foreground" />
-                      </div>
-                      <p className="text-sm font-medium text-[#6B7280] dark:text-muted-foreground">{emptyLabels[deliveryTab] || "No deliveries in this status"}</p>
-                      <p className="text-xs text-[#9CA3AF] dark:text-muted-foreground mt-1">Deliveries will appear here when dispatched</p>
-                    </div>
-                  ) : (
-                    <>
-                    <div className="grid gap-3 md:grid-cols-2 transition-all duration-200">
-                      {paginatedCards.map((tx) => {
-                        const status = getStatusConfig(tx.transactionType)
-                        const dateInfo = getDateBadge(tx.transactionDate)
-                        const drNo = (tx as any).deliveryReceiptNo
-                        const siNo = (tx as any).salesInvoiceNo
-                        const tsNo = (tx as any).transferSlipNo
-                        const unit = (tx as any).unit || ""
-                        const hasDocuments = drNo || siNo || tsNo
-
-                        return (
-                          <Link
-                            key={tx.id}
-                            href="/deliveries"
-                            className={`group relative rounded-xl border border-[#E5E7EB] dark:border-border bg-white dark:bg-card shadow-sm hover:shadow-lg transition-all duration-200 cursor-pointer border-l-4 ${status.border} overflow-hidden`}
-                          >
-                            <div className="p-4 space-y-3">
-                              {/* TOP: Status + Customer */}
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="flex-1 min-w-0">
-                                  <p className="font-semibold text-[14px] text-[#111827] dark:text-foreground leading-snug truncate group-hover:text-sky-600 transition-colors">
-                                    {tx.customerName || "N/A"}
-                                  </p>
-                                  <div className="flex items-center gap-1 mt-1">
-                                    <MapPin className="h-3 w-3 text-[#9CA3AF] shrink-0" />
-                                    <p className="text-xs text-[#6B7280] dark:text-muted-foreground truncate leading-normal">
-                                      {tx.customerAddress || "No address"}
-                                    </p>
-                                  </div>
-                                </div>
-                                <Badge className={`${status.color} text-[10px] font-semibold px-2.5 py-0.5 rounded-full border shrink-0`}>
-                                  {status.label}
-                                </Badge>
-                              </div>
-
-                              {/* MIDDLE: Product / Quantity / Date pills */}
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[#F3F4F6] dark:bg-secondary/50 text-[11px] font-medium text-[#374151] dark:text-foreground">
-                                  <Package className="h-3 w-3 text-[#6B7280]" />
-                                  {tx.productName || "N/A"}
-                                </span>
-                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-violet-50 dark:bg-violet-950/30 text-[11px] font-semibold text-violet-700 dark:text-violet-300">
-                                  {tx.quantity || 0}{unit ? ` ${unit}` : ""}
-                                </span>
-                                {dateInfo && (
-                                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[#F3F4F6] dark:bg-secondary/50 text-[11px] text-[#4B5563] dark:text-muted-foreground">
-                                    <Calendar className="h-3 w-3 text-[#9CA3AF]" />
-                                    {dateInfo.text}
-                                  </span>
-                                )}
-                                {dateInfo?.badge && (
-                                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${dateInfo.badgeColor}`}>
-                                    {dateInfo.badge}
-                                  </span>
-                                )}
-                              </div>
-
-                              {/* DOCUMENTS: DR / SI / TS tags */}
-                              {hasDocuments && (
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                  <FileText className="h-3 w-3 text-[#9CA3AF] shrink-0" />
-                                  {drNo && (
-                                    <span className="px-1.5 py-0.5 rounded bg-orange-50 dark:bg-orange-950/30 text-[10px] font-medium text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-800">
-                                      DR: {drNo}
-                                    </span>
-                                  )}
-                                  {siNo && (
-                                    <span className="px-1.5 py-0.5 rounded bg-sky-50 dark:bg-sky-950/30 text-[10px] font-medium text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
-                                      SI: {siNo}
-                                    </span>
-                                  )}
-                                  {tsNo && (
-                                    <span className="px-1.5 py-0.5 rounded bg-teal-50 dark:bg-teal-950/30 text-[10px] font-medium text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
-                                      TS: {tsNo}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-
-                              {/* BOTTOM: Driver */}
-                              <div className="flex items-center justify-between pt-2 border-t border-[#F3F4F6] dark:border-border/50">
-                                <div className="flex items-center gap-1.5">
-                                  <div className="h-5 w-5 rounded-full bg-[#F3F4F6] dark:bg-secondary/50 flex items-center justify-center">
-                                    <User className="h-3 w-3 text-[#6B7280] dark:text-muted-foreground" />
-                                  </div>
-                                  {tx.assignedDriverName ? (
-                                    <span className="text-xs font-medium text-[#374151] dark:text-foreground">{tx.assignedDriverName}</span>
-                                  ) : (
-                                    <span className="text-xs text-[#9CA3AF] dark:text-muted-foreground italic bg-[#F9FAFB] dark:bg-secondary/30 px-2 py-0.5 rounded-full">Unassigned</span>
-                                  )}
-                                </div>
-                                <span className="text-[10px] text-[#9CA3AF] dark:text-muted-foreground group-hover:text-sky-500 transition-colors">
-                                  View details →
-                                </span>
-                              </div>
-                            </div>
-                          </Link>
-                        )
-                      })}
-                    </div>
-
-                    {/* Pagination Controls — same style as Stock Alert & Updates */}
-                    {deliveryTotalPages > 1 && (
-                      <div className="flex items-center justify-between pt-4 mt-2 border-t border-[#E5E7EB] dark:border-border">
-                        <div className="text-xs text-[#9CA3AF] dark:text-muted-foreground">
-                          Showing {paginatedCards.length} of {totalFilteredItems} items
+                    {/* Pagination Controls */}
+                    {totalPages > 1 && (
+                      <div className="flex items-center justify-between pt-4 mt-1">
+                        <div className="text-xs text-gray-400 dark:text-muted-foreground">
+                          Showing {items.length} of {totalItems}
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5">
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => setDeliveryCurrentPage(prev => Math.max(1, prev - 1))}
-                            disabled={deliveryCurrentPage === 1}
-                            className="h-8 px-3 text-sm font-medium rounded-lg border-[#E5E7EB] dark:border-border hover:bg-[#F3F4F6] dark:hover:bg-secondary/50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                            onClick={() => setStockCurrentPage((prev) => Math.max(1, prev - 1))}
+                            disabled={stockCurrentPage === 1}
+                            className="h-8 px-3 text-xs font-medium rounded-lg border-gray-200 dark:border-border hover:bg-gray-50 dark:hover:bg-secondary/50 disabled:opacity-40 transition-all"
                           >
-                            <ChevronLeft className="h-4 w-4 mr-1" />
+                            <ChevronLeft className="h-3.5 w-3.5 mr-0.5" />
                             Previous
                           </Button>
-                          <div className="flex items-center gap-1 px-3 py-1.5 bg-[#F3F4F6] dark:bg-secondary/50 rounded-lg">
-                            <span className="text-sm font-semibold text-[#111827] dark:text-foreground">{deliveryCurrentPage}</span>
-                            <span className="text-sm text-[#9CA3AF] dark:text-muted-foreground">/</span>
-                            <span className="text-sm text-[#9CA3AF] dark:text-muted-foreground">{deliveryTotalPages}</span>
+                          <div className="flex items-center gap-0.5 px-2.5 py-1 bg-gray-50 dark:bg-secondary/40 rounded-lg">
+                            <span className="text-xs font-bold text-gray-700 dark:text-foreground">{stockCurrentPage}</span>
+                            <span className="text-xs text-gray-300">/</span>
+                            <span className="text-xs text-gray-400">{totalPages}</span>
                           </div>
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => setDeliveryCurrentPage(prev => Math.min(deliveryTotalPages, prev + 1))}
-                            disabled={deliveryCurrentPage === deliveryTotalPages}
-                            className="h-8 px-3 text-sm font-medium rounded-lg border-[#E5E7EB] dark:border-border hover:bg-[#F3F4F6] dark:hover:bg-secondary/50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                            onClick={() => setStockCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                            disabled={stockCurrentPage === totalPages}
+                            className="h-8 px-3 text-xs font-medium rounded-lg border-gray-200 dark:border-border hover:bg-gray-50 dark:hover:bg-secondary/50 disabled:opacity-40 transition-all"
                           >
                             Next
-                            <ChevronRight className="h-4 w-4 ml-1" />
+                            <ChevronRight className="h-3.5 w-3.5 ml-0.5" />
                           </Button>
                         </div>
                       </div>
                     )}
-                    </>
-                  )}
-                </div>
-              )
-            })()}
+                  </>
+                )
+              })()}
+            </div>
           </CardContent>
         </Card>
-      </div >
-    </div >
+
+        {/* ──────── RIGHT: Recent Stock Movements ──────── */}
+        <Card className="rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] overflow-hidden">
+          <CardHeader className="flex flex-row items-start justify-between gap-4 pb-0 px-6 pt-6">
+            <div className="flex-1 min-w-0">
+              <CardTitle className="text-lg font-bold text-gray-900 dark:text-foreground mb-0.5">
+                Recent Stock Movements
+              </CardTitle>
+              <CardDescription className="text-sm text-gray-400 dark:text-muted-foreground">
+                Inventory transactions log
+              </CardDescription>
+            </div>
+            {!isGuest && (
+              <Button
+                asChild
+                className="h-9 px-5 rounded-full bg-sky-500 hover:bg-sky-600 text-white font-semibold text-sm flex-shrink-0 transition-all hover:scale-[1.02] hover:shadow-md"
+              >
+                <Link href="/stock-logs">Track All</Link>
+              </Button>
+            )}
+          </CardHeader>
+          <CardContent className="px-6 pb-5 pt-4">
+            {/* Table Header */}
+            <div className="grid grid-cols-[1.4fr_1.2fr_1.2fr_0.8fr_0.6fr] gap-2 text-[11px] font-semibold text-gray-400 dark:text-muted-foreground uppercase tracking-wider pb-3 border-b border-gray-100 dark:border-border">
+              <div>Date & Time</div>
+              <div>Product Name</div>
+              <div>Batch Number</div>
+              <div className="text-center">Action</div>
+              <div className="text-right">Quantity</div>
+            </div>
+
+            {/* Movement Rows */}
+            <div className="divide-y divide-gray-50 dark:divide-border/50">
+              {(() => {
+                const { items, totalPages, totalItems } = getPaginatedMovements()
+
+                if (items.length === 0) {
+                  return (
+                    <div className="flex flex-col items-center justify-center py-12">
+                      <div className="h-12 w-12 rounded-full bg-gray-50 dark:bg-secondary/50 flex items-center justify-center mb-3">
+                        <AlertCircle className="h-5 w-5 text-gray-300" />
+                      </div>
+                      <p className="text-sm text-gray-400">No recent stock movements</p>
+                    </div>
+                  )
+                }
+
+                return (
+                  <>
+                    {items.map((txn, index) => {
+                      const dt = formatMovementDateTime(txn.transaction_date || txn.created_at)
+                      const action = getMovementAction(txn)
+                      const qty = getMovementQuantity(txn)
+                      const unit = getMovementUnit(txn)
+
+                      return (
+                        <div
+                          key={`mvmt-${txn.id}-${index}`}
+                          className="grid grid-cols-[1.4fr_1.2fr_1.2fr_0.8fr_0.6fr] gap-2 py-3.5 items-center transition-colors hover:bg-gray-50/50 dark:hover:bg-secondary/20"
+                        >
+                          {/* Date & Time */}
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-gray-700 dark:text-foreground leading-snug truncate">
+                              {dt.time && `${dt.time}`}
+                            </p>
+                            <p className="text-[11px] text-gray-400 dark:text-muted-foreground mt-0.5 truncate">
+                              {dt.date}
+                            </p>
+                          </div>
+
+                          {/* Product Name */}
+                          <div className="min-w-0">
+                            <p className="text-sm text-gray-700 dark:text-foreground truncate leading-snug">
+                              {txn.product_name || "N/A"}
+                            </p>
+                          </div>
+
+                          {/* Batch Number / Barcode */}
+                          <div className="min-w-0">
+                            <p className="text-[12px] text-gray-400 dark:text-muted-foreground font-mono truncate leading-snug">
+                              {txn.barcode || txn.reference_no || "—"}
+                            </p>
+                          </div>
+
+                          {/* Action Badge */}
+                          <div className="flex justify-center">
+                            <ActionBadge action={action} />
+                          </div>
+
+                          {/* Quantity */}
+                          <div className="text-right">
+                            <span className="text-sm font-bold text-gray-800 dark:text-foreground">
+                              {qty}
+                            </span>
+                            <span className="text-[11px] text-gray-400 ml-1">
+                              {unit}
+                            </span>
+                          </div>
+                        </div>
+                      )
+                    })}
+
+                    {/* Pagination Controls */}
+                    {totalPages > 1 && (
+                      <div className="flex items-center justify-between pt-4 mt-1">
+                        <div className="text-xs text-gray-400 dark:text-muted-foreground">
+                          Showing {items.length} of {totalItems}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setMovementCurrentPage((prev) => Math.max(1, prev - 1))}
+                            disabled={movementCurrentPage === 1}
+                            className="h-8 px-3 text-xs font-medium rounded-lg border-gray-200 dark:border-border hover:bg-gray-50 dark:hover:bg-secondary/50 disabled:opacity-40 transition-all"
+                          >
+                            <ChevronLeft className="h-3.5 w-3.5 mr-0.5" />
+                            Previous
+                          </Button>
+                          <div className="flex items-center gap-0.5 px-2.5 py-1 bg-gray-50 dark:bg-secondary/40 rounded-lg">
+                            <span className="text-xs font-bold text-gray-700 dark:text-foreground">{movementCurrentPage}</span>
+                            <span className="text-xs text-gray-300">/</span>
+                            <span className="text-xs text-gray-400">{totalPages}</span>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setMovementCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                            disabled={movementCurrentPage === totalPages}
+                            className="h-8 px-3 text-xs font-medium rounded-lg border-gray-200 dark:border-border hover:bg-gray-50 dark:hover:bg-secondary/50 disabled:opacity-40 transition-all"
+                          >
+                            Next
+                            <ChevronRight className="h-3.5 w-3.5 ml-0.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
   )
 }
