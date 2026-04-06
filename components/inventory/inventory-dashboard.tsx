@@ -628,8 +628,8 @@ export function InventoryDashboard() {
       <div className="space-y-8">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-balance">Inventory Tracking</h1>
-            <p className="text-muted-foreground">Track stock movement, expiration, and barcode management</p>
+            <h1 className="text-3xl font-bold text-balance">Inventory Monitoring</h1>
+            <p className="text-muted-foreground">Monitor stock movement, expiration, and barcode management</p>
           </div>
           {!isGuest && (
             <div className="flex items-center gap-2">
