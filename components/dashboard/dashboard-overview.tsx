@@ -440,11 +440,11 @@ export function DashboardOverview() {
 
       {/* Page Header */}
       <div>
-        <h1 className="text-[28px] font-bold text-gray-900 dark:text-foreground leading-tight">
-          {isGuest ? "Guest Dashboard" : "Admin Dashboard"}
+        <h1 className="text-[28px] font-bold text-gray-900 dark:text-foreground leading-tight tracking-[-0.01em]">
+          Main Dashboard
         </h1>
-        <p className="text-gray-400 dark:text-muted-foreground text-sm mt-1">
-          Track stocks flow and inventory status
+        <p className="text-gray-400 dark:text-muted-foreground text-[13px] mt-1 tracking-wide">
+          Monitor inventory flow and stock status in real time
         </p>
       </div>
 

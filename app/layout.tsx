@@ -17,8 +17,8 @@ const geistMono = Roboto_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "DecktaGO Admin Dashboard",
-  description: "Admin dashboard for inventory and delivery management",
+  title: "DecktaGO — Main Dashboard",
+  description: "Monitor inventory flow and stock status in real time",
   generator: "v0.app",
 }
 
