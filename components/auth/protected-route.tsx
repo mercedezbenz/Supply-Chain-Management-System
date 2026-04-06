@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation"
 
 import { useAuth } from "@/hooks/use-auth"
 import { AuthLoadingSkeleton } from "@/components/skeletons/dashboard-skeleton"
+import { LoggingOutOverlay } from "@/components/auth/logging-out-overlay"
 
 interface ProtectedRouteProps {
   children: React.ReactNode
@@ -13,16 +14,21 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children, adminOnly = false }: ProtectedRouteProps) {
-  const { user, loading, isAdmin, isGuest, isStaff } = useAuth()
+  const { user, loading, isLoggingOut, isAdmin, isGuest, isStaff } = useAuth()
   const router = useRouter()
 
   useEffect(() => {
-    // ONLY redirect to /login if NOT authenticated
-    if (!loading && !user) {
+    // ONLY redirect to /login if NOT authenticated (and not during logout)
+    if (!loading && !user && !isLoggingOut) {
       console.log("[ProtectedRoute] No user found, redirecting to /login")
       router.push("/login")
     }
-  }, [user, loading, router])
+  }, [user, loading, isLoggingOut, router])
+
+  // Show clean logout overlay — no dashboard flicker
+  if (isLoggingOut) {
+    return <LoggingOutOverlay />
+  }
 
   // Show loading spinner while auth is initializing
   if (loading) {

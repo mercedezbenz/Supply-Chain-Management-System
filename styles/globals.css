@@ -286,6 +286,30 @@
   animation: scrollChevronBounce 1.5s ease-in-out infinite;
 }
 
+/* ─── Search Highlight Styling ──────────────────────────────────────────── */
+
+.search-highlight {
+  background: linear-gradient(135deg, #fef08a 0%, #fde047 100%);
+  color: #92400e;
+  font-weight: 600;
+  padding: 0.05em 0.2em;
+  border-radius: 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.dark .search-highlight {
+  background: linear-gradient(135deg, #854d0e 0%, #a16207 100%);
+  color: #fef08a;
+}
+
+/* ─── Pagination Bar Styling ────────────────────────────────────────────── */
+
+.pagination-bar {
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
 /* ─── Global Input Placeholder Styling ──────────────────────────────────── */
 
 /* All input placeholders: low-opacity, muted, clearly distinct from real data */

@@ -181,3 +181,32 @@
   cursor: inherit !important;
   caret-color: transparent !important;
 }
+
+/* ─── Search Highlight ────────────────────────────────────────────────── */
+.search-highlight {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(59, 130, 246, 0.25) 100%);
+  color: inherit;
+  border-radius: 2px;
+  padding-inline: 1px;
+  box-decoration-break: clone;
+  animation: highlight-pulse 1.5s ease-in-out 1;
+}
+
+@keyframes highlight-pulse {
+  0%, 100% { background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(59, 130, 246, 0.25) 100%); }
+  50% { background: linear-gradient(135deg, rgba(59, 130, 246, 0.30) 0%, rgba(59, 130, 246, 0.40) 100%); }
+}
+
+/* ─── Filter toolbar select triggers — smooth micro-interactions ─────── */
+[data-slot="select-trigger"] {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+[data-slot="select-trigger"]:hover {
+  transform: translateY(-0.5px);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+[data-slot="select-trigger"]:active {
+  transform: translateY(0);
+}

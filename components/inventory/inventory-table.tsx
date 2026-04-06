@@ -1,12 +1,12 @@
 "use client"
 
-import { useState, useEffect, useRef, useMemo, useCallback } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback, ReactNode } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { InventoryItem, InventoryTransaction, Category } from "@/lib/types"
 import { formatTimestamp, formatExpirationDate } from "@/lib/utils"
-import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Pencil, Trash2, Loader2, Barcode, MessageSquareWarning, Package, History, Printer } from "lucide-react"
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, ChevronUp, Pencil, Trash2, Loader2, Barcode, MessageSquareWarning, Package, History, Printer, SearchX } from "lucide-react"
 import { getItemStatus } from "./inventory-dashboard"
 import { buildProductDisplayName } from "@/lib/product-data"
 import { useToast } from "@/hooks/use-toast"
@@ -30,6 +30,12 @@ interface InventoryTableProps {
   onItemScrolled?: () => void
   /** Set of item IDs that were just added — used to trigger highlight animation */
   newItemIds?: Set<string>
+  /** Sort mode passed from dashboard filters */
+  sortMode?: string
+  /** Rows per page passed from dashboard */
+  rowsPerPage?: number
+  /** Debounced search query from dashboard — used for text highlighting */
+  searchQuery?: string
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -159,6 +165,40 @@ function formatWeight(value: number | undefined | null): string {
   return num.toFixed(2)
 }
 
+// ─── Search highlight helper ────────────────────────────────────────────────
+/** Wraps matching substrings in a <mark> tag for visual highlighting */
+function highlightMatch(text: string, query: string): ReactNode {
+  if (!query || !text) return text
+  const lowerText = text.toLowerCase()
+  const lowerQuery = query.toLowerCase()
+  const idx = lowerText.indexOf(lowerQuery)
+  if (idx === -1) return text
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="search-highlight">{text.slice(idx, idx + query.length)}</mark>
+      {text.slice(idx + query.length)}
+    </>
+  )
+}
+
+// ─── Pagination page number generator ───────────────────────────────────────
+function getPageNumbers(current: number, total: number): (number | 'ellipsis')[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+  const pages: (number | 'ellipsis')[] = []
+  // Always show first page
+  pages.push(1)
+  if (current > 3) pages.push('ellipsis')
+  // Show range around current
+  const rangeStart = Math.max(2, current - 1)
+  const rangeEnd = Math.min(total - 1, current + 1)
+  for (let i = rangeStart; i <= rangeEnd; i++) pages.push(i)
+  if (current < total - 2) pages.push('ellipsis')
+  // Always show last page
+  if (total > 1) pages.push(total)
+  return pages
+}
+
 // ─── Transaction History List Component ───
 function TransactionHistoryList({ transactions, setCancellingItem }: { transactions: any[], setCancellingItem: (txn: any) => void }) {
   const expandedTxns = useMemo(() => {
@@ -282,6 +322,9 @@ export function InventoryTable({
   scrollToItemId,
   onItemScrolled,
   newItemIds,
+  sortMode = "date-desc",
+  rowsPerPage: rowsPerPageProp = 10,
+  searchQuery = "",
 }: InventoryTableProps) {
   const { toast } = useToast()
   const [cancellingItem, setCancellingItem] = useState<InventoryTransaction | null>(null)
@@ -298,7 +341,7 @@ export function InventoryTable({
   const hasScrolledOnce = useRef(false)
   const itemRowRefs = useRef<Map<string, HTMLElement>>(new Map())
 
-  const itemsPerPage = 10
+  const itemsPerPage = rowsPerPageProp
 
   // ─── Group transactions by barcode ──────────────────────────────────────
   const groupedProducts: GroupedProduct[] = useMemo(() => {
@@ -407,18 +450,61 @@ export function InventoryTable({
       group.stockLeft = group.totalIncoming - group.totalOutgoing + group.totalGoodReturn
     }
 
-    // Sort groups by latest date (newest first)
+    // Default sort: groups by latest date (newest first)
     return Array.from(groupMap.values()).sort((a, b) => {
       return parseDateToMs(b.latestDate) - parseDateToMs(a.latestDate)
     })
   }, [transactions])
 
-  const dataLength = groupedProducts.length
+  // ─── Apply sort mode from dashboard ────────────────────────────────────
+  const sortedProducts = useMemo(() => {
+    const sorted = [...groupedProducts]
+    switch (sortMode) {
+      case "date-asc":
+        sorted.sort((a, b) => parseDateToMs(a.dateAdded) - parseDateToMs(b.dateAdded))
+        break
+      case "date-desc":
+        sorted.sort((a, b) => parseDateToMs(b.dateAdded) - parseDateToMs(a.dateAdded))
+        break
+      case "expiry-asc":
+        sorted.sort((a, b) => {
+          const aMs = parseDateToMs(a.expiryDate)
+          const bMs = parseDateToMs(b.expiryDate)
+          if (aMs === 0 && bMs === 0) return 0
+          if (aMs === 0) return 1  // no expiry goes last
+          if (bMs === 0) return -1
+          return aMs - bMs
+        })
+        break
+      case "expiry-desc":
+        sorted.sort((a, b) => {
+          const aMs = parseDateToMs(a.expiryDate)
+          const bMs = parseDateToMs(b.expiryDate)
+          if (aMs === 0 && bMs === 0) return 0
+          if (aMs === 0) return 1
+          if (bMs === 0) return -1
+          return bMs - aMs
+        })
+        break
+      case "stock-asc":
+        sorted.sort((a, b) => a.stockLeft - b.stockLeft)
+        break
+      case "stock-desc":
+        sorted.sort((a, b) => b.stockLeft - a.stockLeft)
+        break
+      default:
+        // Keep default sort (newest first)
+        break
+    }
+    return sorted
+  }, [groupedProducts, sortMode])
+
+  const dataLength = sortedProducts.length
   const totalPages = Math.max(1, Math.ceil(dataLength / itemsPerPage))
   const paginatedGroups = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage
-    return groupedProducts.slice(start, start + itemsPerPage)
-  }, [groupedProducts, currentPage])
+    return sortedProducts.slice(start, start + itemsPerPage)
+  }, [sortedProducts, currentPage, itemsPerPage])
 
   // ─── Expand/Collapse ───────────────────────────────────────────────────
   const toggleExpand = useCallback((barcode: string) => {
@@ -463,10 +549,10 @@ export function InventoryTable({
     }
   }, [paginatedGroups])
 
-  // Reset to page 1 when data changes
+  // Reset to page 1 when data changes or rows per page changes
   useEffect(() => {
     setCurrentPage(1)
-  }, [dataLength])
+  }, [dataLength, itemsPerPage, sortMode])
 
   // Scroll to item
   useEffect(() => {
@@ -505,14 +591,23 @@ export function InventoryTable({
   if (dataLength === 0) {
     return (
       <div className="text-center py-16 px-4">
-        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-100 dark:bg-gray-800 mb-4">
-          <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
-          </svg>
+        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-800 dark:to-gray-700 mb-4 shadow-inner">
+          {searchQuery ? (
+            <SearchX className="w-7 h-7 text-gray-400" />
+          ) : (
+            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+            </svg>
+          )}
         </div>
-        <p className="text-foreground text-lg font-semibold mb-2">No Products Found</p>
+        <p className="text-foreground text-lg font-semibold mb-2">
+          {searchQuery ? "No items found matching your search or filters" : "No Products Found"}
+        </p>
         <p className="text-muted-foreground text-sm max-w-md mx-auto">
-          No products match your current filters. Try adding inventory items or changing filter settings.
+          {searchQuery
+            ? `No results for "${searchQuery}". Try a different search term or adjust your filters.`
+            : "No products match your current filters. Try adding inventory items or changing filter settings."
+          }
         </p>
       </div>
     )
@@ -621,7 +716,7 @@ export function InventoryTable({
                           {formatTxnDate(group.dateAdded)}
                         </td>
 
-                        {/* Product Name — with type icon */}
+                        {/* Product Name — with type icon + search highlight */}
                         <td className="h-14 px-4 py-2 font-medium text-sm text-foreground align-middle">
                           <div className="flex items-center gap-2">
                             <span className="text-base shrink-0" aria-hidden="true">
@@ -634,7 +729,7 @@ export function InventoryTable({
                                 return "📦";
                               })()}
                             </span>
-                            <span className="line-clamp-1" title={group.productName}>{group.productName}</span>
+                            <span className="line-clamp-1" title={group.productName}>{highlightMatch(group.productName, searchQuery)}</span>
                           </div>
                         </td>
 
@@ -651,7 +746,7 @@ export function InventoryTable({
 
                         {/* Barcode */}
                         <td className="h-14 px-4 py-2 font-mono text-sm text-foreground align-middle">
-                          <div className="truncate max-w-[150px]" title={group.barcode}>{group.barcode}</div>
+                          <div className="truncate max-w-[150px]" title={group.barcode}>{highlightMatch(group.barcode, searchQuery)}</div>
                         </td>
 
                         {/* Location */}
@@ -860,8 +955,8 @@ export function InventoryTable({
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold text-sm text-foreground line-clamp-1">{group.productName}</h3>
-                      <p className="text-xs text-muted-foreground font-mono mt-0.5">{group.barcode}</p>
+                      <h3 className="font-semibold text-sm text-foreground line-clamp-1">{highlightMatch(group.productName, searchQuery)}</h3>
+                      <p className="text-xs text-muted-foreground font-mono mt-0.5">{highlightMatch(group.barcode, searchQuery)}</p>
                       {group.location && (
                         <p className="text-[10px] text-muted-foreground mt-0.5">📍 {group.location}</p>
                       )}
@@ -957,37 +1052,92 @@ export function InventoryTable({
           })}
         </div>
 
-        {/* Pagination Controls */}
+        {/* ─── PAGINATION CONTROLS ──────────────────────────────────────── */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-between px-4 py-4 border-t border-border/40 bg-gray-50/50 dark:bg-muted/20 rounded-b-xl mt-[-1px]">
-            <div className="text-sm text-muted-foreground">
-              Showing <span className="font-medium text-foreground">{((currentPage - 1) * itemsPerPage) + 1}</span> to{" "}
-              <span className="font-medium text-foreground">{Math.min(currentPage * itemsPerPage, dataLength)}</span> of{" "}
-              <span className="font-medium text-foreground">{dataLength}</span> products
+          <div className="pagination-bar flex flex-col sm:flex-row items-center justify-between gap-3 px-5 py-4 border-t border-border/40 bg-gradient-to-r from-gray-50/80 via-white to-gray-50/80 dark:from-muted/20 dark:via-card dark:to-muted/20 rounded-b-xl mt-[-1px]">
+            {/* Left: Showing X–Y of Z */}
+            <div className="text-sm text-muted-foreground select-none">
+              Showing{" "}
+              <span className="font-semibold text-foreground">{((currentPage - 1) * itemsPerPage) + 1}</span>
+              <span className="mx-0.5">–</span>
+              <span className="font-semibold text-foreground">{Math.min(currentPage * itemsPerPage, dataLength)}</span>
+              {" "}of{" "}
+              <span className="font-semibold text-foreground">{dataLength}</span> products
+              <span className="hidden sm:inline text-muted-foreground/60 ml-1.5">·</span>
+              <span className="hidden sm:inline text-muted-foreground/60 ml-1">{itemsPerPage} per page</span>
             </div>
-            <div className="flex items-center gap-2">
+
+            {/* Right: Pagination buttons */}
+            <div className="flex items-center gap-1">
+              {/* First page */}
               <Button
-                variant="outline"
+                variant="ghost"
+                size="sm"
+                onClick={() => setCurrentPage(1)}
+                disabled={currentPage === 1}
+                className="h-9 w-9 p-0 rounded-lg text-muted-foreground hover:text-foreground hover:bg-gray-100 dark:hover:bg-muted/40 disabled:opacity-30 transition-all"
+                title="First page"
+              >
+                <ChevronsLeft className="h-4 w-4" />
+              </Button>
+
+              {/* Previous */}
+              <Button
+                variant="ghost"
                 size="sm"
                 onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                 disabled={currentPage === 1}
-                className="h-10 px-4"
+                className="h-9 w-9 p-0 rounded-lg text-muted-foreground hover:text-foreground hover:bg-gray-100 dark:hover:bg-muted/40 disabled:opacity-30 transition-all"
+                title="Previous page"
               >
-                <ChevronLeft className="h-4 w-4 mr-1" />
-                Previous
+                <ChevronLeft className="h-4 w-4" />
               </Button>
-              <span className="text-sm text-muted-foreground">
-                Page {currentPage} of {totalPages}
-              </span>
+
+              {/* Page numbers */}
+              <div className="flex items-center gap-0.5 mx-1">
+                {getPageNumbers(currentPage, totalPages).map((page, i) => (
+                  page === 'ellipsis' ? (
+                    <span key={`ellipsis-${i}`} className="w-9 h-9 flex items-center justify-center text-muted-foreground/50 text-sm select-none">…</span>
+                  ) : (
+                    <Button
+                      key={page}
+                      variant={page === currentPage ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setCurrentPage(page as number)}
+                      className={`h-9 w-9 p-0 rounded-lg text-sm font-medium transition-all ${
+                        page === currentPage
+                          ? "bg-blue-600 text-white shadow-md shadow-blue-600/25 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 scale-105"
+                          : "text-muted-foreground hover:text-foreground hover:bg-gray-100 dark:hover:bg-muted/40"
+                      }`}
+                    >
+                      {page}
+                    </Button>
+                  )
+                ))}
+              </div>
+
+              {/* Next */}
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
                 onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                 disabled={currentPage === totalPages}
-                className="h-10 px-4"
+                className="h-9 w-9 p-0 rounded-lg text-muted-foreground hover:text-foreground hover:bg-gray-100 dark:hover:bg-muted/40 disabled:opacity-30 transition-all"
+                title="Next page"
               >
-                Next
-                <ChevronRight className="h-4 w-4 ml-1" />
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+
+              {/* Last page */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setCurrentPage(totalPages)}
+                disabled={currentPage === totalPages}
+                className="h-9 w-9 p-0 rounded-lg text-muted-foreground hover:text-foreground hover:bg-gray-100 dark:hover:bg-muted/40 disabled:opacity-30 transition-all"
+                title="Last page"
+              >
+                <ChevronsRight className="h-4 w-4" />
               </Button>
             </div>
           </div>

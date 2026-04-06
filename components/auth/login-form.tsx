@@ -5,7 +5,7 @@ import type React from "react";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
-import { Loader2, AlertTriangle, Clock, Eye, EyeOff, UserCircle, Mail, Lock } from "lucide-react";
+import { Loader2, AlertTriangle, Clock, Eye, EyeOff, UserCircle, Mail, Lock, Info, X } from "lucide-react";
 import Image from "next/image";
 
 export function LoginForm() {
@@ -17,6 +17,7 @@ export function LoginForm() {
   const [rateLimitCountdown, setRateLimitCountdown] = useState(0);
   const [showPassword, setShowPassword] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [showGuestModal, setShowGuestModal] = useState(false);
 
   const { signIn, loginAsGuest, firebaseError } = useAuth();
   const router = useRouter();
@@ -91,8 +92,13 @@ export function LoginForm() {
     }
   };
 
-  const handleGuestLogin = () => {
-    console.log("[Login] Guest login button clicked");
+  const handleGuestLoginClick = () => {
+    setShowGuestModal(true);
+  };
+
+  const handleGuestLoginConfirm = () => {
+    console.log("[Login] Guest login confirmed");
+    setShowGuestModal(false);
     loginAsGuest();
     setTimeout(() => {
       console.log("[Login] Redirecting to dashboard after guest login...");
@@ -474,6 +480,188 @@ export function LoginForm() {
           border-color: rgba(148, 163, 184, 0.4);
         }
 
+        /* ───── Guest Confirmation Modal ───── */
+        .guest-modal-backdrop {
+          position: fixed;
+          inset: 0;
+          z-index: 100;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(15, 23, 42, 0.45);
+          backdrop-filter: blur(6px);
+          -webkit-backdrop-filter: blur(6px);
+          animation: guestBackdropIn 0.2s ease-out;
+          padding: 1rem;
+        }
+
+        @keyframes guestBackdropIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+
+        .guest-modal-card {
+          position: relative;
+          max-width: 420px;
+          width: 100%;
+          background: rgba(255, 255, 255, 0.95);
+          backdrop-filter: blur(20px);
+          -webkit-backdrop-filter: blur(20px);
+          border: 1px solid rgba(255, 255, 255, 0.7);
+          border-radius: 20px;
+          padding: 2rem 2rem 1.75rem;
+          box-shadow:
+            0 20px 60px rgba(0, 0, 0, 0.15),
+            0 4px 16px rgba(0, 0, 0, 0.08),
+            0 0 40px rgba(135, 200, 245, 0.08);
+          animation: guestModalIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes guestModalIn {
+          from {
+            opacity: 0;
+            transform: scale(0.95) translateY(8px);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+          }
+        }
+
+        .guest-modal-close {
+          position: absolute;
+          top: 14px;
+          right: 14px;
+          background: none;
+          border: none;
+          padding: 4px;
+          cursor: pointer;
+          color: #94a3b8;
+          border-radius: 8px;
+          transition: all 0.2s;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .guest-modal-close:hover {
+          color: #64748b;
+          background: rgba(148, 163, 184, 0.12);
+        }
+
+        .guest-modal-icon-wrap {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 52px;
+          height: 52px;
+          border-radius: 14px;
+          background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(6, 182, 212, 0.08) 100%);
+          margin-bottom: 1.25rem;
+        }
+
+        .guest-modal-icon-wrap svg {
+          color: #3b82f6;
+        }
+
+        .guest-modal-title {
+          font-family: 'Inter', sans-serif;
+          font-size: 1.2rem;
+          font-weight: 700;
+          color: #1e293b;
+          margin-bottom: 0.5rem;
+          letter-spacing: -0.02em;
+        }
+
+        .guest-modal-message {
+          font-family: 'Inter', sans-serif;
+          font-size: 0.88rem;
+          color: #64748b;
+          line-height: 1.6;
+          margin-bottom: 1rem;
+        }
+
+        .guest-modal-highlight {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          padding: 12px 14px;
+          border-radius: 12px;
+          background: rgba(245, 158, 11, 0.06);
+          border: 1px solid rgba(245, 158, 11, 0.15);
+          margin-bottom: 1.5rem;
+          font-family: 'Inter', sans-serif;
+          font-size: 0.8rem;
+          color: #92400e;
+          line-height: 1.5;
+        }
+
+        .guest-modal-highlight svg {
+          flex-shrink: 0;
+          margin-top: 1px;
+          color: #d97706;
+        }
+
+        .guest-modal-note {
+          font-family: 'Inter', sans-serif;
+          font-size: 0.75rem;
+          color: #94a3b8;
+          text-align: center;
+          margin-bottom: 1.25rem;
+        }
+
+        .guest-modal-actions {
+          display: flex;
+          gap: 10px;
+        }
+
+        .guest-modal-cancel {
+          flex: 1;
+          padding: 12px 20px;
+          font-family: 'Inter', sans-serif;
+          font-size: 0.85rem;
+          font-weight: 500;
+          color: #64748b;
+          background: rgba(241, 245, 249, 0.8);
+          border: 1px solid rgba(148, 163, 184, 0.25);
+          border-radius: 12px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+        .guest-modal-cancel:hover {
+          background: rgba(226, 232, 240, 0.8);
+          color: #475569;
+        }
+
+        .guest-modal-confirm {
+          flex: 1.3;
+          padding: 12px 20px;
+          font-family: 'Inter', sans-serif;
+          font-size: 0.85rem;
+          font-weight: 600;
+          color: #ffffff;
+          background: linear-gradient(135deg, #3b9de8 0%, #2cb8cc 100%);
+          border: none;
+          border-radius: 12px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          transition: all 0.3s ease;
+          box-shadow: 0 4px 14px rgba(59, 157, 232, 0.3);
+        }
+
+        .guest-modal-confirm:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 6px 20px rgba(59, 157, 232, 0.35);
+        }
+
+        .guest-modal-confirm:active {
+          transform: translateY(0);
+        }
+
         .login-guest-btn:disabled {
           opacity: 0.4;
           cursor: not-allowed;
@@ -727,7 +915,7 @@ export function LoginForm() {
                 <button
                   type="button"
                   className="login-guest-btn"
-                  onClick={handleGuestLogin}
+                  onClick={handleGuestLoginClick}
                   disabled={loading || isRateLimited}
                 >
                   <UserCircle size={16} />
@@ -738,6 +926,56 @@ export function LoginForm() {
           </div>
         </div>
       </div>
+
+      {/* ── Guest Access Confirmation Modal ── */}
+      {showGuestModal && (
+        <div className="guest-modal-backdrop" onClick={() => setShowGuestModal(false)}>
+          <div className="guest-modal-card" onClick={(e) => e.stopPropagation()}>
+            <button
+              className="guest-modal-close"
+              onClick={() => setShowGuestModal(false)}
+              aria-label="Close"
+            >
+              <X size={18} />
+            </button>
+
+            <div className="guest-modal-icon-wrap">
+              <Eye size={24} />
+            </div>
+
+            <h3 className="guest-modal-title">Guest Access</h3>
+            <p className="guest-modal-message">
+              You are about to enter as a guest. You will have <strong>view-only access</strong> and
+              will not be able to add, edit, or modify any data.
+            </p>
+
+            <div className="guest-modal-highlight">
+              <Info size={16} />
+              <span>Guest mode is read-only. No changes can be saved during your session.</span>
+            </div>
+
+            <p className="guest-modal-note">
+              For full access, please log in with an account.
+            </p>
+
+            <div className="guest-modal-actions">
+              <button
+                className="guest-modal-cancel"
+                onClick={() => setShowGuestModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="guest-modal-confirm"
+                onClick={handleGuestLoginConfirm}
+              >
+                <UserCircle size={16} />
+                Continue as Guest
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

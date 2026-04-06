@@ -12,6 +12,7 @@ interface AuthContextType {
   user: User | null
   firebaseUser: any | null
   loading: boolean
+  isLoggingOut: boolean
   signIn: (email: string, password: string) => Promise<void>
   loginAsGuest: () => void
   logout: () => Promise<void>
@@ -38,6 +39,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(_isGuestMode ? _guestUser : null)
   const [firebaseUser, setFirebaseUser] = useState<any | null>(null)
   const [loading, setLoading] = useState(_isGuestMode ? false : true)
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
   const [firebaseError, setFirebaseError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -229,7 +231,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       console.log("[Auth] Logging out, _isGuestMode:", _isGuestMode)
       
-      // Clear module-level guest mode flag FIRST
+      // ✅ Set logging-out state IMMEDIATELY — blocks dashboard rendering
+      setIsLoggingOut(true)
+      
+      // Clear module-level guest mode flag
       _isGuestMode = false
       _guestUser = null
       
@@ -237,10 +242,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (firebaseUser) {
         await fbSignOut(getFirebaseAuth())
       }
-      
-      // Immediately clear local user state
-      setUser(null)
-      setFirebaseUser(null)
       
       // Clear any cached data
       if (typeof window !== "undefined") {
@@ -254,8 +255,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Still clear state and redirect even if signOut fails
       _isGuestMode = false
       _guestUser = null
-      setUser(null)
-      setFirebaseUser(null)
       if (typeof window !== "undefined") {
         localStorage.removeItem("auth")
         localStorage.removeItem("firestore")
@@ -273,6 +272,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     user,
     firebaseUser,
     loading,
+    isLoggingOut,
     signIn,
     loginAsGuest,
     logout,

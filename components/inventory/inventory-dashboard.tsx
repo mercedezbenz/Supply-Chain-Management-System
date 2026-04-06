@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
-import { Package, TrendingUp, TrendingDown, AlertTriangle, Search, X, Plus, ArrowDownUp, Clock, PackageMinus, ScanLine, Tag, RotateCcw } from "lucide-react"
+import { Package, TrendingUp, TrendingDown, AlertTriangle, Search, X, Plus, ArrowDownUp, Clock, PackageMinus, ScanLine, Tag, RotateCcw, Filter, CalendarClock, Layers } from "lucide-react"
 import { TodaysMovementIcon, StockOverviewIcon, ReturnsSummaryIcon, FastMovingIcon } from "./inventory-icons"
 import { Button } from "@/components/ui/button"
 import { InventoryTable } from "./inventory-table"
@@ -29,6 +29,31 @@ const RECENTLY_ADDED_OPTIONS = [
   { value: "today", label: "Today" },
   { value: "week", label: "This Week" },
   { value: "month", label: "This Month" },
+]
+
+// ——— Stock Status filter options ———————————————————————————————————————————
+const STOCK_STATUS_OPTIONS = [
+  { value: "all", label: "All Status" },
+  { value: "in-stock", label: "In Stock" },
+  { value: "low-stock", label: "Low Stock" },
+  { value: "out-of-stock", label: "Out of Stock" },
+]
+
+// ——— Expiration filter options ———————————————————————————————————————————
+const EXPIRATION_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "expiring-soon", label: "Expiring Soon" },
+  { value: "expired", label: "Expired" },
+]
+
+// ——— Sort options ———————————————————————————————————————————
+const SORT_OPTIONS = [
+  { value: "date-desc", label: "Newest First" },
+  { value: "date-asc", label: "Oldest First" },
+  { value: "expiry-asc", label: "Expiry: Soonest" },
+  { value: "expiry-desc", label: "Expiry: Latest" },
+  { value: "stock-asc", label: "Stock: Low → High" },
+  { value: "stock-desc", label: "Stock: High → Low" },
 ]
 
 /** Returns the cutoff Date for a given recently-added filter value. */
@@ -90,12 +115,17 @@ export function InventoryDashboard() {
   const [selectedCategory, setSelectedCategory] = useState<string>("all")
   const [selectedType, setSelectedType] = useState<string>("all")
   const [recentlyAddedFilter, setRecentlyAddedFilter] = useState<string>("all")
-  // Search: pendingSearch is what the user types, searchQuery is what's actually applied
-  const [pendingSearch, setPendingSearch] = useState<string>("")
+  const [stockStatusFilter, setStockStatusFilter] = useState<string>("all")
+  const [expirationFilter, setExpirationFilter] = useState<string>("all")
+  // Search: real-time debounced
   const [searchQuery, setSearchQuery] = useState<string>("")
+  const [debouncedSearch, setDebouncedSearch] = useState<string>("")
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Sort newest first toggle
-  const [sortNewestFirst, setSortNewestFirst] = useState(true)
+  // Sort mode
+  const [sortMode, setSortMode] = useState<string>("date-desc")
+  // Rows per page
+  const [rowsPerPage, setRowsPerPage] = useState<number>(10)
   const [loading, setLoading] = useState(true)
   const [addItemDialogOpen, setAddItemDialogOpen] = useState(false)
   const [outgoingDialogOpen, setOutgoingDialogOpen] = useState(false)
@@ -117,29 +147,36 @@ export function InventoryDashboard() {
     setSelectedType("all")
   }, [])
 
-  // Apply search
-  const applySearch = useCallback(() => {
-    setSearchQuery(pendingSearch)
-  }, [pendingSearch])
+  // Real-time debounced search
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchQuery(value)
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
+    searchDebounceRef.current = setTimeout(() => {
+      setDebouncedSearch(value)
+    }, 300)
+  }, [])
 
-  // Handle Enter key in search
-  const handleSearchKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      applySearch()
+  // Cleanup debounce timer
+  useEffect(() => {
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
     }
-  }, [applySearch])
+  }, [])
 
   // Reset all filters
   const resetAllFilters = useCallback(() => {
     setSelectedCategory("all")
     setSelectedType("all")
     setRecentlyAddedFilter("all")
-    setPendingSearch("")
+    setStockStatusFilter("all")
+    setExpirationFilter("all")
     setSearchQuery("")
+    setDebouncedSearch("")
+    setSortMode("date-desc")
   }, [])
 
   // Check if any filter is active
-  const hasActiveFilters = selectedCategory !== "all" || selectedType !== "all" || recentlyAddedFilter !== "all" || searchQuery !== ""
+  const hasActiveFilters = selectedCategory !== "all" || selectedType !== "all" || recentlyAddedFilter !== "all" || stockStatusFilter !== "all" || expirationFilter !== "all" || debouncedSearch !== ""
 
   // Available types based on selected category
   const availableTypes = useMemo(() => {
@@ -337,7 +374,7 @@ export function InventoryDashboard() {
     }
   }, [])
 
-  // Filter items by category, type, search query, and recently added
+  // Filter items by category, type, search query, stock status, expiration, and recently added
   const filteredItems = useMemo(() => {
     const recentlyCutoff = getRecentlyCutoff(recentlyAddedFilter)
 
@@ -354,9 +391,9 @@ export function InventoryDashboard() {
         if (itemType.toLowerCase() !== selectedType.toLowerCase()) return false
       }
 
-      // Search filter - search by name, barcode
-      if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase().trim()
+      // Search filter - real-time debounced search by name, barcode
+      if (debouncedSearch.trim()) {
+        const query = debouncedSearch.toLowerCase().trim()
         const itemName = (item.name || "").toLowerCase()
         const itemBarcode = (item.barcode || "").toLowerCase()
         const itemProductName = ((item as any).productName || "").toLowerCase()
@@ -369,6 +406,21 @@ export function InventoryDashboard() {
           itemId.includes(query)
 
         if (!matchesSearch) return false
+      }
+
+      // Stock Status filter
+      if (stockStatusFilter !== "all") {
+        const status = getItemStatus(item)
+        if (stockStatusFilter === "in-stock" && status !== "in-stock") return false
+        if (stockStatusFilter === "low-stock" && status !== "low-stock") return false
+        if (stockStatusFilter === "out-of-stock" && status !== "out-of-stock") return false
+      }
+
+      // Expiration filter
+      if (expirationFilter !== "all") {
+        const status = getItemStatus(item)
+        if (expirationFilter === "expiring-soon" && status !== "expiring-soon") return false
+        if (expirationFilter === "expired" && status !== "expired") return false
       }
 
       // Recently Added filter
@@ -388,17 +440,8 @@ export function InventoryDashboard() {
       return true
     })
 
-    // Apply sort direction
-    if (!sortNewestFirst) {
-      return [...filtered].sort((a: any, b: any) => {
-        const aTime = a.createdAt instanceof Date ? a.createdAt.getTime() : new Date(a.createdAt || 0).getTime()
-        const bTime = b.createdAt instanceof Date ? b.createdAt.getTime() : new Date(b.createdAt || 0).getTime()
-        return aTime - bTime // Ascending (oldest first)
-      })
-    }
-
-    return filtered // Already sorted descending by subscribeToItems
-  }, [items, selectedCategory, selectedType, searchQuery, recentlyAddedFilter, sortNewestFirst])
+    return filtered // Sorting is now handled by sortMode
+  }, [items, selectedCategory, selectedType, debouncedSearch, stockStatusFilter, expirationFilter, recentlyAddedFilter])
 
   // Filter transactions for the table display (one row per transaction)
   const filteredTransactions = useMemo(() => {
@@ -413,9 +456,9 @@ export function InventoryDashboard() {
       if (selectedType !== "all") {
         if ((txn.type || "").trim().toLowerCase() !== selectedType.toLowerCase()) return false
       }
-      // Search filter
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim()
+      // Search filter (real-time debounced)
+      if (debouncedSearch.trim()) {
+        const q = debouncedSearch.toLowerCase().trim()
         const matches =
           (txn.product_name || "").toLowerCase().includes(q) ||
           (txn.barcode || "").toLowerCase().includes(q) ||
@@ -430,19 +473,10 @@ export function InventoryDashboard() {
       return true
     })
 
-    // Apply sort direction
-    if (!sortNewestFirst) {
-      return [...filtered].sort((a: any, b: any) => {
-        const aTime = a.created_at instanceof Date ? a.created_at.getTime() : 0
-        const bTime = b.created_at instanceof Date ? b.created_at.getTime() : 0
-        return aTime - bTime
-      })
-    }
+    return filtered // Sorting handled by sortMode in the table
+  }, [transactions, selectedCategory, selectedType, debouncedSearch, recentlyAddedFilter])
 
-    return filtered // Already sorted descending
-  }, [transactions, selectedCategory, selectedType, searchQuery, recentlyAddedFilter, sortNewestFirst])
-
-  console.log("[Inventory Dashboard] Total items:", items.length, "Filtered items:", filteredItems.length, "Category:", selectedCategory, "Type:", selectedType, "Search:", searchQuery)
+  console.log("[Inventory Dashboard] Total items:", items.length, "Filtered items:", filteredItems.length, "Category:", selectedCategory, "Type:", selectedType, "Search:", debouncedSearch)
 
   const totalItems = items.length
   // Calculate total stock using correct formula: incomingStock - outgoingStock + goodReturnStock - damageReturnStock
@@ -567,15 +601,23 @@ export function InventoryDashboard() {
     if (selectedType !== "all") {
       tags.push({ key: "type", label: selectedType, onRemove: () => setSelectedType("all") })
     }
+    if (stockStatusFilter !== "all") {
+      const label = STOCK_STATUS_OPTIONS.find(o => o.value === stockStatusFilter)?.label || stockStatusFilter
+      tags.push({ key: "stock", label, onRemove: () => setStockStatusFilter("all") })
+    }
+    if (expirationFilter !== "all") {
+      const label = EXPIRATION_OPTIONS.find(o => o.value === expirationFilter)?.label || expirationFilter
+      tags.push({ key: "expiry", label, onRemove: () => setExpirationFilter("all") })
+    }
     if (recentlyAddedFilter !== "all") {
       const label = RECENTLY_ADDED_OPTIONS.find(o => o.value === recentlyAddedFilter)?.label || recentlyAddedFilter
       tags.push({ key: "recent", label, onRemove: () => setRecentlyAddedFilter("all") })
     }
-    if (searchQuery) {
-      tags.push({ key: "search", label: `"${searchQuery}"`, onRemove: () => { setSearchQuery(""); setPendingSearch("") } })
+    if (debouncedSearch) {
+      tags.push({ key: "search", label: `"${debouncedSearch}"`, onRemove: () => { setSearchQuery(""); setDebouncedSearch("") } })
     }
     return tags
-  }, [selectedCategory, selectedType, recentlyAddedFilter, searchQuery])
+  }, [selectedCategory, selectedType, stockStatusFilter, expirationFilter, recentlyAddedFilter, debouncedSearch])
 
   if (loading) {
     return <InventoryDashboardSkeleton />
@@ -626,7 +668,7 @@ export function InventoryDashboard() {
             className="shadow-sm hover:shadow-md transition-shadow duration-200 cursor-pointer rounded-xl bg-white dark:bg-card"
             onClick={() => {
               setRecentlyAddedFilter("today")
-              setPendingSearch("")
+              setDebouncedSearch("")
               setSearchQuery("")
               setSelectedCategory("all")
               setSelectedType("all")
@@ -678,7 +720,7 @@ export function InventoryDashboard() {
           <Card
             className="shadow-sm hover:shadow-md transition-shadow duration-200 cursor-pointer rounded-xl bg-white dark:bg-card"
             onClick={() => {
-              setPendingSearch("")
+              setDebouncedSearch("")
               setSearchQuery("")
               setSelectedCategory("all")
               setSelectedType("all")
@@ -743,36 +785,60 @@ export function InventoryDashboard() {
         </div>
 
         {/* Main Content - Inventory Section */}
-        <Card className="shadow-sm rounded-xl bg-white dark:bg-card">
-          <CardHeader className="pb-6 px-6 pt-6">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
-              <div>
-                <CardTitle className="text-xl font-semibold">Inventory Items</CardTitle>
-                <CardDescription className="mt-1.5">
-                  {filteredItems.length} of {totalItems} items
-                  {selectedCategory !== "all" && ` in ${selectedCategory}`}
-                  {selectedType !== "all" && ` • Type: ${selectedType}`}
-                  {recentlyAddedFilter !== "all" && ` • ${RECENTLY_ADDED_OPTIONS.find(o => o.value === recentlyAddedFilter)?.label}`}
-                  {!sortNewestFirst && ` • Sorted: Oldest First`}
-                  {searchQuery && ` • Searching: "${searchQuery}"`}
+        <Card className="shadow-sm rounded-xl bg-white dark:bg-card overflow-hidden">
+          <CardHeader className="pb-0 px-0 pt-0">
+            {/* ═══ TOP HEADER ROW — Title + Search inline ═══ */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 px-6 pt-5 pb-4">
+              <div className="min-w-0">
+                <CardTitle className="text-lg font-semibold tracking-tight">Inventory Items</CardTitle>
+                <CardDescription className="mt-0.5 text-xs">
+                  <span className="font-medium text-foreground">{filteredItems.length}</span> of {totalItems} items
+                  {hasActiveFilters && <span className="text-blue-600 dark:text-blue-400 ml-1">• Filtered</span>}
                 </CardDescription>
+              </div>
+              {/* ── Compact search bar — right-aligned, constrained width ── */}
+              <div className="relative w-full sm:w-[320px] shrink-0">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60" />
+                <Input
+                  type="text"
+                  placeholder="Search products or barcodes…"
+                  value={searchQuery}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  className="pl-9 pr-9 h-9 rounded-lg border-gray-200/80 dark:border-border bg-gray-50/60 dark:bg-muted/30 hover:bg-white dark:hover:bg-muted/50 focus:bg-white focus:border-blue-300 focus:shadow-[0_0_0_3px_rgba(59,130,246,0.08)] dark:focus:bg-card transition-all duration-200 text-[13px] placeholder:text-muted-foreground/50"
+                />
+                {searchQuery && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6 p-0 rounded-md hover:bg-destructive/10 hover:text-destructive transition-colors"
+                    onClick={() => { setSearchQuery(""); setDebouncedSearch("") }}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                )}
               </div>
             </div>
 
-            {/* —— Filters Bar —————————————————————————————————————————————— */}
-            <div className="flex flex-wrap items-end gap-3 pb-4 border-b border-border/40">
+            {/* ═══ UNIFIED FILTER TOOLBAR ═══ */}
+            <div className="bg-gray-50/70 dark:bg-muted/20 border-y border-border/40 px-5 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                {/* ── Filter icon label ── */}
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider mr-1 select-none">
+                  <Filter className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Filters</span>
+                </div>
 
-              {/* Category */}
-              <div className="flex flex-col gap-1.5 min-w-[165px]">
-                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
-                  <Package className="h-3 w-3 text-blue-500" /> Category
-                </label>
+                {/* ── Divider ── */}
+                <div className="w-px h-6 bg-border/60 mx-0.5" />
+
+                {/* Category */}
                 <Select value={selectedCategory} onValueChange={handleCategoryChange}>
-                  <SelectTrigger className={`h-10 w-full rounded-lg border text-sm transition-colors focus:ring-2 focus:ring-blue-500/20 ${selectedCategory !== "all"
-                    ? "bg-blue-50 border-blue-300 text-blue-800 dark:bg-blue-950/40 dark:border-blue-700 dark:text-blue-300"
-                    : "bg-white dark:bg-card border-gray-200 dark:border-border text-gray-700 dark:text-foreground hover:border-gray-300"
+                  <SelectTrigger className={`h-[34px] w-auto min-w-[130px] rounded-lg border text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2.5 ${selectedCategory !== "all"
+                    ? "bg-blue-50 border-blue-200 text-blue-700 shadow-[inset_0_1px_0_rgba(59,130,246,0.08)] dark:bg-blue-950/40 dark:border-blue-700 dark:text-blue-300"
+                    : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
                     }`}>
-                    <SelectValue placeholder="All Categories" />
+                    <Package className={`h-3 w-3 shrink-0 ${selectedCategory !== "all" ? "text-blue-500" : "text-gray-400"}`} />
+                    <SelectValue placeholder="Category" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Categories ({totalItems})</SelectItem>
@@ -789,19 +855,15 @@ export function InventoryDashboard() {
                     })}
                   </SelectContent>
                 </Select>
-              </div>
 
-              {/* Type */}
-              <div className="flex flex-col gap-1.5 min-w-[145px]">
-                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
-                  <Tag className="h-3 w-3 text-amber-500" /> Type
-                </label>
+                {/* Type */}
                 <Select value={selectedType} onValueChange={setSelectedType}>
-                  <SelectTrigger className={`h-10 w-full rounded-lg border text-sm transition-colors focus:ring-2 focus:ring-blue-500/20 ${selectedType !== "all"
-                    ? "bg-amber-50 border-amber-300 text-amber-800 dark:bg-amber-950/40 dark:border-amber-700 dark:text-amber-300"
-                    : "bg-white dark:bg-card border-gray-200 dark:border-border text-gray-700 dark:text-foreground hover:border-gray-300"
+                  <SelectTrigger className={`h-[34px] w-auto min-w-[110px] rounded-lg border text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2.5 ${selectedType !== "all"
+                    ? "bg-amber-50 border-amber-200 text-amber-700 shadow-[inset_0_1px_0_rgba(245,158,11,0.08)] dark:bg-amber-950/40 dark:border-amber-700 dark:text-amber-300"
+                    : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
                     }`}>
-                    <SelectValue placeholder="All Types" />
+                    <Tag className={`h-3 w-3 shrink-0 ${selectedType !== "all" ? "text-amber-500" : "text-gray-400"}`} />
+                    <SelectValue placeholder="Type" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Types</SelectItem>
@@ -810,19 +872,47 @@ export function InventoryDashboard() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
 
-              {/* Recently Added */}
-              <div className="flex flex-col gap-1.5 min-w-[155px]">
-                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
-                  <Clock className="h-3 w-3 text-emerald-500" /> Recently Added
-                </label>
-                <Select value={recentlyAddedFilter} onValueChange={setRecentlyAddedFilter}>
-                  <SelectTrigger className={`h-10 w-full rounded-lg border text-sm transition-colors focus:ring-2 focus:ring-blue-500/20 ${recentlyAddedFilter !== "all"
-                    ? "bg-emerald-50 border-emerald-300 text-emerald-800 dark:bg-emerald-950/40 dark:border-emerald-700 dark:text-emerald-300"
-                    : "bg-white dark:bg-card border-gray-200 dark:border-border text-gray-700 dark:text-foreground hover:border-gray-300"
+                {/* Stock Status */}
+                <Select value={stockStatusFilter} onValueChange={setStockStatusFilter}>
+                  <SelectTrigger className={`h-[34px] w-auto min-w-[120px] rounded-lg border text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2.5 ${stockStatusFilter !== "all"
+                    ? "bg-sky-50 border-sky-200 text-sky-700 shadow-[inset_0_1px_0_rgba(14,165,233,0.08)] dark:bg-sky-950/40 dark:border-sky-700 dark:text-sky-300"
+                    : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
                     }`}>
-                    <SelectValue placeholder="All Time" />
+                    <Layers className={`h-3 w-3 shrink-0 ${stockStatusFilter !== "all" ? "text-sky-500" : "text-gray-400"}`} />
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {STOCK_STATUS_OPTIONS.map(opt => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                {/* Expiration */}
+                <Select value={expirationFilter} onValueChange={setExpirationFilter}>
+                  <SelectTrigger className={`h-[34px] w-auto min-w-[110px] rounded-lg border text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2.5 ${expirationFilter !== "all"
+                    ? "bg-rose-50 border-rose-200 text-rose-700 shadow-[inset_0_1px_0_rgba(244,63,94,0.08)] dark:bg-rose-950/40 dark:border-rose-700 dark:text-rose-300"
+                    : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
+                    }`}>
+                    <CalendarClock className={`h-3 w-3 shrink-0 ${expirationFilter !== "all" ? "text-rose-500" : "text-gray-400"}`} />
+                    <SelectValue placeholder="Expiry" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EXPIRATION_OPTIONS.map(opt => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                {/* Date Added */}
+                <Select value={recentlyAddedFilter} onValueChange={setRecentlyAddedFilter}>
+                  <SelectTrigger className={`h-[34px] w-auto min-w-[110px] rounded-lg border text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2.5 ${recentlyAddedFilter !== "all"
+                    ? "bg-emerald-50 border-emerald-200 text-emerald-700 shadow-[inset_0_1px_0_rgba(16,185,129,0.08)] dark:bg-emerald-950/40 dark:border-emerald-700 dark:text-emerald-300"
+                    : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
+                    }`}>
+                    <Clock className={`h-3 w-3 shrink-0 ${recentlyAddedFilter !== "all" ? "text-emerald-500" : "text-gray-400"}`} />
+                    <SelectValue placeholder="Date" />
                   </SelectTrigger>
                   <SelectContent>
                     {RECENTLY_ADDED_OPTIONS.map(opt => (
@@ -830,102 +920,82 @@ export function InventoryDashboard() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
 
-              {/* Search Input + Button */}
-              <div className="flex flex-col gap-1.5 flex-1 min-w-[250px]">
-                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
-                  <Search className="h-3 w-3 text-violet-500" /> Search
-                </label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      type="text"
-                      placeholder="Search by product name or barcode..."
-                      value={pendingSearch}
-                      onChange={(e) => setPendingSearch(e.target.value)}
-                      onKeyDown={handleSearchKeyDown}
-                      className="pl-9 pr-9 h-10 hover:bg-accent transition-colors"
-                    />
-                    {pendingSearch && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7 p-0 hover:bg-destructive hover:text-destructive-foreground"
-                        onClick={() => { setPendingSearch(""); setSearchQuery("") }}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                  <Button
-                    onClick={applySearch}
-                    className="h-10 px-5 gap-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg font-medium shadow-sm"
-                  >
-                    <Search className="h-4 w-4" />
-                    Search
-                  </Button>
-                </div>
-              </div>
+                {/* ── Spacer + Divider ── */}
+                <div className="flex-1 min-w-[16px]" />
+                <div className="w-px h-6 bg-border/60 mx-0.5 hidden sm:block" />
 
-              {/* —— Sort + Reset — pushed right ———————————————————————————— */}
-              <div className="flex items-end gap-2 ml-auto">
-                {/* Sort toggle */}
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Sort By</label>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSortNewestFirst(v => !v)}
-                    className={`h-10 px-4 gap-1.5 rounded-lg border text-sm font-medium transition-colors ${sortNewestFirst
-                      ? "border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 dark:border-blue-700 dark:text-blue-300 dark:bg-blue-950/40 dark:hover:bg-blue-950/60"
-                      : "border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50 dark:border-border dark:text-muted-foreground dark:hover:bg-accent"
-                      }`}
-                  >
-                    <ArrowDownUp className="h-3.5 w-3.5" />
-                    {sortNewestFirst ? "Newest First" : "Oldest First"}
-                  </Button>
+                {/* ── Sort + Rows inline ── */}
+                <div className="flex items-center gap-1.5">
+                  <Select value={sortMode} onValueChange={setSortMode}>
+                    <SelectTrigger className={`h-[34px] w-auto min-w-[140px] rounded-lg border text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2.5 ${sortMode !== "date-desc"
+                      ? "bg-indigo-50 border-indigo-200 text-indigo-700 dark:bg-indigo-950/40 dark:border-indigo-700 dark:text-indigo-300"
+                      : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
+                      }`}>
+                      <ArrowDownUp className={`h-3 w-3 shrink-0 ${sortMode !== "date-desc" ? "text-indigo-500" : "text-gray-400"}`} />
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SORT_OPTIONS.map(opt => (
+                        <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Select value={String(rowsPerPage)} onValueChange={(v) => setRowsPerPage(Number(v))}>
+                    <SelectTrigger className="h-[34px] w-[72px] rounded-lg border text-[13px] font-medium bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50 transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 px-2.5">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10 rows</SelectItem>
+                      <SelectItem value="20">20 rows</SelectItem>
+                      <SelectItem value="50">50 rows</SelectItem>
+                      <SelectItem value="100">100 rows</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
 
-                {/* Reset Filters — only visible when a filter is active */}
+                {/* ── Reset button ── */}
                 {hasActiveFilters && (
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-semibold text-transparent uppercase tracking-wide select-none">.</label>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={resetAllFilters}
-                      className="h-10 px-3 gap-1.5 rounded-lg text-sm text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 dark:hover:text-red-400 transition-colors"
-                    >
-                      <RotateCcw className="h-4 w-4" />
-                      Reset
-                    </Button>
-                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={resetAllFilters}
+                    className="h-[34px] px-2.5 gap-1.5 rounded-lg text-[13px] font-medium text-muted-foreground hover:text-red-600 hover:bg-red-50/80 dark:hover:bg-red-950/30 dark:hover:text-red-400 transition-all duration-200"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Reset
+                  </Button>
                 )}
               </div>
-            </div>
 
-            {/* —— Active filter tags ————————————————————————————————————— */}
-            {activeFilterTags.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 pt-3">
-                <span className="text-xs text-muted-foreground font-medium">Active Filters:</span>
-                {activeFilterTags.map(tag => (
-                  <span
-                    key={tag.key}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800 transition-colors"
-                  >
-                    {tag.label}
-                    <button
-                      onClick={tag.onRemove}
-                      className="inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors"
+              {/* ── Active filter tags — below the toolbar ── */}
+              {activeFilterTags.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 mt-2.5 pt-2.5 border-t border-border/30">
+                  <span className="text-[11px] text-muted-foreground/70 font-medium uppercase tracking-wider mr-0.5">Active:</span>
+                  {activeFilterTags.map(tag => (
+                    <span
+                      key={tag.key}
+                      className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-md text-[11px] font-semibold bg-blue-50/80 text-blue-700 border border-blue-200/60 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800 transition-all duration-200 hover:bg-blue-100 dark:hover:bg-blue-900/40"
                     >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
+                      {tag.label}
+                      <button
+                        onClick={tag.onRemove}
+                        className="inline-flex items-center justify-center w-4 h-4 rounded hover:bg-blue-200/80 dark:hover:bg-blue-800 transition-colors ml-0.5"
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    </span>
+                  ))}
+                  <button
+                    onClick={resetAllFilters}
+                    className="text-[11px] font-medium text-muted-foreground/60 hover:text-red-500 transition-colors ml-1 underline decoration-dotted underline-offset-2"
+                  >
+                    Clear all
+                  </button>
+                </div>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="px-6 pb-6 pt-0">
             <InventoryTable
@@ -938,6 +1008,9 @@ export function InventoryDashboard() {
               onItemScrolled={() => {
                 scrollToItemIdRef.current = null
               }}
+              sortMode={sortMode}
+              rowsPerPage={rowsPerPage}
+              searchQuery={debouncedSearch}
             />
           </CardContent>
         </Card>

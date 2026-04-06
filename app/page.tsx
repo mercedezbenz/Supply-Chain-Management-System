@@ -6,18 +6,24 @@ import { MainLayout } from "@/components/layout/main-layout";
 import { DashboardOverview } from "@/components/dashboard/dashboard-overview";
 import { useAuth } from "@/hooks/use-auth";
 import { AuthLoadingSkeleton } from "@/components/skeletons/dashboard-skeleton";
+import { LoggingOutOverlay } from "@/components/auth/logging-out-overlay";
 
 export default function HomePage() {
-  const { user, loading, isAdmin, isGuest, isStaff } = useAuth()
+  const { user, loading, isLoggingOut, isAdmin, isGuest, isStaff } = useAuth()
   const router = useRouter()
 
-  // Redirect if NOT authenticated at all
+  // Redirect if NOT authenticated at all (but not during logout)
   useEffect(() => {
-    if (!loading && !user) {
+    if (!loading && !user && !isLoggingOut) {
       console.log("[HomePage] No user found, redirecting to /login")
       router.replace("/login")
     }
-  }, [user, loading, router])
+  }, [user, loading, isLoggingOut, router])
+
+  // Show clean logout overlay — no dashboard flicker
+  if (isLoggingOut) {
+    return <LoggingOutOverlay />
+  }
 
   // Show loading while checking auth
   if (loading) {
