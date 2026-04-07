@@ -19,6 +19,7 @@ import { CATEGORIES, TYPES, getTypesForCategory } from "@/lib/product-data"
 import { calculateWeeklyChange, calculateWeeklyCountChange, formatWeeklyChange, parseFirestoreDate } from "@/lib/weekly-change-utils"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/hooks/use-auth"
+import { useBarcodeScanner } from "@/hooks/use-barcode-scanner"
 import { InventoryDashboardSkeleton } from "@/components/skeletons/dashboard-skeleton"
 import { ToastAction } from "@/components/ui/toast"
 
@@ -133,6 +134,8 @@ export function InventoryDashboard() {
   const [scanDialogOpen, setScanDialogOpen] = useState(false)
   // Scanned item passed from ScanItemDialog to outgoing/add-item dialogs
   const [scannedItem, setScannedItem] = useState<InventoryItem | null>(null)
+  // Barcode captured by USB scanner — passed into ScanItemDialog as initialBarcode
+  const [pendingBarcode, setPendingBarcode] = useState<string | null>(null)
   // Track newly added item IDs for animation & auto-scroll
   const [newItemIds, setNewItemIds] = useState<Set<string>>(new Set())
   const router = useRouter()
@@ -140,6 +143,23 @@ export function InventoryDashboard() {
   const previousItemsRef = useRef<Set<string>>(new Set())
   const scrollToItemIdRef = useRef<string | null>(null)
   const animationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // ── Global USB barcode scanner listener ────────────────────────────────
+  // Disabled when any dialog is already open so it doesn't interfere with
+  // barcode input fields inside dialogs.
+  const anyDialogOpen = scanDialogOpen || addItemDialogOpen || outgoingDialogOpen || returnDialogOpen
+
+  useBarcodeScanner({
+    onScan: useCallback((barcode: string) => {
+      console.log("[Global Scanner] Barcode detected:", barcode)
+      setPendingBarcode(barcode)
+      setScanDialogOpen(true)
+    }, []),
+    minLength: 5,
+    maxKeystrokeDelay: 80,
+    bufferTimeout: 400,
+    enabled: !anyDialogOpen && !isGuest,
+  })
 
   // When Category changes, reset Type
   const handleCategoryChange = useCallback((value: string) => {
@@ -1029,8 +1049,14 @@ export function InventoryDashboard() {
       {/* Scan Item Dialog */}
       <ScanItemDialog
         open={scanDialogOpen}
-        onOpenChange={setScanDialogOpen}
+        onOpenChange={(open) => {
+          setScanDialogOpen(open)
+          // Clear pending barcode when dialog is closed manually
+          if (!open) setPendingBarcode(null)
+        }}
         inventoryItems={items}
+        initialBarcode={pendingBarcode}
+        onInitialBarcodeConsumed={() => setPendingBarcode(null)}
         onProductOut={(item) => {
           setScannedItem(item || null)
           setScanDialogOpen(false)

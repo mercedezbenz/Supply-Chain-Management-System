@@ -39,6 +39,10 @@ interface ScanItemDialogProps {
   onProductOut?: (item: InventoryItem) => void
   onReturnItem?: (item: InventoryItem) => void
   onRegisterNew?: (barcode: string) => void
+  /** Pre-filled barcode from the global USB scanner — auto-processed on open */
+  initialBarcode?: string | null
+  /** Called after the initial barcode has been consumed so the parent can clear it */
+  onInitialBarcodeConsumed?: () => void
 }
 
 type ScanState = "idle" | "searching" | "found" | "not-found"
@@ -83,6 +87,8 @@ export function ScanItemDialog({
   onProductOut,
   onReturnItem,
   onRegisterNew,
+  initialBarcode,
+  onInitialBarcodeConsumed,
 }: ScanItemDialogProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [barcodeValue, setBarcodeValue] = useState("")
@@ -132,6 +138,18 @@ export function ScanItemDialog({
     },
     [inventoryItems]
   )
+
+  // ── Auto-process barcode from global scanner ────────────────────────
+  useEffect(() => {
+    if (open && initialBarcode && initialBarcode.trim().length > 0) {
+      // Small delay to ensure modal has rendered before processing
+      const timer = setTimeout(() => {
+        handleScan(initialBarcode)
+        onInitialBarcodeConsumed?.()
+      }, 350)
+      return () => clearTimeout(timer)
+    }
+  }, [open, initialBarcode, handleScan, onInitialBarcodeConsumed])
 
   // ── Key handler ──────────────────────────────────────────────────────
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
