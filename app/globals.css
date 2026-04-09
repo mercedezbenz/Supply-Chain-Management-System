@@ -210,3 +210,53 @@
 [data-slot="select-trigger"]:active {
   transform: translateY(0);
 }
+
+/* ─── Mobile Inventory Cards ─────────────────────────────────────── */
+@keyframes card-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.inventory-mobile-card {
+  animation: card-slide-in 0.35s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.inventory-mobile-card:nth-child(1) { animation-delay: 0ms; }
+.inventory-mobile-card:nth-child(2) { animation-delay: 40ms; }
+.inventory-mobile-card:nth-child(3) { animation-delay: 80ms; }
+.inventory-mobile-card:nth-child(4) { animation-delay: 120ms; }
+.inventory-mobile-card:nth-child(5) { animation-delay: 160ms; }
+.inventory-mobile-card:nth-child(6) { animation-delay: 200ms; }
+.inventory-mobile-card:nth-child(7) { animation-delay: 240ms; }
+.inventory-mobile-card:nth-child(8) { animation-delay: 280ms; }
+.inventory-mobile-card:nth-child(9) { animation-delay: 320ms; }
+.inventory-mobile-card:nth-child(10) { animation-delay: 360ms; }
+
+/* Smooth press-down feedback for touch on mobile */
+@media (max-width: 1023px) {
+  .inventory-mobile-card {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+}
+
+/* ─── Scroll Hint Animation ──────────────────────────────────────── */
+@keyframes scroll-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(3px); }
+}
+
+.scroll-hint-chevron {
+  animation: scroll-bounce 1.5s ease-in-out infinite;
+}
+
+.scroll-hint-hidden {
+  opacity: 0;
+  pointer-events: none;
+}

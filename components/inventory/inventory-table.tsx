@@ -923,95 +923,190 @@ export function InventoryTable({
         )}
 
         {/* ─── MOBILE / TABLET CARD VIEW ─────────────────────────────────── */}
-        <div className="lg:hidden space-y-3">
-          {paginatedGroups.map((group, index) => {
+        <div className="lg:hidden space-y-4">
+          {paginatedGroups.map((group) => {
             const isExpanded = expandedBarcodes.has(group.barcode)
-
             const historyTransactions = group.transactions
             const hasHistory = historyTransactions.length > 0
+
+            // Remaining stock status
+            const stock = group.stockLeft
+            const unitShort = group.unitType === "PACK" ? "pk" : "bx"
+            let stockColorClass = "text-green-700 dark:text-green-400"
+            let stockBgClass = "bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-800"
+            let stockDotClass = "bg-green-500"
+            if (stock <= 0) {
+              stockColorClass = "text-red-700 dark:text-red-400"
+              stockBgClass = "bg-red-50 border-red-200 dark:bg-red-950/30 dark:border-red-800"
+              stockDotClass = "bg-red-500"
+            } else if (stock < 10) {
+              stockColorClass = "text-amber-700 dark:text-amber-400"
+              stockBgClass = "bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-800"
+              stockDotClass = "bg-amber-500"
+            }
 
             return (
               <div
                 key={group.barcode}
+                id={`inventory-item-mobile-${group.barcode}`}
+                ref={(el) => { if (el) itemRowRefs.current.set(group.barcode, el) }}
                 className={[
-                  "border rounded-xl overflow-hidden transition-all duration-200",
+                  "inventory-mobile-card relative rounded-2xl overflow-hidden transition-all duration-300 border",
                   isExpanded
-                    ? "border-blue-300 dark:border-blue-700 shadow-md"
-                    : "border-border/50 hover:border-blue-200 dark:hover:border-blue-800 hover:shadow-sm",
+                    ? "border-blue-300 dark:border-blue-700 shadow-lg shadow-blue-500/10 ring-1 ring-blue-200/50 dark:ring-blue-800/30"
+                    : "border-border/60 shadow-sm hover:shadow-md hover:border-blue-200/80 dark:hover:border-blue-800/60",
+                  "bg-white dark:bg-card",
                 ].join(" ")}
               >
-                {/* Summary Card (clickable) */}
+                {/* Accent stripe — top indicator */}
+                <div className={`h-1 w-full ${
+                  stock <= 0 ? "bg-gradient-to-r from-red-400 via-red-500 to-red-400" :
+                  stock < 10 ? "bg-gradient-to-r from-amber-400 via-amber-500 to-amber-400" :
+                  "bg-gradient-to-r from-emerald-400 via-emerald-500 to-emerald-400"
+                }`} />
+
+                {/* ═══ CARD HEADER — Product Name + Barcode + Location ═══ */}
                 <div
                   className={[
-                    "p-3 sm:p-4 transition-colors",
-                    hasHistory ? "cursor-pointer active:bg-blue-50/50" : "",
-                    isExpanded
-                      ? "bg-blue-50/60 dark:bg-blue-950/20"
-                      : "bg-white dark:bg-card",
-                    hasHistory ? "hover:bg-blue-50/30" : "",
+                    "px-4 pt-4 pb-3 transition-colors",
+                    hasHistory ? "cursor-pointer active:bg-blue-50/40 dark:active:bg-blue-950/30" : "",
                   ].join(" ")}
                   onClick={() => hasHistory && toggleExpand(group.barcode)}
                 >
                   <div className="flex items-start justify-between gap-3">
+                    {/* Left: Info */}
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold text-sm text-foreground line-clamp-1">{highlightMatch(group.productName, searchQuery)}</h3>
-                      <p className="text-xs text-muted-foreground font-mono mt-0.5">{highlightMatch(group.barcode, searchQuery)}</p>
+                      {/* Product Name — Bold, top */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg shrink-0" aria-hidden="true">
+                          {(() => {
+                            const name = (group.productName || "").toLowerCase();
+                            if (name.includes("chicken")) return "🐔";
+                            if (name.includes("pork") || name.includes("belly") || name.includes("back fat")) return "🥩";
+                            if (name.includes("beef")) return "🐄";
+                            return "📦";
+                          })()}
+                        </span>
+                        <h3 className="font-bold text-[15px] leading-tight text-foreground line-clamp-2">
+                          {highlightMatch(group.productName, searchQuery)}
+                        </h3>
+                      </div>
+
+                      {/* Barcode — small mono text */}
+                      <p className="text-[11px] text-muted-foreground font-mono mt-1.5 ml-8 tracking-wide">
+                        {highlightMatch(group.barcode, searchQuery)}
+                      </p>
+
+                      {/* Location — small label with icon */}
                       {group.location && (
-                        <p className="text-[10px] text-muted-foreground mt-0.5">📍 {group.location}</p>
+                        <div className="flex items-center gap-1 mt-1 ml-8">
+                          <span className="text-[11px]">📍</span>
+                          <span className="text-[11px] text-muted-foreground font-medium">{group.location}</span>
+                        </div>
                       )}
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {hasHistory ? (
-                        <div className={`w-8 h-8 sm:w-6 sm:h-6 rounded-md flex items-center justify-center transition-all ${
-                          isExpanded ? "bg-blue-500 text-white" : "bg-slate-100 text-slate-500"
-                        }`}>
-                          {isExpanded ? <ChevronUp className="h-4 w-4 sm:h-3.5 sm:w-3.5" /> : <ChevronDown className="h-4 w-4 sm:h-3.5 sm:w-3.5" />}
-                        </div>
-                      ) : null}
+
+                    {/* Right: Expand toggle */}
+                    {hasHistory && (
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all duration-200 shrink-0 mt-0.5 ${
+                        isExpanded
+                          ? "bg-blue-500 text-white shadow-md shadow-blue-500/25"
+                          : "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
+                      }`}>
+                        {isExpanded
+                          ? <ChevronUp className="h-4 w-4" />
+                          : <ChevronDown className="h-4 w-4" />
+                        }
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* ═══ STATS GRID — Incoming / Outgoing / Remaining ═══ */}
+                <div className="px-4 pb-3">
+                  <div className="grid grid-cols-3 gap-2">
+                    {/* Incoming — Green */}
+                    <div className="relative flex flex-col items-center justify-center rounded-xl border border-green-200/80 dark:border-green-800/40 bg-green-50/60 dark:bg-green-950/20 py-2.5 px-2">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-green-600/80 dark:text-green-400/70 mb-0.5">Incoming</span>
+                      <span className="text-base font-bold text-green-700 dark:text-green-400 leading-tight">
+                        {group.totalIncoming > 0 ? formatNumber(group.totalIncoming) : "0"}
+                      </span>
+                      <span className="text-[9px] text-green-600/60 dark:text-green-400/50 font-medium">{unitShort}</span>
+                    </div>
+
+                    {/* Outgoing — Red */}
+                    <div className="relative flex flex-col items-center justify-center rounded-xl border border-red-200/80 dark:border-red-800/40 bg-red-50/60 dark:bg-red-950/20 py-2.5 px-2">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-red-600/80 dark:text-red-400/70 mb-0.5">Outgoing</span>
+                      <span className="text-base font-bold text-red-700 dark:text-red-400 leading-tight">
+                        {group.totalOutgoing > 0 ? formatNumber(group.totalOutgoing) : "0"}
+                      </span>
+                      <span className="text-[9px] text-red-600/60 dark:text-red-400/50 font-medium">{unitShort}</span>
+                    </div>
+
+                    {/* Remaining — Dynamic badge */}
+                    <div className={`relative flex flex-col items-center justify-center rounded-xl border py-2.5 px-2 ${stockBgClass}`}>
+                      <span className={`text-[10px] font-semibold uppercase tracking-wider mb-0.5 ${
+                        stock <= 0 ? "text-red-600/80 dark:text-red-400/70" :
+                        stock < 10 ? "text-amber-600/80 dark:text-amber-400/70" :
+                        "text-green-600/80 dark:text-green-400/70"
+                      }`}>Remaining</span>
+                      <div className="flex items-center gap-1">
+                        <span className={`w-1.5 h-1.5 rounded-full ${stockDotClass} shrink-0`} />
+                        <span className={`text-base font-bold leading-tight ${stockColorClass}`}>
+                          {formatNumber(stock)}
+                        </span>
+                      </div>
+                      <span className={`text-[9px] font-medium ${
+                        stock <= 0 ? "text-red-600/60 dark:text-red-400/50" :
+                        stock < 10 ? "text-amber-600/60 dark:text-amber-400/50" :
+                        "text-green-600/60 dark:text-green-400/50"
+                      }`}>{unitShort}</span>
                     </div>
                   </div>
 
-                  {/* Quick stats */}
-                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 sm:gap-2 mt-3 pt-3 border-t border-border/40">
-                    <div className="text-center">
-                      <span className="text-[10px] text-muted-foreground block">Incoming</span>
-                      <span className="text-xs font-semibold text-green-600">{group.totalIncoming > 0 ? `${formatNumber(group.totalIncoming)} ${group.unitType === "PACK" ? "pk" : "bx"}` : "\u2014"}</span>
+                  {/* ═══ ADDITIONAL DETAILS — Weight + Expiry ═══ */}
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <div className="flex items-center gap-2 rounded-lg bg-slate-50/80 dark:bg-slate-800/30 border border-slate-200/60 dark:border-slate-700/40 px-3 py-2">
+                      <Package className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                      <div className="min-w-0">
+                        <span className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold block leading-none mb-0.5">Weight</span>
+                        <span className="text-xs font-semibold text-foreground/80">
+                          {group.avgWeight > 0 ? `${formatWeight(group.avgWeight)} kg` : "\u2014"}
+                        </span>
+                      </div>
                     </div>
-                    <div className="text-center">
-                      <span className="text-[10px] text-muted-foreground block">Outgoing</span>
-                      <span className="text-xs font-semibold text-red-600">{group.totalOutgoing > 0 ? `${formatNumber(group.totalOutgoing)} ${group.unitType === "PACK" ? "pk" : "bx"}` : "\u2014"}</span>
-                    </div>
-                    <div className="text-center bg-blue-50/50 dark:bg-blue-900/10 rounded pb-1">
-                      <span className="text-[10px] text-blue-700/70 font-semibold block pt-1">Remaining</span>
-                      <span className="text-xs font-bold text-blue-700 dark:text-blue-400">{formatNumber(group.stockLeft)} <span className="font-normal text-[10px]">{group.unitType === "PACK" ? "pk" : "bx"}</span></span>
-                    </div>
-                    <div className="text-center">
-                      <span className="text-[10px] text-muted-foreground block">Weight</span>
-                      <span className="text-xs font-semibold text-foreground/70">{group.avgWeight > 0 ? `${formatWeight(group.avgWeight)} kg` : "\u2014"}</span>
-                    </div>
-                    <div className="text-center">
-                      <span className="text-[10px] text-muted-foreground block">Expiry</span>
-                      <span className="text-xs font-semibold text-foreground/70">{formatTxnDate(group.expiryDate) !== "\u2014" ? formatTxnDate(group.expiryDate) : "\u2014"}</span>
+                    <div className="flex items-center gap-2 rounded-lg bg-slate-50/80 dark:bg-slate-800/30 border border-slate-200/60 dark:border-slate-700/40 px-3 py-2">
+                      <svg className="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                      <div className="min-w-0">
+                        <span className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold block leading-none mb-0.5">Expiry</span>
+                        <span className="text-xs font-semibold text-foreground/80">
+                          {formatTxnDate(group.expiryDate) !== "\u2014" ? formatTxnDate(group.expiryDate) : "\u2014"}
+                        </span>
+                      </div>
                     </div>
                   </div>
+                </div>
 
-                  {/* Barcode actions - Show + Print */}
-                  {group.barcode && (
-                    <div className="mt-2 pt-2 border-t border-border/30 flex items-center gap-2">
+                {/* ═══ ACTIONS — Show Barcode + Print (touch-friendly) ═══ */}
+                {group.barcode && (
+                  <div className="px-4 pb-4 pt-1">
+                    <div className="flex items-center gap-2">
                       <Button
                         size="sm"
-                        variant="ghost"
-                        className="h-9 sm:h-7 px-3 sm:px-2.5 gap-1.5 text-xs font-medium text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:text-emerald-300 dark:hover:bg-emerald-950/30"
+                        variant="outline"
+                        className="flex-1 h-11 rounded-xl gap-2 text-sm font-semibold text-emerald-700 border-emerald-200/80 bg-emerald-50/40 hover:bg-emerald-100/60 hover:text-emerald-800 hover:border-emerald-300 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40 transition-all active:scale-[0.98]"
                         onClick={(e) => { e.stopPropagation(); setBarcodeViewItem({ barcode: group.barcode, productName: group.productName }) }}
                         title="Show Barcode"
                       >
-                        <Barcode className="h-3.5 w-3.5" />
+                        <Barcode className="h-4 w-4" />
                         Show Barcode
                       </Button>
                       <Button
                         size="sm"
-                        variant="ghost"
-                        className="h-9 sm:h-7 px-3 sm:px-2.5 gap-1.5 text-xs font-medium text-blue-700 hover:text-blue-800 hover:bg-blue-50 dark:text-blue-400 dark:hover:text-blue-300 dark:hover:bg-blue-950/30"
+                        variant="outline"
+                        className="flex-1 h-11 rounded-xl gap-2 text-sm font-semibold text-blue-700 border-blue-200/80 bg-blue-50/40 hover:bg-blue-100/60 hover:text-blue-800 hover:border-blue-300 dark:text-blue-400 dark:border-blue-800 dark:bg-blue-950/20 dark:hover:bg-blue-950/40 transition-all active:scale-[0.98]"
                         onClick={(e) => {
                           e.stopPropagation()
                           setBarcodeViewItem({ barcode: group.barcode, productName: group.productName })
@@ -1022,23 +1117,26 @@ export function InventoryTable({
                         }}
                         title="Print Barcode"
                       >
-                        <Printer className="h-3.5 w-3.5" />
+                        <Printer className="h-4 w-4" />
                         Print
                       </Button>
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
 
-                {/* Expanded: Transaction history */}
+                {/* ═══ EXPANDED: Transaction History ═══ */}
                 {isExpanded && hasHistory && (
-                  <div className="border-t border-blue-200/60 bg-slate-50/60 dark:bg-slate-900/20">
-                    <div className="flex items-center gap-2 px-4 py-2 bg-blue-50/60 border-b border-blue-100/60">
-                      <History className="h-3 w-3 text-blue-500" />
-                      <span className="text-[10px] font-semibold text-blue-700 uppercase tracking-wider">
-                        History ({historyTransactions.length})
+                  <div className="border-t border-blue-200/60 dark:border-blue-800/40 bg-slate-50/60 dark:bg-slate-900/20">
+                    <div className="flex items-center gap-2 px-4 py-2.5 bg-blue-50/70 dark:bg-blue-950/20 border-b border-blue-100/60 dark:border-blue-900/40">
+                      <History className="h-3.5 w-3.5 text-blue-500" />
+                      <span className="text-[11px] font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wider">
+                        Transaction History
+                      </span>
+                      <span className="text-[10px] text-blue-500/60 dark:text-blue-400/40 ml-0.5">
+                        ({historyTransactions.length} {historyTransactions.length === 1 ? "record" : "records"})
                       </span>
                     </div>
-                    <div className="bg-white/50 dark:bg-black/10">
+                    <div className="bg-white/60 dark:bg-black/10">
                       <TransactionHistoryList 
                         transactions={historyTransactions} 
                         setCancellingItem={setCancellingItem} 
