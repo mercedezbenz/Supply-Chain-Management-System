@@ -645,44 +645,44 @@ export function InventoryDashboard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 pb-8">
-      <div className="space-y-8">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-balance">Inventory Monitoring</h1>
-            <p className="text-muted-foreground">Monitor stock movement, expiration, and barcode management</p>
+      <div className="space-y-4 sm:space-y-6 md:space-y-8">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-balance">Inventory Monitoring</h1>
+            <p className="text-xs sm:text-sm text-muted-foreground">Monitor stock movement, expiration, and barcode management</p>
           </div>
           {!isGuest && (
-            <div className="flex items-center gap-2">
-              <Button onClick={() => setAddItemDialogOpen(true)} className="gap-2">
-                <Plus className="h-4 w-4" />
-                Add Item
+            <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:gap-2 shrink-0">
+              <Button onClick={() => setAddItemDialogOpen(true)} className="gap-1.5 sm:gap-2 h-9 sm:h-10 text-xs sm:text-sm px-3 sm:px-4">
+                <Plus className="h-4 w-4 shrink-0" />
+                <span>Add Item</span>
               </Button>
               <Button
                 onClick={() => setScanDialogOpen(true)}
-                className="gap-2 bg-violet-600 hover:bg-violet-700 text-white"
+                className="gap-1.5 sm:gap-2 h-9 sm:h-10 text-xs sm:text-sm px-3 sm:px-4 bg-violet-600 hover:bg-violet-700 text-white"
               >
-                <ScanLine className="h-4 w-4" />
-                Scan Item
+                <ScanLine className="h-4 w-4 shrink-0" />
+                <span>Scan Item</span>
               </Button>
               <Button
                 onClick={() => setOutgoingDialogOpen(true)}
-                className="gap-2 bg-orange-500 hover:bg-orange-600 text-white"
+                className="gap-1.5 sm:gap-2 h-9 sm:h-10 text-xs sm:text-sm px-3 sm:px-4 bg-orange-500 hover:bg-orange-600 text-white"
               >
-                <PackageMinus className="h-4 w-4" />
-                Product Out
+                <PackageMinus className="h-4 w-4 shrink-0" />
+                <span>Product Out</span>
               </Button>
               <Button
                 onClick={() => setReturnDialogOpen(true)}
-                className="gap-2 bg-teal-600 hover:bg-teal-700 text-white"
+                className="gap-1.5 sm:gap-2 h-9 sm:h-10 text-xs sm:text-sm px-3 sm:px-4 bg-teal-600 hover:bg-teal-700 text-white"
               >
-                <RotateCcw className="h-4 w-4" />
-                Return Item
+                <RotateCcw className="h-4 w-4 shrink-0" />
+                <span>Return Item</span>
               </Button>
             </div>
           )}
         </div>
 
-        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:gap-4 md:gap-5 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
           {/* 1. Today's Transactions */}
           <Card
             className="shadow-sm hover:shadow-md transition-shadow duration-200 cursor-pointer rounded-xl bg-white dark:bg-card"
@@ -808,9 +808,9 @@ export function InventoryDashboard() {
         <Card className="shadow-sm rounded-xl bg-white dark:bg-card overflow-hidden">
           <CardHeader className="pb-0 px-0 pt-0">
             {/* ═══ TOP HEADER ROW — Title + Search inline ═══ */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 px-6 pt-5 pb-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 px-3 sm:px-4 md:px-6 pt-4 sm:pt-5 pb-3 sm:pb-4">
               <div className="min-w-0">
-                <CardTitle className="text-lg font-semibold tracking-tight">Inventory Items</CardTitle>
+                <CardTitle className="text-base sm:text-lg font-semibold tracking-tight">Inventory Items</CardTitle>
                 <CardDescription className="mt-0.5 text-xs">
                   <span className="font-medium text-foreground">{filteredItems.length}</span> of {totalItems} items
                   {hasActiveFilters && <span className="text-blue-600 dark:text-blue-400 ml-1">• Filtered</span>}
@@ -824,13 +824,13 @@ export function InventoryDashboard() {
                   placeholder="Search products or barcodes…"
                   value={searchQuery}
                   onChange={(e) => handleSearchChange(e.target.value)}
-                  className="pl-9 pr-9 h-9 rounded-lg border-gray-200/80 dark:border-border bg-gray-50/60 dark:bg-muted/30 hover:bg-white dark:hover:bg-muted/50 focus:bg-white focus:border-blue-300 focus:shadow-[0_0_0_3px_rgba(59,130,246,0.08)] dark:focus:bg-card transition-all duration-200 text-[13px] placeholder:text-muted-foreground/50"
+                  className="pl-9 pr-9 h-10 sm:h-9 rounded-lg border-gray-200/80 dark:border-border bg-gray-50/60 dark:bg-muted/30 hover:bg-white dark:hover:bg-muted/50 focus:bg-white focus:border-blue-300 focus:shadow-[0_0_0_3px_rgba(59,130,246,0.08)] dark:focus:bg-card transition-all duration-200 text-sm sm:text-[13px] placeholder:text-muted-foreground/50"
                 />
                 {searchQuery && (
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6 p-0 rounded-md hover:bg-destructive/10 hover:text-destructive transition-colors"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 sm:h-6 sm:w-6 p-0 rounded-md hover:bg-destructive/10 hover:text-destructive transition-colors"
                     onClick={() => { setSearchQuery(""); setDebouncedSearch("") }}
                   >
                     <X className="h-3.5 w-3.5" />
@@ -840,8 +840,8 @@ export function InventoryDashboard() {
             </div>
 
             {/* ═══ UNIFIED FILTER TOOLBAR ═══ */}
-            <div className="bg-gray-50/70 dark:bg-muted/20 border-y border-border/40 px-5 py-3">
-              <div className="flex flex-wrap items-center gap-2">
+            <div className="bg-gray-50/70 dark:bg-muted/20 border-y border-border/40 px-3 sm:px-4 md:px-5 py-2.5 sm:py-3">
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                 {/* ── Filter icon label ── */}
                 <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider mr-1 select-none">
                   <Filter className="h-3.5 w-3.5" />
@@ -853,7 +853,7 @@ export function InventoryDashboard() {
 
                 {/* Category */}
                 <Select value={selectedCategory} onValueChange={handleCategoryChange}>
-                  <SelectTrigger className={`h-[34px] w-auto min-w-[130px] rounded-lg border text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2.5 ${selectedCategory !== "all"
+                  <SelectTrigger className={`h-9 sm:h-[34px] w-auto min-w-0 sm:min-w-[130px] rounded-lg border text-[12px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2 sm:px-2.5 ${selectedCategory !== "all"
                     ? "bg-blue-50 border-blue-200 text-blue-700 shadow-[inset_0_1px_0_rgba(59,130,246,0.08)] dark:bg-blue-950/40 dark:border-blue-700 dark:text-blue-300"
                     : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
                     }`}>
@@ -878,7 +878,7 @@ export function InventoryDashboard() {
 
                 {/* Type */}
                 <Select value={selectedType} onValueChange={setSelectedType}>
-                  <SelectTrigger className={`h-[34px] w-auto min-w-[110px] rounded-lg border text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2.5 ${selectedType !== "all"
+                  <SelectTrigger className={`h-9 sm:h-[34px] w-auto min-w-0 sm:min-w-[110px] rounded-lg border text-[12px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2 sm:px-2.5 ${selectedType !== "all"
                     ? "bg-amber-50 border-amber-200 text-amber-700 shadow-[inset_0_1px_0_rgba(245,158,11,0.08)] dark:bg-amber-950/40 dark:border-amber-700 dark:text-amber-300"
                     : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
                     }`}>
@@ -895,7 +895,7 @@ export function InventoryDashboard() {
 
                 {/* Stock Status */}
                 <Select value={stockStatusFilter} onValueChange={setStockStatusFilter}>
-                  <SelectTrigger className={`h-[34px] w-auto min-w-[120px] rounded-lg border text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2.5 ${stockStatusFilter !== "all"
+                  <SelectTrigger className={`h-9 sm:h-[34px] w-auto min-w-0 sm:min-w-[120px] rounded-lg border text-[12px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2 sm:px-2.5 ${stockStatusFilter !== "all"
                     ? "bg-sky-50 border-sky-200 text-sky-700 shadow-[inset_0_1px_0_rgba(14,165,233,0.08)] dark:bg-sky-950/40 dark:border-sky-700 dark:text-sky-300"
                     : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
                     }`}>
@@ -911,7 +911,7 @@ export function InventoryDashboard() {
 
                 {/* Expiration */}
                 <Select value={expirationFilter} onValueChange={setExpirationFilter}>
-                  <SelectTrigger className={`h-[34px] w-auto min-w-[110px] rounded-lg border text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2.5 ${expirationFilter !== "all"
+                  <SelectTrigger className={`h-9 sm:h-[34px] w-auto min-w-0 sm:min-w-[110px] rounded-lg border text-[12px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2 sm:px-2.5 ${expirationFilter !== "all"
                     ? "bg-rose-50 border-rose-200 text-rose-700 shadow-[inset_0_1px_0_rgba(244,63,94,0.08)] dark:bg-rose-950/40 dark:border-rose-700 dark:text-rose-300"
                     : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
                     }`}>
@@ -927,7 +927,7 @@ export function InventoryDashboard() {
 
                 {/* Date Added */}
                 <Select value={recentlyAddedFilter} onValueChange={setRecentlyAddedFilter}>
-                  <SelectTrigger className={`h-[34px] w-auto min-w-[110px] rounded-lg border text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2.5 ${recentlyAddedFilter !== "all"
+                  <SelectTrigger className={`h-9 sm:h-[34px] w-auto min-w-0 sm:min-w-[110px] rounded-lg border text-[12px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2 sm:px-2.5 ${recentlyAddedFilter !== "all"
                     ? "bg-emerald-50 border-emerald-200 text-emerald-700 shadow-[inset_0_1px_0_rgba(16,185,129,0.08)] dark:bg-emerald-950/40 dark:border-emerald-700 dark:text-emerald-300"
                     : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
                     }`}>
@@ -942,13 +942,14 @@ export function InventoryDashboard() {
                 </Select>
 
                 {/* ── Spacer + Divider ── */}
-                <div className="flex-1 min-w-[16px]" />
+                <div className="hidden sm:block flex-1 min-w-[16px]" />
+                <div className="basis-full sm:hidden" />
                 <div className="w-px h-6 bg-border/60 mx-0.5 hidden sm:block" />
 
                 {/* ── Sort + Rows inline ── */}
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 w-full sm:w-auto">
                   <Select value={sortMode} onValueChange={setSortMode}>
-                    <SelectTrigger className={`h-[34px] w-auto min-w-[140px] rounded-lg border text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2.5 ${sortMode !== "date-desc"
+                    <SelectTrigger className={`h-9 sm:h-[34px] w-auto flex-1 sm:flex-none sm:min-w-[140px] rounded-lg border text-[12px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2 sm:px-2.5 ${sortMode !== "date-desc"
                       ? "bg-indigo-50 border-indigo-200 text-indigo-700 dark:bg-indigo-950/40 dark:border-indigo-700 dark:text-indigo-300"
                       : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
                       }`}>
@@ -963,7 +964,7 @@ export function InventoryDashboard() {
                   </Select>
 
                   <Select value={String(rowsPerPage)} onValueChange={(v) => setRowsPerPage(Number(v))}>
-                    <SelectTrigger className="h-[34px] w-[72px] rounded-lg border text-[13px] font-medium bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50 transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 px-2.5">
+                    <SelectTrigger className="h-9 sm:h-[34px] w-[72px] rounded-lg border text-[12px] sm:text-[13px] font-medium bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50 transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 px-2 sm:px-2.5">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1017,7 +1018,7 @@ export function InventoryDashboard() {
               )}
             </div>
           </CardHeader>
-          <CardContent className="px-6 pb-6 pt-0">
+          <CardContent className="px-2 sm:px-4 md:px-6 pb-4 sm:pb-6 pt-0">
             <InventoryTable
               items={filteredItems}
               transactions={filteredTransactions}

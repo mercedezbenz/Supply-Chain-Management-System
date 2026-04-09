@@ -55,9 +55,9 @@ export function Header() {
 
   return (
     <>
-      <header className="bg-card border-b border-border px-6 py-4 relative z-10">
+      <header className="bg-card border-b border-border px-3 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 relative z-10">
         <div className="flex items-center justify-between">
-          {/* Left side - Sidebar toggle (Desktop) */}
+          {/* Left side - Sidebar toggle (Desktop only, hamburger handles mobile) */}
           <Button
             variant="ghost"
             size="icon"
@@ -68,8 +68,11 @@ export function Header() {
             <Menu className="h-5 w-5" />
           </Button>
 
+          {/* Spacer for mobile to push right-side items */}
+          <div className="md:hidden flex-1" />
+
           {/* Right side */}
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2 sm:space-x-4">
             <ExpiryNotifications />
 
             <Button

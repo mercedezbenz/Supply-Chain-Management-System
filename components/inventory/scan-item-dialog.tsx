@@ -184,25 +184,25 @@ export function ScanItemDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[680px] !p-0 !gap-0">
+      <DialogContent className="!w-[98vw] sm:!w-auto sm:max-w-[680px] !p-0 !gap-0">
 
         {/* ════════ HEADER ════════ */}
-        <div className="px-6 pt-6 pb-4 border-b border-slate-100">
+        <div className="px-3 sm:px-6 pt-4 sm:pt-6 pb-3 sm:pb-4 border-b border-slate-100">
           <DialogHeader className="!space-y-1">
-            <DialogTitle className="flex items-center gap-2.5 text-xl">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-100">
-                <ScanLine className="h-5 w-5 text-violet-600" />
+            <DialogTitle className="flex items-center gap-2 sm:gap-2.5 text-lg sm:text-xl">
+              <div className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-lg bg-violet-100">
+                <ScanLine className="h-4 w-4 sm:h-5 sm:w-5 text-violet-600" />
               </div>
               Scan Item
             </DialogTitle>
-            <DialogDescription className="text-sm text-slate-500">
+            <DialogDescription className="text-xs sm:text-sm text-slate-500">
               Scan a barcode using your USB scanner or type it manually and press Enter.
             </DialogDescription>
           </DialogHeader>
         </div>
 
         {/* ════════ SCANNER INPUT ════════ */}
-        <div className="px-6 pt-5 pb-4">
+        <div className="px-3 sm:px-6 pt-4 sm:pt-5 pb-3 sm:pb-4">
           <div className="relative">
             <ScanLine className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-violet-400" />
             <Input
@@ -211,7 +211,7 @@ export function ScanItemDialog({
               onChange={(e) => setBarcodeValue(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Scan barcode or type manually…"
-              className="pl-12 pr-20 h-14 text-lg font-mono tracking-wider border-2 border-violet-200 focus-visible:ring-violet-300 focus-visible:border-violet-400 rounded-xl bg-white"
+              className="pl-11 sm:pl-12 pr-16 sm:pr-20 h-12 sm:h-14 text-base sm:text-lg font-mono tracking-wider border-2 border-violet-200 focus-visible:ring-violet-300 focus-visible:border-violet-400 rounded-xl bg-white"
               autoFocus
               autoComplete="off"
             />
@@ -238,11 +238,11 @@ export function ScanItemDialog({
         </div>
 
         {/* ════════ CONTENT AREA ════════ */}
-        <div className="px-6 pb-6">
+        <div className="px-3 sm:px-6 pb-4 sm:pb-6">
 
           {/* ── IDLE STATE ────────────────────────────────────────── */}
           {scanState === "idle" && (
-            <div className="flex flex-col items-center gap-3 py-12 text-center">
+            <div className="flex flex-col items-center gap-3 py-8 sm:py-12 text-center">
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-50 border border-violet-100">
                 <ScanLine className="h-8 w-8 text-violet-300" />
               </div>
@@ -304,7 +304,7 @@ export function ScanItemDialog({
                 </div>
 
                 {/* Info grid — 2 columns */}
-                <div className="p-5 grid grid-cols-2 gap-x-6 gap-y-4">
+                <div className="p-3 sm:p-5 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 sm:gap-y-4">
                   {/* Category */}
                   <div className="flex items-start gap-3">
                     <Package className="h-4 w-4 text-slate-400 mt-0.5 shrink-0" />

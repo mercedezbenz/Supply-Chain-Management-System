@@ -174,13 +174,13 @@ export function BarcodeModal({ open, onOpenChange, barcode, productName }: Barco
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[480px] p-0 gap-0 overflow-hidden">
+      <DialogContent className="!w-[95vw] sm:!w-auto sm:max-w-[480px] p-0 gap-0 overflow-hidden">
         {/* Header */}
-        <DialogHeader className="px-6 pt-6 pb-4">
-          <DialogTitle className="text-lg font-semibold">Barcode Preview</DialogTitle>
+        <DialogHeader className="px-3 sm:px-6 pt-4 sm:pt-6 pb-3 sm:pb-4">
+          <DialogTitle className="text-base sm:text-lg font-semibold">Barcode Preview</DialogTitle>
         </DialogHeader>
 
-        <div className="px-6 pb-6 space-y-5">
+        <div className="px-3 sm:px-6 pb-4 sm:pb-6 space-y-4 sm:space-y-5">
           {/* Barcode value field with status badge */}
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -210,7 +210,7 @@ export function BarcodeModal({ open, onOpenChange, barcode, productName }: Barco
           </div>
 
           {/* Action Buttons */}
-          <div className="flex items-center gap-3 pt-1">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 pt-1">
             <Button
               onClick={handlePrint}
               data-barcode-print

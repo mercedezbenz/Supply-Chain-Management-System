@@ -347,3 +347,93 @@ select:focus {
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
   border-color: #3b82f6;
 }
+
+/* ─── Mobile Responsive Enhancements ───────────────────────────────────── */
+
+/* Prevent horizontal overflow on the entire page */
+html, body {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+/* Mobile: larger touch targets for inputs and buttons */
+@media (max-width: 640px) {
+  /* Increase base input height for touch */
+  input[type="text"],
+  input[type="number"],
+  input[type="email"],
+  input[type="password"],
+  input[type="search"],
+  input[type="tel"],
+  input[type="url"],
+  textarea {
+    min-height: 40px;
+    font-size: 16px; /* Prevents iOS zoom on focus */
+  }
+
+  /* Ensure selects have decent touch targets */
+  [data-radix-select-trigger],
+  button[role="combobox"] {
+    min-height: 36px;
+  }
+
+  /* Dialog overlay: ensure smooth mobile experience */
+  [data-radix-dialog-overlay] {
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+  }
+
+  /* Dialog content: ensure it doesn't overflow viewport */
+  [data-radix-dialog-content] {
+    max-height: 95vh !important;
+    overflow-y: auto;
+  }
+
+  /* Reduce card padding on mobile */
+  .card-compact-mobile {
+    padding: 12px;
+  }
+
+  /* Table container: enable smooth horizontal scrolling */
+  .inventory-scroll-container {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+}
+
+/* Tablet: medium adjustments */
+@media (min-width: 641px) and (max-width: 1024px) {
+  input[type="text"],
+  input[type="number"],
+  input[type="email"],
+  input[type="password"],
+  input[type="search"],
+  input[type="tel"],
+  input[type="url"],
+  textarea {
+    min-height: 38px;
+  }
+}
+
+/* Safe area insets for phones with notches */
+@supports (padding: env(safe-area-inset-bottom)) {
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Smooth transitions for layout shifts */
+main {
+  transition: padding 200ms ease-in-out;
+}
+
+/* Mobile scrollbar hiding for cleaner card views */
+@media (max-width: 1023px) {
+  .inventory-scroll-container::-webkit-scrollbar {
+    display: none;
+  }
+  .inventory-scroll-container {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}

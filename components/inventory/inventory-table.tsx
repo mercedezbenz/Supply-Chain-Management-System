@@ -636,12 +636,12 @@ export function InventoryTable({
 
   return (
     <>
-      <div className="space-y-4">
+      <div className="space-y-3 sm:space-y-4">
         {/* ─── INFO BANNER ──────────────────────────────────────────────────── */}
-        <div className="text-xs text-muted-foreground px-1">
+        <div className="text-[10px] sm:text-xs text-muted-foreground px-1">
           Showing <span className="font-medium text-foreground">{((currentPage - 1) * itemsPerPage) + 1}</span>–<span className="font-medium text-foreground">{Math.min(currentPage * itemsPerPage, dataLength)}</span> of{" "}
           <span className="font-medium text-foreground">{dataLength}</span> products
-          {" "}({transactions.length} transactions)
+          <span className="hidden sm:inline">{" "}({transactions.length} transactions)</span>
           {totalPages > 1 && <> · Page {currentPage} of {totalPages}</>}
         </div>
 
@@ -649,8 +649,7 @@ export function InventoryTable({
         <div className="hidden lg:block relative rounded-xl border border-border/40 bg-card overflow-hidden shadow-sm">
           <div
             ref={scrollContainerRef}
-            className="overflow-auto max-h-[65vh]"
-            style={{ scrollbarWidth: "thin" }}
+            className="overflow-auto max-h-[65vh] inventory-scroll-container"
           >
             <table className="w-full text-left min-w-max">
               <thead className="sticky top-0 z-20 bg-gray-50 dark:bg-muted/50 border-b border-border/60">
@@ -944,8 +943,8 @@ export function InventoryTable({
                 {/* Summary Card (clickable) */}
                 <div
                   className={[
-                    "p-4 transition-colors",
-                    hasHistory ? "cursor-pointer" : "",
+                    "p-3 sm:p-4 transition-colors",
+                    hasHistory ? "cursor-pointer active:bg-blue-50/50" : "",
                     isExpanded
                       ? "bg-blue-50/60 dark:bg-blue-950/20"
                       : "bg-white dark:bg-card",
@@ -963,17 +962,17 @@ export function InventoryTable({
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       {hasHistory ? (
-                        <div className={`w-6 h-6 rounded-md flex items-center justify-center transition-all ${
+                        <div className={`w-8 h-8 sm:w-6 sm:h-6 rounded-md flex items-center justify-center transition-all ${
                           isExpanded ? "bg-blue-500 text-white" : "bg-slate-100 text-slate-500"
                         }`}>
-                          {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                          {isExpanded ? <ChevronUp className="h-4 w-4 sm:h-3.5 sm:w-3.5" /> : <ChevronDown className="h-4 w-4 sm:h-3.5 sm:w-3.5" />}
                         </div>
                       ) : null}
                     </div>
                   </div>
 
                   {/* Quick stats */}
-                  <div className="grid grid-cols-5 gap-2 mt-3 pt-3 border-t border-border/40">
+                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 sm:gap-2 mt-3 pt-3 border-t border-border/40">
                     <div className="text-center">
                       <span className="text-[10px] text-muted-foreground block">Incoming</span>
                       <span className="text-xs font-semibold text-green-600">{group.totalIncoming > 0 ? `${formatNumber(group.totalIncoming)} ${group.unitType === "PACK" ? "pk" : "bx"}` : "\u2014"}</span>
@@ -1002,7 +1001,7 @@ export function InventoryTable({
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-7 px-2.5 gap-1.5 text-xs font-medium text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:text-emerald-300 dark:hover:bg-emerald-950/30"
+                        className="h-9 sm:h-7 px-3 sm:px-2.5 gap-1.5 text-xs font-medium text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:text-emerald-300 dark:hover:bg-emerald-950/30"
                         onClick={(e) => { e.stopPropagation(); setBarcodeViewItem({ barcode: group.barcode, productName: group.productName }) }}
                         title="Show Barcode"
                       >
@@ -1012,7 +1011,7 @@ export function InventoryTable({
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-7 px-2.5 gap-1.5 text-xs font-medium text-blue-700 hover:text-blue-800 hover:bg-blue-50 dark:text-blue-400 dark:hover:text-blue-300 dark:hover:bg-blue-950/30"
+                        className="h-9 sm:h-7 px-3 sm:px-2.5 gap-1.5 text-xs font-medium text-blue-700 hover:text-blue-800 hover:bg-blue-50 dark:text-blue-400 dark:hover:text-blue-300 dark:hover:bg-blue-950/30"
                         onClick={(e) => {
                           e.stopPropagation()
                           setBarcodeViewItem({ barcode: group.barcode, productName: group.productName })
@@ -1054,9 +1053,9 @@ export function InventoryTable({
 
         {/* ─── PAGINATION CONTROLS ──────────────────────────────────────── */}
         {totalPages > 1 && (
-          <div className="pagination-bar flex flex-col sm:flex-row items-center justify-between gap-3 px-5 py-4 border-t border-border/40 bg-gradient-to-r from-gray-50/80 via-white to-gray-50/80 dark:from-muted/20 dark:via-card dark:to-muted/20 rounded-b-xl mt-[-1px]">
+          <div className="pagination-bar flex flex-col sm:flex-row items-center justify-between gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-4 border-t border-border/40 bg-gradient-to-r from-gray-50/80 via-white to-gray-50/80 dark:from-muted/20 dark:via-card dark:to-muted/20 rounded-b-xl mt-[-1px]">
             {/* Left: Showing X–Y of Z */}
-            <div className="text-sm text-muted-foreground select-none">
+            <div className="text-xs sm:text-sm text-muted-foreground select-none">
               Showing{" "}
               <span className="font-semibold text-foreground">{((currentPage - 1) * itemsPerPage) + 1}</span>
               <span className="mx-0.5">–</span>
@@ -1075,7 +1074,7 @@ export function InventoryTable({
                 size="sm"
                 onClick={() => setCurrentPage(1)}
                 disabled={currentPage === 1}
-                className="h-9 w-9 p-0 rounded-lg text-muted-foreground hover:text-foreground hover:bg-gray-100 dark:hover:bg-muted/40 disabled:opacity-30 transition-all"
+                className="h-10 w-10 sm:h-9 sm:w-9 p-0 rounded-lg text-muted-foreground hover:text-foreground hover:bg-gray-100 dark:hover:bg-muted/40 disabled:opacity-30 transition-all"
                 title="First page"
               >
                 <ChevronsLeft className="h-4 w-4" />
@@ -1087,14 +1086,14 @@ export function InventoryTable({
                 size="sm"
                 onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                 disabled={currentPage === 1}
-                className="h-9 w-9 p-0 rounded-lg text-muted-foreground hover:text-foreground hover:bg-gray-100 dark:hover:bg-muted/40 disabled:opacity-30 transition-all"
+                className="h-10 w-10 sm:h-9 sm:w-9 p-0 rounded-lg text-muted-foreground hover:text-foreground hover:bg-gray-100 dark:hover:bg-muted/40 disabled:opacity-30 transition-all"
                 title="Previous page"
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
 
               {/* Page numbers */}
-              <div className="flex items-center gap-0.5 mx-1">
+              <div className="hidden sm:flex items-center gap-0.5 mx-1">
                 {getPageNumbers(currentPage, totalPages).map((page, i) => (
                   page === 'ellipsis' ? (
                     <span key={`ellipsis-${i}`} className="w-9 h-9 flex items-center justify-center text-muted-foreground/50 text-sm select-none">…</span>
@@ -1116,13 +1115,18 @@ export function InventoryTable({
                 ))}
               </div>
 
+              {/* Mobile: simple page indicator */}
+              <span className="sm:hidden text-xs font-medium text-muted-foreground mx-2 select-none">
+                {currentPage} / {totalPages}
+              </span>
+
               {/* Next */}
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                 disabled={currentPage === totalPages}
-                className="h-9 w-9 p-0 rounded-lg text-muted-foreground hover:text-foreground hover:bg-gray-100 dark:hover:bg-muted/40 disabled:opacity-30 transition-all"
+                className="h-10 w-10 sm:h-9 sm:w-9 p-0 rounded-lg text-muted-foreground hover:text-foreground hover:bg-gray-100 dark:hover:bg-muted/40 disabled:opacity-30 transition-all"
                 title="Next page"
               >
                 <ChevronRight className="h-4 w-4" />
@@ -1134,7 +1138,7 @@ export function InventoryTable({
                 size="sm"
                 onClick={() => setCurrentPage(totalPages)}
                 disabled={currentPage === totalPages}
-                className="h-9 w-9 p-0 rounded-lg text-muted-foreground hover:text-foreground hover:bg-gray-100 dark:hover:bg-muted/40 disabled:opacity-30 transition-all"
+                className="h-10 w-10 sm:h-9 sm:w-9 p-0 rounded-lg text-muted-foreground hover:text-foreground hover:bg-gray-100 dark:hover:bg-muted/40 disabled:opacity-30 transition-all"
                 title="Last page"
               >
                 <ChevronsRight className="h-4 w-4" />
@@ -1202,7 +1206,7 @@ export function InventoryTable({
 
       {/* Bad Return Details Modal */}
       <Dialog open={!!badReturnDetailsView} onOpenChange={(open) => { if (!open) setBadReturnDetailsView(null) }}>
-        <DialogContent className="max-w-[420px]">
+        <DialogContent className="!w-[95vw] sm:!w-auto max-w-[420px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base">
               <MessageSquareWarning className="h-5 w-5 text-red-500" />

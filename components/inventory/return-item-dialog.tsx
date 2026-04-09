@@ -320,7 +320,7 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
   return (
     <>
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!w-[92vw] !max-w-[1100px] !max-h-[none] !overflow-visible !p-0">
+      <DialogContent className="!w-[98vw] sm:!w-[95vw] md:!w-[92vw] !max-w-[1100px] !max-h-[95vh] sm:!max-h-[none] !overflow-visible !p-0">
         {/* =============== HEADER =============== */}
         <div className="px-6 pt-5 pb-4 border-b border-slate-100">
           <DialogHeader>

@@ -29,8 +29,8 @@ export function Sidebar() {
       {/* Mobile menu button */}
       <Button
         variant="ghost"
-        size="sm"
-        className="fixed top-4 left-4 z-50 md:hidden"
+        size="icon"
+        className="fixed top-3 left-3 z-50 md:hidden h-10 w-10 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm shadow-md border border-border/40 rounded-lg"
         onClick={() => setIsOpen(!isOpen)}
       >
         {isOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -39,7 +39,7 @@ export function Sidebar() {
       {/* Sidebar */}
       <div
         className={cn(
-          "fixed inset-y-0 left-0 z-40 bg-white dark:bg-sidebar border-r border-gray-200 dark:border-sidebar-border transform transition-all duration-200 ease-in-out md:translate-x-0 shadow-lg",
+          "fixed inset-y-0 left-0 z-40 bg-white dark:bg-sidebar border-r border-gray-200 dark:border-sidebar-border transform transition-all duration-200 ease-in-out md:translate-x-0 shadow-lg w-72 sm:w-72",
           isOpen ? "translate-x-0" : "-translate-x-full",
           isCollapsed ? "md:w-16" : "md:w-64",
         )}

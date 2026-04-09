@@ -27,7 +27,7 @@ import {
 import { Calendar } from "@/components/ui/calendar"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/hooks/use-auth"
-import { InventoryService, BarcodeService, BatchNumberService, TransactionService } from "@/services/firebase-service"
+import { InventoryService, BarcodeService, TransactionService } from "@/services/firebase-service"
 import { useToast } from "@/hooks/use-toast"
 import {
   CATEGORIES,
@@ -95,24 +95,34 @@ function buildProductCode(productName: string): string {
     .toUpperCase()
 }
 
-/** Builds a structured barcode: [CategoryCode][TypeCode][ProductCode]-[Random6] */
-function buildBarcode(category: string, type: string, productName?: string): string {
+/** Format a Date as YYYYMMDD string for barcode embedding */
+function formatDateForBarcode(date: Date): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, "0")
+  const d = String(date.getDate()).padStart(2, "0")
+  return `${y}${m}${d}`
+}
+
+/** Builds a structured barcode: [CategoryCode][TypeCode][ProductCode]-[Random6]-[YYYYMMDD] */
+function buildBarcode(category: string, type: string, productionDate: Date, productName?: string): string {
   const catCode = categoryPrefixMap[category] ?? category.slice(0, 2).toUpperCase()
   const typeCode = TYPE_CODES[type] ?? type.charAt(0).toUpperCase()
   const prodCode = productName ? buildProductCode(productName) : ""
   const random = generateRandomCode()
-  return `${catCode}${typeCode}${prodCode}-${random}`
+  const dateStr = formatDateForBarcode(productionDate)
+  return `${catCode}${typeCode}${prodCode}-${random}-${dateStr}`
 }
 
 /** Keeps generating until a barcode is confirmed unique in Firestore */
 async function generateUniqueBarcode(
   category: string,
   type: string,
+  productionDate: Date,
   productName?: string,
   maxAttempts = 20,
 ): Promise<string> {
   for (let i = 0; i < maxAttempts; i++) {
-    const candidate = buildBarcode(category, type, productName)
+    const candidate = buildBarcode(category, type, productionDate, productName)
     const exists = await BarcodeService.checkBarcodeExists(candidate)
     if (!exists) return candidate
   }
@@ -124,10 +134,10 @@ async function generateUniqueBarcode(
 const EMPTY_FORM = {
   barcode: "",
   barcodeBase: "",
-  batchNumber: "",
   category: "",
   productType: "",
   productName: "",
+  productionDate: undefined as Date | undefined,
   expirationDate: undefined as Date | undefined,
   incomingStock: "",
   incomingUnit: "box" as "box" | "pack",
@@ -309,6 +319,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
   const canGenerate = (() => {
     if (!formData.category || !formData.productType) return false
     if (showProductDropdown && !formData.productName) return false
+    if (!formData.productionDate) return false
     return true
   })()
 
@@ -358,27 +369,26 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
 
   // ── Generate Unique Barcode ─────────────────────────────────────────────
   const handleGenerateBarcode = async () => {
-    if (!canGenerate || isGenerating) return
+    if (!canGenerate || isGenerating || !formData.productionDate) return
     setIsGenerating(true)
     setBarcodeReady(false)
-    setFormData((prev) => ({ ...prev, barcode: "", barcodeBase: "", batchNumber: "" }))
+    setFormData((prev) => ({ ...prev, barcode: "", barcodeBase: "" }))
     setErrors((prev) => ({ ...prev, barcode: "" }))
 
     try {
-      // Step 1: Generate a unique base barcode (e.g., FPPBB-KCY2H7)
-      const barcodeBase = await generateUniqueBarcode(
+      // Generate the full barcode: [CatTypeProduct]-[Random6]-[YYYYMMDD]
+      const finalBarcode = await generateUniqueBarcode(
         formData.category,
         formData.productType,
+        formData.productionDate,
         formData.productName || undefined,
       )
 
-      // Step 2: Get the next batch number for this product ID
-      const batchNumber = await BatchNumberService.getNextBatchNumber(productId)
+      // Derive the base (everything before the date suffix)
+      const parts = finalBarcode.split("-")
+      const barcodeBase = parts.slice(0, -1).join("-") // e.g. FPPBB-KCY2H7
 
-      // Step 3: Combine into final barcode: [BASE]-[BATCH]
-      const finalBarcode = `${barcodeBase}-${batchNumber}`
-
-      // Step 4: Save the final barcode to generated_barcodes collection
+      // Save the barcode to generated_barcodes collection
       await BarcodeService.saveBarcodeRecord({
         barcode: finalBarcode,
         category: formData.category,
@@ -389,12 +399,14 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         ...prev,
         barcode: finalBarcode,
         barcodeBase: barcodeBase,
-        batchNumber: batchNumber,
       }))
       setBarcodeReady(true)
+
+      // Build formatted dates for the toast
+      const prodDateFormatted = format(formData.productionDate, "MMMM dd, yyyy")
       toast({
         title: "Barcode Generated & Saved",
-        description: `Barcode: ${finalBarcode} (Batch ${batchNumber})`,
+        description: `Barcode: ${finalBarcode} | Production: ${prodDateFormatted}`,
       })
     } catch (error: any) {
       toast({
@@ -435,6 +447,12 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
 
     const displayName = autoProductName || formData.category
     const barcodeText = formData.barcode
+    const productionDateStr = formData.productionDate
+      ? format(formData.productionDate, "MMM dd, yyyy")
+      : "—"
+    const expirationDateStr = formData.expirationDate
+      ? format(formData.expirationDate, "MMM dd, yyyy")
+      : "—"
 
     iframeDoc.open()
     iframeDoc.write(`
@@ -443,8 +461,15 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         <head>
           <title>Print Barcode</title>
           <style>
-            body {
+            @page {
+              margin: 8mm;
+            }
+            * {
               margin: 0;
+              padding: 0;
+              box-sizing: border-box;
+            }
+            body {
               display: flex;
               flex-direction: column;
               align-items: center;
@@ -452,30 +477,89 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
               min-height: 100vh;
               background: white;
               font-family: Arial, Helvetica, sans-serif;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
             }
-            .label-container {
+            .label {
               text-align: center;
-              padding: 16px;
+              padding: 12px 20px;
+              max-width: 420px;
+              width: 100%;
             }
             .product-name {
-              font-size: 14pt;
-              font-weight: bold;
-              margin-bottom: 8px;
+              font-size: 15pt;
+              font-weight: 700;
+              letter-spacing: 0.5px;
+              margin-bottom: 6px;
+              line-height: 1.2;
             }
             .barcode-text {
-              font-size: 11pt;
-              font-family: monospace;
-              letter-spacing: 2px;
-              margin-bottom: 6px;
+              font-size: 10pt;
+              font-family: 'Courier New', Courier, monospace;
+              font-weight: 600;
+              letter-spacing: 2.5px;
+              color: #222;
+              margin-bottom: 8px;
             }
-            svg { max-width: 90%; }
+            .barcode-img {
+              margin: 4px auto 8px;
+              display: flex;
+              justify-content: center;
+            }
+            .barcode-img svg {
+              max-width: 100%;
+              height: auto;
+            }
+            .barcode-text-bottom {
+              font-size: 10pt;
+              font-family: 'Courier New', Courier, monospace;
+              font-weight: 600;
+              letter-spacing: 2.5px;
+              color: #222;
+              margin-bottom: 10px;
+            }
+            .separator {
+              width: 60%;
+              margin: 0 auto 10px;
+              border: none;
+              border-top: 1px dashed #bbb;
+            }
+            .dates {
+              display: flex;
+              flex-direction: column;
+              gap: 3px;
+              align-items: center;
+            }
+            .date-row {
+              font-size: 9.5pt;
+              color: #333;
+              line-height: 1.5;
+            }
+            .date-label {
+              font-weight: 600;
+            }
+            .date-value {
+              font-weight: 400;
+            }
           </style>
         </head>
         <body>
-          <div class="label-container">
+          <div class="label">
             <div class="product-name">${displayName}</div>
             <div class="barcode-text">${barcodeText}</div>
-            ${svgHtml}
+            <div class="barcode-img">${svgHtml}</div>
+            <div class="barcode-text-bottom">${barcodeText}</div>
+            <hr class="separator" />
+            <div class="dates">
+              <div class="date-row">
+                <span class="date-label">Production Date:</span>
+                <span class="date-value">${productionDateStr}</span>
+              </div>
+              <div class="date-row">
+                <span class="date-label">Expiration Date:</span>
+                <span class="date-value">${expirationDateStr}</span>
+              </div>
+            </div>
           </div>
         </body>
       </html>
@@ -579,7 +663,6 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
       const itemData: any = {
         barcode: formData.barcode.trim(),
         barcode_base: formData.barcodeBase || formData.barcode.trim(),
-        batch_number: formData.batchNumber || "001",
         product_id: productId,
         name: autoProductName || formData.category,
         category: formData.category,
@@ -594,6 +677,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         stockSource: "incoming",
         goodReturnStock: 0,
         damageReturnStock: 0,
+        productionDate: formData.productionDate || null,
         expiryDate: formData.expirationDate || null,
         expirationDate: formData.expirationDate || null,
         location: formData.storageLocation,
@@ -625,7 +709,6 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         product_id: productId,
         barcode: formData.barcode.trim(),
         barcode_base: formData.barcodeBase || formData.barcode.trim(),
-        batch_number: formData.batchNumber || "001",
         category: formData.category,
         type: formData.productType,
         unit_type: formData.incomingUnit.toUpperCase(),
@@ -639,6 +722,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         damage_return: 0,
         stock_left: stockLeft,
         location: formData.storageLocation,
+        production_date: formData.productionDate || null,
         expiry_date: formData.expirationDate || null,
         reference_no: "",
         source: "incoming",
@@ -689,11 +773,11 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent
-        className="!w-[92vw] !max-w-[1220px] !max-h-[92vh] !overflow-visible !p-0"
+        className="!w-[98vw] sm:!w-[95vw] md:!w-[92vw] !max-w-[1220px] !max-h-[95vh] sm:!max-h-[92vh] !overflow-visible !p-0"
       >
-        <div className="p-6 pb-0">
+        <div className="p-3 sm:p-4 md:p-6 pb-0">
           <DialogHeader>
-            <DialogTitle className="text-xl">{isScanned ? "Add Stock to Scanned Item" : "Add New Inventory Item"}</DialogTitle>
+            <DialogTitle className="text-base sm:text-lg md:text-xl">{isScanned ? "Add Stock to Scanned Item" : "Add New Inventory Item"}</DialogTitle>
             <DialogDescription>
               {isScanned
                 ? "Product details are locked from scan. Fill in stock entry details below."
@@ -719,7 +803,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
 
         <form onSubmit={handleSubmit}>
           {/* ── 2-COLUMN LAYOUT: 65/35 split ──────────────────────────── */}
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6 p-6 max-h-[calc(92vh-180px)] overflow-y-auto overflow-x-visible">
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-4 sm:gap-5 md:gap-6 p-3 sm:p-4 md:p-6 max-h-[calc(95vh-180px)] sm:max-h-[calc(92vh-180px)] overflow-y-auto overflow-x-visible">
 
             {/* ════════════════ LEFT COLUMN: All Form Sections ════════════════ */}
             <div className="flex flex-col gap-5 min-w-0">
@@ -1025,9 +1109,42 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                 </div>
               )}
 
-              {/* ── 3. EXPIRATION & STORAGE ───────────────────────────────── */}
+              {/* ── 3. PRODUCTION, EXPIRATION & STORAGE ──────────────────── */}
               <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-5 grid gap-4">
-                <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Expiration & Storage</p>
+                <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Production, Expiration & Storage</p>
+                {/* Production Date */}
+                <div className="grid gap-1.5">
+                  <Label className="text-sm font-medium text-slate-700">
+                    Production Date <span className="text-red-500">*</span>
+                  </Label>
+                  <Input
+                    type="date"
+                    value={formData.productionDate ? format(formData.productionDate, "yyyy-MM-dd") : ""}
+                    onChange={(e) => {
+                      const val = e.target.value
+                      if (val) {
+                        const parsed = new Date(val + "T00:00:00")
+                        if (!isNaN(parsed.getTime())) {
+                          setFormData((prev) => ({ ...prev, productionDate: parsed, barcode: "" }))
+                          setBarcodeReady(false)
+                          if (errors.productionDate) {
+                            setErrors((prev) => ({ ...prev, productionDate: "" }))
+                          }
+                        }
+                      } else {
+                        setFormData((prev) => ({ ...prev, productionDate: undefined, barcode: "" }))
+                        setBarcodeReady(false)
+                      }
+                    }}
+                    className={cn(
+                      "h-9 text-sm",
+                      errors.productionDate && "border-destructive",
+                      formData.productionDate && "text-slate-800 font-medium"
+                    )}
+                  />
+                  {errors.productionDate && <p className="text-xs text-destructive">{errors.productionDate}</p>}
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="relative grid gap-1.5">
                     <Label className="text-sm font-medium text-slate-700">
@@ -1223,7 +1340,9 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                             ? "Select Type first"
                             : showProductDropdown && !formData.productName
                               ? "Select Product Name first"
-                              : "Complete required fields first"}
+                              : !formData.productionDate
+                                ? "Set Production Date first"
+                                : "Complete required fields first"}
                       </p>
                     )}
                   </>
@@ -1258,23 +1377,39 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                   {errors.barcode && <p className="text-xs text-destructive">{errors.barcode}</p>}
                 </div>
 
-                {/* Batch Number display (read-only) */}
-                {barcodeReady && formData.batchNumber && (
-                  <div className="grid gap-1.5">
-                    <Label className="text-sm font-medium text-slate-700 flex items-center gap-1.5">
-                      Batch Number
-                      <span className="inline-flex items-center text-[10px] font-normal text-slate-400 bg-slate-100 rounded-full px-2 py-0.5">
-                        Read-only
-                      </span>
-                    </Label>
-                    <div className="h-10 px-3 flex items-center justify-between rounded-md border border-blue-200 bg-blue-50 text-sm transition-colors">
-                      <span className="font-semibold text-blue-700 tracking-wide">
-                        Batch {formData.batchNumber}
-                      </span>
-                      <span className="text-[10px] text-blue-400 font-normal">
-                        Auto-incremented
-                      </span>
-                    </div>
+                {/* Production & Expiration Date display (read-only) */}
+                {barcodeReady && (
+                  <div className="grid gap-3">
+                    {formData.productionDate && (
+                      <div className="grid gap-1.5">
+                        <Label className="text-sm font-medium text-slate-700 flex items-center gap-1.5">
+                          Production Date
+                          <span className="inline-flex items-center text-[10px] font-normal text-slate-400 bg-slate-100 rounded-full px-2 py-0.5">
+                            Embedded in barcode
+                          </span>
+                        </Label>
+                        <div className="h-10 px-3 flex items-center justify-between rounded-md border border-violet-200 bg-violet-50 text-sm transition-colors">
+                          <span className="font-semibold text-violet-700 tracking-wide">
+                            {format(formData.productionDate, "MMMM dd, yyyy")}
+                          </span>
+                          <span className="text-[10px] text-violet-400 font-normal font-mono">
+                            {formatDateForBarcode(formData.productionDate)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                    {formData.expirationDate && (
+                      <div className="grid gap-1.5">
+                        <Label className="text-sm font-medium text-slate-700 flex items-center gap-1.5">
+                          Expiration Date
+                        </Label>
+                        <div className="h-10 px-3 flex items-center justify-between rounded-md border border-orange-200 bg-orange-50 text-sm transition-colors">
+                          <span className="font-semibold text-orange-700 tracking-wide">
+                            {format(formData.expirationDate, "MMMM dd, yyyy")}
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 

@@ -267,7 +267,7 @@ export function OutgoingStockDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!w-[95vw] !max-w-[540px] !p-0 !overflow-hidden">
+      <DialogContent className="!w-[98vw] sm:!w-[95vw] !max-w-[540px] !p-0 !overflow-hidden">
         {/* ── Header ── */}
         <div className="px-6 pt-5 pb-4 border-b border-slate-100">
           <DialogHeader>
