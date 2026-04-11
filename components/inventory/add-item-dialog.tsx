@@ -787,123 +787,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
             {/* ════════════════ LEFT COLUMN: All Form Sections ════════════════ */}
             <div className="flex flex-col gap-5 min-w-0">
 
-              {/* ── 1. STOCK ENTRY ────────────────────────────────────────── */}
-              <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-5 grid gap-4">
-                <p className="text-xs font-semibold uppercase tracking-widest text-blue-500">Stock Entry</p>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {/* Incoming Stock */}
-                  <div className="grid gap-1.5">
-                    <Label className="text-sm font-medium text-slate-700">
-                      Incoming Stock <span className="text-red-500">*</span>
-                    </Label>
-                    <div className="flex gap-1.5">
-                      <Input
-                        id="incomingStock"
-                        type="number"
-                        min="0"
-                        value={formData.incomingStock}
-                        onChange={(e) => {
-                          setFormData((prev) => ({ ...prev, incomingStock: e.target.value }))
-                          setErrors((prev) => ({ ...prev, incomingStock: "" }))
-                        }}
-                        placeholder="e.g. 25"
-                        className={cn("h-9 flex-1", errors.incomingStock ? "border-destructive" : "")}
-                      />
-                      <Select
-                        value={formData.incomingUnit}
-                        onValueChange={(v) => setFormData((prev) => ({ ...prev, incomingUnit: v as "box" | "pack" }))}
-                      >
-                        <SelectTrigger className="h-9 w-[80px] shrink-0">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="box">Box</SelectItem>
-                          <SelectItem value="pack">Pack</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    {errors.incomingStock && <p className="text-xs text-destructive">{errors.incomingStock}</p>}
-                  </div>
-
-                  {/* Weight */}
-                  <div className="grid gap-1.5">
-                    <Label className="text-sm font-medium text-slate-700">
-                      Weight <span className="text-slate-400 font-normal">(kg)</span>
-                    </Label>
-                    <div className="flex gap-1.5 items-center">
-                      <Input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={formData.weightKg}
-                        onChange={(e) => {
-                          setFormData((prev) => ({ ...prev, weightKg: e.target.value }))
-                          setErrors((prev) => ({ ...prev, weightKg: "", avgWeight: "" }))
-                        }}
-                        placeholder="e.g. 25.5"
-                        className={cn("h-9 flex-1", errors.weightKg ? "border-red-500 bg-red-50" : "")}
-                      />
-                      <span className="text-sm font-medium text-slate-500 shrink-0">kg</span>
-                    </div>
-                    {errors.weightKg && <p className="text-xs text-red-600">{errors.weightKg}</p>}
-                  </div>
-                </div>
-
-                {/* Weight Range (optional) */}
-                <div className="grid gap-1.5">
-                  <Label className="text-sm font-medium text-slate-700">
-                    Weight Range <span className="text-slate-400 font-normal">(kg per pack/box, optional)</span>
-                  </Label>
-                  <div className="flex gap-2 items-center">
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.1"
-                      value={formData.avgWeightMin}
-                      onChange={(e) => {
-                        setFormData((prev) => ({ ...prev, avgWeightMin: e.target.value }))
-                        setErrors((prev) => ({ ...prev, avgWeight: "" }))
-                      }}
-                      placeholder="Min (e.g. 4)"
-                      className={cn("h-9 flex-1", errors.avgWeight ? "border-red-500 bg-red-50" : "")}
-                    />
-                    <span className="text-sm font-medium text-slate-400">to</span>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.1"
-                      value={formData.avgWeightMax}
-                      onChange={(e) => {
-                        setFormData((prev) => ({ ...prev, avgWeightMax: e.target.value }))
-                        setErrors((prev) => ({ ...prev, avgWeight: "" }))
-                      }}
-                      placeholder="Max (e.g. 5)"
-                      className={cn("h-9 flex-1", errors.avgWeight ? "border-red-500 bg-red-50" : "")}
-                    />
-                    <span className="text-sm font-medium text-slate-500 shrink-0">kg</span>
-                  </div>
-                  {errors.avgWeight && <p className="text-xs text-red-600">{errors.avgWeight}</p>}
-                  {(() => {
-                    const packs = parseInt(formData.incomingStock)
-                    const weight = parseFloat(formData.weightKg)
-                    const min = parseFloat(formData.avgWeightMin)
-                    const max = parseFloat(formData.avgWeightMax)
-                    if (!isNaN(packs) && packs > 0 && !isNaN(weight) && !isNaN(min) && !isNaN(max)) {
-                      const wpp = weight / packs
-                      const ok = wpp >= min && wpp <= max
-                      return (
-                        <p className={cn("text-xs font-medium", ok ? "text-emerald-600" : "text-red-600")}>
-                          {ok ? "✓" : "✗"} Weight per pack: {wpp.toFixed(2)} kg (range: {min}-{max} kg)
-                        </p>
-                      )
-                    }
-                    return null
-                  })()}
-                </div>
-              </div>
-
-              {/* ── 2. PRODUCT CLASSIFICATION ─────────────────────────────── */}
+              {/* ── 1. PRODUCT CLASSIFICATION ─────────────────────────────── */}
               <div className="rounded-xl border border-indigo-100 bg-indigo-50/30 p-5 grid gap-4">
                 <p className="text-xs font-semibold uppercase tracking-widest text-indigo-500">Product Classification</p>
 
@@ -1088,6 +972,122 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                 </div>
               )}
 
+              {/* ── 2. STOCK ENTRY ────────────────────────────────────────── */}
+              <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-5 grid gap-4">
+                <p className="text-xs font-semibold uppercase tracking-widest text-blue-500">Stock Entry</p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Incoming Stock */}
+                  <div className="grid gap-1.5">
+                    <Label className="text-sm font-medium text-slate-700">
+                      Incoming Stock <span className="text-red-500">*</span>
+                    </Label>
+                    <div className="flex gap-1.5">
+                      <Input
+                        id="incomingStock"
+                        type="number"
+                        min="0"
+                        value={formData.incomingStock}
+                        onChange={(e) => {
+                          setFormData((prev) => ({ ...prev, incomingStock: e.target.value }))
+                          setErrors((prev) => ({ ...prev, incomingStock: "" }))
+                        }}
+                        placeholder="e.g. 25"
+                        className={cn("h-9 flex-1", errors.incomingStock ? "border-destructive" : "")}
+                      />
+                      <Select
+                        value={formData.incomingUnit}
+                        onValueChange={(v) => setFormData((prev) => ({ ...prev, incomingUnit: v as "box" | "pack" }))}
+                      >
+                        <SelectTrigger className="h-9 w-[80px] shrink-0">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="box">Box</SelectItem>
+                          <SelectItem value="pack">Pack</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {errors.incomingStock && <p className="text-xs text-destructive">{errors.incomingStock}</p>}
+                  </div>
+
+                  {/* Weight */}
+                  <div className="grid gap-1.5">
+                    <Label className="text-sm font-medium text-slate-700">
+                      Weight <span className="text-slate-400 font-normal">(kg)</span>
+                    </Label>
+                    <div className="flex gap-1.5 items-center">
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={formData.weightKg}
+                        onChange={(e) => {
+                          setFormData((prev) => ({ ...prev, weightKg: e.target.value }))
+                          setErrors((prev) => ({ ...prev, weightKg: "", avgWeight: "" }))
+                        }}
+                        placeholder="e.g. 25.5"
+                        className={cn("h-9 flex-1", errors.weightKg ? "border-red-500 bg-red-50" : "")}
+                      />
+                      <span className="text-sm font-medium text-slate-500 shrink-0">kg</span>
+                    </div>
+                    {errors.weightKg && <p className="text-xs text-red-600">{errors.weightKg}</p>}
+                  </div>
+                </div>
+
+                {/* Weight Range (optional) */}
+                <div className="grid gap-1.5">
+                  <Label className="text-sm font-medium text-slate-700">
+                    Weight Range <span className="text-slate-400 font-normal">(kg per pack/box, optional)</span>
+                  </Label>
+                  <div className="flex gap-2 items-center">
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      value={formData.avgWeightMin}
+                      onChange={(e) => {
+                        setFormData((prev) => ({ ...prev, avgWeightMin: e.target.value }))
+                        setErrors((prev) => ({ ...prev, avgWeight: "" }))
+                      }}
+                      placeholder="Min (e.g. 4)"
+                      className={cn("h-9 flex-1", errors.avgWeight ? "border-red-500 bg-red-50" : "")}
+                    />
+                    <span className="text-sm font-medium text-slate-400">to</span>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      value={formData.avgWeightMax}
+                      onChange={(e) => {
+                        setFormData((prev) => ({ ...prev, avgWeightMax: e.target.value }))
+                        setErrors((prev) => ({ ...prev, avgWeight: "" }))
+                      }}
+                      placeholder="Max (e.g. 5)"
+                      className={cn("h-9 flex-1", errors.avgWeight ? "border-red-500 bg-red-50" : "")}
+                    />
+                    <span className="text-sm font-medium text-slate-500 shrink-0">kg</span>
+                  </div>
+                  {errors.avgWeight && <p className="text-xs text-red-600">{errors.avgWeight}</p>}
+                  {(() => {
+                    const packs = parseInt(formData.incomingStock)
+                    const weight = parseFloat(formData.weightKg)
+                    const min = parseFloat(formData.avgWeightMin)
+                    const max = parseFloat(formData.avgWeightMax)
+                    if (!isNaN(packs) && packs > 0 && !isNaN(weight) && !isNaN(min) && !isNaN(max)) {
+                      const wpp = weight / packs
+                      const ok = wpp >= min && wpp <= max
+                      return (
+                        <p className={cn("text-xs font-medium", ok ? "text-emerald-600" : "text-red-600")}>
+                          {ok ? "✓" : "✗"} Weight per pack: {wpp.toFixed(2)} kg (range: {min}-{max} kg)
+                        </p>
+                      )
+                    }
+                    return null
+                  })()}
+                </div>
+              </div>
+
               {/* ── 3. PRODUCTION, EXPIRATION & STORAGE ──────────────────── */}
               <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-5 grid gap-4">
                 <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Production, Expiration & Storage</p>
@@ -1129,7 +1129,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                     <Label className="text-sm font-medium text-slate-700">
                       Expiration Date <span className="text-red-500">*</span>
                     </Label>
-                    {/* Manual date input + calendar toggle */}
+                    {/* Manual date input */}
                     <div className="flex gap-1.5">
                       <Input
                         type="date"
@@ -1154,78 +1154,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                           formData.expirationDate && "text-slate-800 font-medium"
                         )}
                       />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => setDatePickerOpen(!datePickerOpen)}
-                        className={cn(
-                          "h-9 w-9 shrink-0",
-                          datePickerOpen && "ring-2 ring-primary/20 border-primary bg-primary/5"
-                        )}
-                      >
-                        <CalendarIcon className="h-4 w-4 text-slate-500" />
-                      </Button>
                     </div>
-
-                    {/* Calendar popup — positioned below the input */}
-                    {datePickerOpen && (
-                      <>
-                        {/* Backdrop to close on click outside */}
-                        <div
-                          className="fixed inset-0 z-[9998]"
-                          onClick={() => setDatePickerOpen(false)}
-                        />
-                        <div
-                          ref={datePickerRef}
-                          className="absolute top-full left-0 mt-1 z-[9999] w-[300px] rounded-xl border border-slate-200 bg-white p-3 shadow-2xl animate-in fade-in-0 zoom-in-95 slide-in-from-top-2"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <Calendar
-                            mode="single"
-                            selected={formData.expirationDate}
-                            onSelect={(date) => {
-                              setFormData((prev) => ({ ...prev, expirationDate: date }))
-                              if (errors.expirationDate) {
-                                setErrors((prev) => ({ ...prev, expirationDate: "" }))
-                              }
-                              setDatePickerOpen(false)
-                            }}
-                            initialFocus
-                            className="rounded-lg"
-                          />
-                          <div className="flex items-center justify-between border-t border-slate-100 pt-2 mt-2">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="text-slate-500 hover:text-slate-700 h-7 px-2 text-xs"
-                              onClick={() => {
-                                setFormData((prev) => ({ ...prev, expirationDate: undefined }))
-                                setDatePickerOpen(false)
-                              }}
-                            >
-                              Clear
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="text-primary hover:text-primary/80 h-7 px-2 text-xs"
-                              onClick={() => {
-                                setFormData((prev) => ({ ...prev, expirationDate: new Date() }))
-                                if (errors.expirationDate) {
-                                  setErrors((prev) => ({ ...prev, expirationDate: "" }))
-                                }
-                                setDatePickerOpen(false)
-                              }}
-                            >
-                              Today
-                            </Button>
-                          </div>
-                        </div>
-                      </>
-                    )}
                     {errors.expirationDate && <p className="text-xs text-destructive">{errors.expirationDate}</p>}
                   </div>
                 </div>

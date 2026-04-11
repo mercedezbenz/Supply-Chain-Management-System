@@ -132,7 +132,6 @@ function deriveUnitType(txn: any): string {
 // ─── Grouped Product type ────────────────────────────────────────────────────
 interface GroupedProduct {
   barcode: string
-  batchNumber: string
   productName: string
   category: string
   movementOrigin: string       // How item ENTERED system (Supplier/Production) — NOT latest action
@@ -362,7 +361,6 @@ export function InventoryTable({
       if (!groupMap.has(bc)) {
         groupMap.set(bc, {
           barcode: bc,
-          batchNumber: (txn as any).batch_number || "-",
           productName: (txn as any).product_name || "-",
           category: (txn as any).category || "",
           movementOrigin: "",  // Will be set from the EARLIEST incoming transaction
@@ -407,7 +405,6 @@ export function InventoryTable({
 
         group.productName = (txn as any).product_name || group.productName
       }
-      group.batchNumber = (txn as any).batch_number || group.batchNumber
 
       // Track bad return details
       if ((txn as any).bad_return_details) {
@@ -620,7 +617,6 @@ export function InventoryTable({
     { key: "expand", label: "", align: "center" as const, width: "w-10" },
     { key: "dateAdded", label: "Date Added", align: "left" as const },
     { key: "product", label: "Product Name", align: "left" as const },
-    { key: "batch", label: "Batch", align: "center" as const, width: "min-w-[80px]" },
     { key: "barcode", label: "Barcode", align: "left" as const },
 
     { key: "expiryDate", label: "Expiry Date", align: "left" as const },
@@ -760,17 +756,6 @@ export function InventoryTable({
                             </span>
                             <span className="line-clamp-1" title={group.productName}>{highlightMatch(group.productName, searchQuery)}</span>
                           </div>
-                        </td>
-
-                        {/* Batch */}
-                        <td className="h-14 px-2 py-2 font-mono text-[11px] text-foreground align-middle text-center">
-                          {group.batchNumber !== "-" ? (
-                            <span className="inline-flex items-center rounded bg-blue-50/80 px-1.5 py-0.5 font-semibold text-blue-700 border border-blue-200/60">
-                              {group.batchNumber}
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground">{"\u2014"}</span>
-                          )}
                         </td>
 
                         {/* Barcode */}
