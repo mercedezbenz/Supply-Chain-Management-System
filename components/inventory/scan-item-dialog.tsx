@@ -380,16 +380,7 @@ export function ScanItemDialog({
                     </div>
                   </div>
 
-                  {/* Storage Location */}
-                  <div className="flex items-start gap-3">
-                    <MapPin className="h-4 w-4 text-rose-400 mt-0.5 shrink-0" />
-                    <div>
-                      <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Location</p>
-                      <p className="text-sm font-semibold text-slate-700 mt-0.5">
-                        {(foundItem as any).storageLocation ?? (foundItem as any).location ?? "—"}
-                      </p>
-                    </div>
-                  </div>
+
                 </div>
               </div>
 

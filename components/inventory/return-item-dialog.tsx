@@ -253,7 +253,6 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
         good_return: goodReturnNum,
         damage_return: badReturnNum,
         stock_left: newStock,
-        location: (selectedItem as any).storageLocation || (selectedItem as any).location || "",
         reference_no: "",
         source: "inventory_return",
         ...(badReturnDetails && { bad_return_details: badReturnDetails }),

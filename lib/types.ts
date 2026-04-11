@@ -38,7 +38,7 @@ export interface InventoryItem {
   qualityStatus?: "GOOD" | "DAMAGED" | "EXPIRED"
   expiryDate: Date | any // Firebase field name (not expirationDate)
   expirationDate?: Date | any // Keep both for compatibility
-  location?: string // Make optional since it might not exist in all records
+
   goodReturnStock?: number // Good return stock from Firebase
   damageReturnStock?: number // Damage return stock from Firebase
   stockSource?: string // Where stock came from (From Supplier, From Production, Return, Recovery, From Customer)
@@ -129,7 +129,7 @@ export interface InventoryTransaction {
   damage_return: number      // default 0
   stock_left: number         // computed at write time
   to_location?: string       // destination location / delivery address
-  location: string           // current storage location
+
   customer_name?: string     // customer name (outgoing)
   customer_address?: string  // full delivery address string (outgoing)
   delivery_address?: string  // alias for customer_address

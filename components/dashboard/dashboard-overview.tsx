@@ -284,7 +284,7 @@ export function DashboardOverview() {
   }, [user, firebaseError])
 
   const handleNotificationClick = () => {
-    router.push("/inventory")
+    router.push("/inventory?filter=low-stock")
     setShowNotificationBanner(false)
   }
 

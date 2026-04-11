@@ -178,44 +178,24 @@ export function LoginForm() {
           min-height: 470px;
           border-radius: 24px;
           overflow: visible;
-          background: rgba(255, 255, 255, 0.75);
-          backdrop-filter: blur(16px) saturate(1.3);
-          -webkit-backdrop-filter: blur(16px) saturate(1.3);
-          border: 1px solid rgba(255, 255, 255, 0.7);
+          background: rgba(255, 255, 255, 0.92);
+          backdrop-filter: blur(4px) saturate(1.05);
+          -webkit-backdrop-filter: blur(4px) saturate(1.05);
+          border: 1px solid rgba(255, 255, 255, 0.95);
           box-shadow:
-            0 10px 40px rgba(0, 0, 0, 0.10),
-            0 2px 8px rgba(0, 0, 0, 0.05),
-            0 0 50px rgba(135, 200, 245, 0.10);
+            0 8px 24px rgba(0, 0, 0, 0.04),
+            0 2px 8px rgba(0, 0, 0, 0.02);
 
-          /* Floating animation */
-          transform: translateY(0px);
-          animation: floatCard 7s ease-in-out infinite;
-
-          /* Entrance */
+          /* Entrance animation only, no continuous floating */
           opacity: 0;
-          transition: opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1),
-                      transform 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+          transform: translateY(16px);
+          transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+                      transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
         .login-card.mounted {
           opacity: 1;
-        }
-
-        @keyframes floatCard {
-          0%, 100% {
-            transform: translateY(0px);
-            box-shadow:
-              0 10px 40px rgba(0, 0, 0, 0.10),
-              0 2px 8px rgba(0, 0, 0, 0.05),
-              0 0 50px rgba(135, 200, 245, 0.10);
-          }
-          50% {
-            transform: translateY(-10px);
-            box-shadow:
-              0 24px 60px rgba(0, 0, 0, 0.14),
-              0 4px 16px rgba(0, 0, 0, 0.06),
-              0 0 70px rgba(135, 200, 245, 0.15);
-          }
+          transform: translateY(0);
         }
 
         /* Subtle ambient glow behind card */

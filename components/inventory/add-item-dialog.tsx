@@ -45,22 +45,6 @@ interface AddItemDialogProps {
   scannedItem?: import("@/lib/types").InventoryItem | null
 }
 
-const storageLocations = {
-  "Left Storage": [
-    "1LG1", "1LG2", "1LG3", "1LG4", "1LG5", "1LG6", "1LG7", "1LG8", "1LG9",
-    "1L21", "1L22", "1L23", "1L24", "1L25", "1L26", "1L27", "1L28", "1L29",
-    "1L30", "1L31", "1L32", "1L33", "1L34", "1L35", "1L36", "1L37", "1L38",
-    "1L39", "1L40", "1L41", "1L42", "1L43", "1L44", "1L45", "1L46", "1L47",
-    "1L48", "1L49",
-  ],
-  "Right Storage": [
-    "1RG1", "1RG2", "1RG3", "1RG4", "1RG5", "1RG6", "1RG7", "1RG8", "1RG9",
-    "1R21", "1R22", "1R23", "1R24", "1R25", "1R26", "1R27", "1R28", "1R29",
-    "1R30", "1R31", "1R32", "1R33", "1R34", "1R35", "1R36", "1R37", "1R38",
-    "1R39", "1R40", "1R41", "1R42", "1R43", "1R44", "1R45", "1R46", "1R47",
-    "1R48", "1R49",
-  ],
-}
 
 // ─── Barcode helpers ───────────────────────────────────────────────────────────
 
@@ -144,7 +128,6 @@ const EMPTY_FORM = {
   weightKg: "",
   avgWeightMin: "",
   avgWeightMax: "",
-  storageLocation: "",
 }
 
 // Special sentinel value for "+ Add Item" option
@@ -612,7 +595,6 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
       newErrors.incomingStock = "Incoming stock must be a valid number (0 or greater)"
     }
 
-    if (!formData.storageLocation) newErrors.storageLocation = "Storage location is required"
 
     // Average weight validation
     const avgMin = parseFloat(formData.avgWeightMin)
@@ -680,8 +662,6 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         productionDate: formData.productionDate || null,
         expiryDate: formData.expirationDate || null,
         expirationDate: formData.expirationDate || null,
-        location: formData.storageLocation,
-        storageLocation: formData.storageLocation,
         unit_type: formData.incomingUnit.toUpperCase(),
         avg_weight: formData.weightKg ? parseFloat(formData.weightKg) : 0,
         avgWeightMin: formData.avgWeightMin ? parseFloat(formData.avgWeightMin) : null,
@@ -721,7 +701,6 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         good_return: 0,
         damage_return: 0,
         stock_left: stockLeft,
-        location: formData.storageLocation,
         production_date: formData.productionDate || null,
         expiry_date: formData.expirationDate || null,
         reference_no: "",
@@ -1248,38 +1227,6 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                       </>
                     )}
                     {errors.expirationDate && <p className="text-xs text-destructive">{errors.expirationDate}</p>}
-                  </div>
-
-                  <div className="grid gap-1.5">
-                    <Label className="text-sm font-medium text-slate-700">
-                      Storage Location <span className="text-red-500">*</span>
-                    </Label>
-                    <Select
-                      value={formData.storageLocation}
-                      onValueChange={(value) => {
-                        setFormData((prev) => ({ ...prev, storageLocation: value }))
-                        if (errors.storageLocation) {
-                          setErrors((prev) => ({ ...prev, storageLocation: "" }))
-                        }
-                      }}
-                    >
-                      <SelectTrigger className={cn("h-9", errors.storageLocation ? "border-destructive" : "")}>
-                        <SelectValue placeholder="Select location" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Object.entries(storageLocations).map(([section, locations]) => (
-                          <div key={section}>
-                            <div className="px-2 py-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                              {section}
-                            </div>
-                            {locations.map((location) => (
-                              <SelectItem key={location} value={location}>{location}</SelectItem>
-                            ))}
-                          </div>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {errors.storageLocation && <p className="text-xs text-destructive">{errors.storageLocation}</p>}
                   </div>
                 </div>
               </div>

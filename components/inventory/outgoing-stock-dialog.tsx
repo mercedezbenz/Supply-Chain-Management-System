@@ -222,10 +222,6 @@ export function OutgoingStockDialog({
         good_return: 0,
         damage_return: 0,
         stock_left: newStockLeft,
-        location:
-          (selectedItem as any).storageLocation ||
-          (selectedItem as any).location ||
-          "",
         expiry_date:
           (selectedItem as any).expiryDate ||
           (selectedItem as any).expirationDate ||

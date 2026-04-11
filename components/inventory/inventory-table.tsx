@@ -36,6 +36,8 @@ interface InventoryTableProps {
   rowsPerPage?: number
   /** Debounced search query from dashboard — used for text highlighting */
   searchQuery?: string
+  /** The original parameter filter from URL, e.g. low-stock, out-of-stock, expiring */
+  highlightFilter?: string
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -142,7 +144,7 @@ interface GroupedProduct {
   totalGoodReturn: number
   totalDamageReturn: number
   stockLeft: number
-  location: string
+
   transactions: any[]
   latestBadReturnDetails: any
   // Incoming context fields (from first incoming transaction)
@@ -211,21 +213,21 @@ function TransactionHistoryList({ transactions, setCancellingItem }: { transacti
       const dateStr = formatTxnDate(txn.transaction_date || txn.created_at || new Date())
       const unit = deriveUnitType(txn) === "PACK" ? "packs" : "boxes"
       const rem = txn.stock_left ?? "\u2014"
-      const loc = txn.location || "\u2014"
+
 
       if (isOutgoing) {
-          parts.push({ txn, id: `${txn.id}-out`, type: 'OUT', qty: txn.outgoing_packs ?? txn.outgoing_qty ?? 0, rem, date: dateStr, unit, loc: null })
+          parts.push({ txn, id: `${txn.id}-out`, type: 'OUT', qty: txn.outgoing_packs ?? txn.outgoing_qty ?? 0, rem, date: dateStr, unit })
       } else if (isReturn) {
           if ((txn.good_return ?? 0) > 0) {
-              parts.push({ txn, id: `${txn.id}-good`, type: 'GOOD_RETURN', qty: txn.good_return, loc, rem, date: dateStr, unit })
+              parts.push({ txn, id: `${txn.id}-good`, type: 'GOOD_RETURN', qty: txn.good_return, rem, date: dateStr, unit })
           }
           if ((txn.damage_return ?? 0) > 0) {
-              parts.push({ txn, id: `${txn.id}-bad`, type: 'BAD_RETURN', qty: txn.damage_return, loc, reason: txn.bad_return_details?.reason || "Damaged", rem: null, date: dateStr, unit })
+              parts.push({ txn, id: `${txn.id}-bad`, type: 'BAD_RETURN', qty: txn.damage_return, reason: txn.bad_return_details?.reason || "Damaged", rem: null, date: dateStr, unit })
           }
       } else if (isIncoming) {
-          parts.push({ txn, id: `${txn.id}-in`, type: 'IN', qty: txn.incoming_packs ?? txn.incoming_qty ?? 0, loc, rem, date: dateStr, unit })
+          parts.push({ txn, id: `${txn.id}-in`, type: 'IN', qty: txn.incoming_packs ?? txn.incoming_qty ?? 0, rem, date: dateStr, unit })
       } else {
-          parts.push({ txn, id: `${txn.id}-other`, type: 'OTHER', qty: 0, rem, date: dateStr, unit, loc: null })
+          parts.push({ txn, id: `${txn.id}-other`, type: 'OTHER', qty: 0, rem, date: dateStr, unit })
       }
       return parts
     }).filter(part => part.qty > 0 || part.type === 'OTHER')
@@ -277,10 +279,9 @@ function TransactionHistoryList({ transactions, setCancellingItem }: { transacti
                          }`}>
                              {qtyStr} {part.unit}
                          </span>
-                         {(part.loc || part.reason) && (
+                         {part.reason && (
                              <div className="flex flex-wrap gap-1.5 text-xs text-muted-foreground ml-2 items-center">
-                                 {part.loc && <span className="font-medium">| Location: {part.loc}</span>}
-                                 {part.reason && <span className="font-medium">| Reason: <span className="text-red-500">{part.reason}</span></span>}
+                                 <span className="font-medium">| Reason: <span className="text-red-500">{part.reason}</span></span>
                              </div>
                          )}
                      </div>
@@ -325,6 +326,7 @@ export function InventoryTable({
   sortMode = "date-desc",
   rowsPerPage: rowsPerPageProp = 10,
   searchQuery = "",
+  highlightFilter,
 }: InventoryTableProps) {
   const { toast } = useToast()
   const [cancellingItem, setCancellingItem] = useState<InventoryTransaction | null>(null)
@@ -372,7 +374,7 @@ export function InventoryTable({
           totalGoodReturn: 0,
           totalDamageReturn: 0,
           stockLeft: 0,
-          location: (txn as any).location || "",
+
           transactions: [],
           latestBadReturnDetails: null,
           dateAdded: null,
@@ -402,7 +404,7 @@ export function InventoryTable({
       const currentLatestMs = parseDateToMs(group.latestDate)
       if (txnDateMs > currentLatestMs) {
         group.latestDate = (txn as any).transaction_date
-        group.location = (txn as any).location || group.location
+
         group.productName = (txn as any).product_name || group.productName
       }
       group.batchNumber = (txn as any).batch_number || group.batchNumber
@@ -432,7 +434,7 @@ export function InventoryTable({
         group.expiryDate = (earliestIncoming as any).expiry_date || null
         group.productionDate = (earliestIncoming as any).production_date || null
         group.supplierName = (earliestIncoming as any).supplier_name || ""
-        if (!group.location) group.location = (earliestIncoming as any).location || ""
+
       }
 
       // Fallback: if no incoming source match, use the very first transaction
@@ -620,7 +622,7 @@ export function InventoryTable({
     { key: "product", label: "Product Name", align: "left" as const },
     { key: "batch", label: "Batch", align: "center" as const, width: "min-w-[80px]" },
     { key: "barcode", label: "Barcode", align: "left" as const },
-    { key: "location", label: "Location", align: "left" as const, width: "max-w-[120px]" },
+
     { key: "expiryDate", label: "Expiry Date", align: "left" as const },
     { key: "incoming", label: "Incoming", align: "right" as const, width: "min-w-[110px]" },
     { key: "outgoing", label: "Outgoing", align: "right" as const, width: "min-w-[110px]" },
@@ -672,6 +674,33 @@ export function InventoryTable({
 
                   const historyTransactions = group.transactions
                   const hasHistory = historyTransactions.length > 0
+
+                  // Check if item should be highlighted based on the filter
+                  let isHighlighted = false
+                  if (highlightFilter === "low-stock" && group.stockLeft > 0 && group.stockLeft < 10) {
+                    isHighlighted = true
+                  } else if (highlightFilter === "out-of-stock" && group.stockLeft <= 0) {
+                    isHighlighted = true
+                  } else if ((highlightFilter === "expiring" || highlightFilter === "expiring-soon") && group.expiryDate) {
+                    const todayUrl = new Date()
+                    todayUrl.setHours(0, 0, 0, 0)
+                    const expDUrl = new Date(group.expiryDate instanceof Date ? group.expiryDate : group.expiryDate?.toDate ? group.expiryDate.toDate() : new Date(group.expiryDate))
+                    if (!isNaN(expDUrl.getTime())) {
+                      const sevenDaysUrl = new Date(todayUrl)
+                      sevenDaysUrl.setDate(todayUrl.getDate() + 7)
+                      if (expDUrl <= sevenDaysUrl) {
+                        isHighlighted = true
+                      }
+                    }
+                  }
+
+                  let highlightRing = ""
+                  if (isHighlighted) {
+                    if (highlightFilter === "low-stock") highlightRing = "bg-amber-50/60 dark:bg-amber-950/20 ring-1 ring-amber-400 ring-inset border-transparent relative z-10"
+                    else if (highlightFilter === "out-of-stock") highlightRing = "bg-red-50/60 dark:bg-red-950/20 ring-1 ring-red-400 ring-inset border-transparent relative z-10"
+                    else if (highlightFilter === "expiring" || highlightFilter === "expiring-soon") highlightRing = "bg-orange-50/60 dark:bg-orange-950/20 ring-1 ring-orange-400 ring-inset border-transparent relative z-10"
+                  }
+
                   return (
                     <>{/* Fragment for summary + expanded rows */}
                       {/* ═══ SUMMARY ROW ═══ */}
@@ -688,7 +717,8 @@ export function InventoryTable({
                               ? "bg-white dark:bg-card"
                               : "bg-gray-50/40 dark:bg-muted/10",
                           "hover:bg-slate-100/70 dark:hover:bg-muted/30",
-                        ].join(" ")}
+                          highlightRing,
+                        ].filter(Boolean).join(" ")}
                         onClick={() => hasHistory && toggleExpand(group.barcode)}
                         title={hasHistory ? "Click to view transaction history" : ""}      
                       >
@@ -748,14 +778,7 @@ export function InventoryTable({
                           <div className="truncate max-w-[150px]" title={group.barcode}>{highlightMatch(group.barcode, searchQuery)}</div>
                         </td>
 
-                        {/* Location */}
-                        <td className="h-14 px-4 py-2 text-sm align-middle whitespace-nowrap">
-                          {group.location ? (
-                            <div className="truncate max-w-[120px] text-foreground" title={group.location}>{group.location}</div>
-                          ) : (
-                            <span className="text-muted-foreground">{"\u2014"}</span>
-                          )}
-                        </td>
+
 
                         {/* Expiry Date */}
                         <td className="h-14 px-4 py-2 text-sm align-middle whitespace-nowrap">
@@ -923,7 +946,7 @@ export function InventoryTable({
         )}
 
         {/* ─── MOBILE / TABLET CARD VIEW ─────────────────────────────────── */}
-        <div className="lg:hidden space-y-4">
+        <div className="lg:hidden grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
           {paginatedGroups.map((group) => {
             const isExpanded = expandedBarcodes.has(group.barcode)
             const historyTransactions = group.transactions
@@ -951,34 +974,34 @@ export function InventoryTable({
                 id={`inventory-item-mobile-${group.barcode}`}
                 ref={(el) => { if (el) itemRowRefs.current.set(group.barcode, el) }}
                 className={[
-                  "inventory-mobile-card relative rounded-2xl overflow-hidden transition-all duration-300 border",
+                  "inventory-mobile-card relative rounded-xl overflow-hidden transition-all duration-300 border",
                   isExpanded
-                    ? "border-blue-300 dark:border-blue-700 shadow-lg shadow-blue-500/10 ring-1 ring-blue-200/50 dark:ring-blue-800/30"
+                    ? "border-blue-300 dark:border-blue-700 shadow-lg shadow-blue-500/10 ring-1 ring-blue-200/50 dark:ring-blue-800/30 md:col-span-2"
                     : "border-border/60 shadow-sm hover:shadow-md hover:border-blue-200/80 dark:hover:border-blue-800/60",
                   "bg-white dark:bg-card",
                 ].join(" ")}
               >
                 {/* Accent stripe — top indicator */}
-                <div className={`h-1 w-full ${
+                <div className={`h-0.5 sm:h-1 w-full ${
                   stock <= 0 ? "bg-gradient-to-r from-red-400 via-red-500 to-red-400" :
                   stock < 10 ? "bg-gradient-to-r from-amber-400 via-amber-500 to-amber-400" :
                   "bg-gradient-to-r from-emerald-400 via-emerald-500 to-emerald-400"
                 }`} />
 
-                {/* ═══ CARD HEADER — Product Name + Barcode + Location ═══ */}
+                {/* ═══ CARD HEADER — Product Name + Barcode ═══ */}
                 <div
                   className={[
-                    "px-4 pt-4 pb-3 transition-colors",
+                    "px-3 pt-3 pb-2 transition-colors",
                     hasHistory ? "cursor-pointer active:bg-blue-50/40 dark:active:bg-blue-950/30" : "",
                   ].join(" ")}
                   onClick={() => hasHistory && toggleExpand(group.barcode)}
                 >
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start justify-between gap-2">
                     {/* Left: Info */}
                     <div className="flex-1 min-w-0">
                       {/* Product Name — Bold, top */}
-                      <div className="flex items-center gap-2">
-                        <span className="text-lg shrink-0" aria-hidden="true">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-base shrink-0" aria-hidden="true">
                           {(() => {
                             const name = (group.productName || "").toLowerCase();
                             if (name.includes("chicken")) return "🐔";
@@ -987,35 +1010,27 @@ export function InventoryTable({
                             return "📦";
                           })()}
                         </span>
-                        <h3 className="font-bold text-[15px] leading-tight text-foreground line-clamp-2">
+                        <h3 className="font-bold text-[13px] sm:text-[15px] leading-tight text-foreground line-clamp-2">
                           {highlightMatch(group.productName, searchQuery)}
                         </h3>
                       </div>
 
                       {/* Barcode — small mono text */}
-                      <p className="text-[11px] text-muted-foreground font-mono mt-1.5 ml-8 tracking-wide">
+                      <p className="text-[10px] sm:text-[11px] text-muted-foreground font-mono mt-1 ml-7 tracking-wide">
                         {highlightMatch(group.barcode, searchQuery)}
                       </p>
-
-                      {/* Location — small label with icon */}
-                      {group.location && (
-                        <div className="flex items-center gap-1 mt-1 ml-8">
-                          <span className="text-[11px]">📍</span>
-                          <span className="text-[11px] text-muted-foreground font-medium">{group.location}</span>
-                        </div>
-                      )}
                     </div>
 
                     {/* Right: Expand toggle */}
                     {hasHistory && (
-                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all duration-200 shrink-0 mt-0.5 ${
+                      <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-all duration-200 shrink-0 mt-0.5 ${
                         isExpanded
                           ? "bg-blue-500 text-white shadow-md shadow-blue-500/25"
                           : "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
                       }`}>
                         {isExpanded
-                          ? <ChevronUp className="h-4 w-4" />
-                          : <ChevronDown className="h-4 w-4" />
+                          ? <ChevronUp className="h-3.5 w-3.5" />
+                          : <ChevronDown className="h-3.5 w-3.5" />
                         }
                       </div>
                     )}
@@ -1023,40 +1038,40 @@ export function InventoryTable({
                 </div>
 
                 {/* ═══ STATS GRID — Incoming / Outgoing / Remaining ═══ */}
-                <div className="px-4 pb-3">
-                  <div className="grid grid-cols-3 gap-2">
+                <div className="px-3 pb-2.5">
+                  <div className="grid grid-cols-3 gap-1.5">
                     {/* Incoming — Green */}
-                    <div className="relative flex flex-col items-center justify-center rounded-xl border border-green-200/80 dark:border-green-800/40 bg-green-50/60 dark:bg-green-950/20 py-2.5 px-2">
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-green-600/80 dark:text-green-400/70 mb-0.5">Incoming</span>
-                      <span className="text-base font-bold text-green-700 dark:text-green-400 leading-tight">
+                    <div className="relative flex flex-col items-center justify-center rounded-lg border border-green-200/80 dark:border-green-800/40 bg-green-50/60 dark:bg-green-950/20 py-1.5 sm:py-2 px-1.5">
+                      <span className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider text-green-600/80 dark:text-green-400/70 mb-0.5">In</span>
+                      <span className="text-sm sm:text-base font-bold text-green-700 dark:text-green-400 leading-tight">
                         {group.totalIncoming > 0 ? formatNumber(group.totalIncoming) : "0"}
                       </span>
-                      <span className="text-[9px] text-green-600/60 dark:text-green-400/50 font-medium">{unitShort}</span>
+                      <span className="text-[8px] sm:text-[9px] text-green-600/60 dark:text-green-400/50 font-medium">{unitShort}</span>
                     </div>
 
                     {/* Outgoing — Red */}
-                    <div className="relative flex flex-col items-center justify-center rounded-xl border border-red-200/80 dark:border-red-800/40 bg-red-50/60 dark:bg-red-950/20 py-2.5 px-2">
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-red-600/80 dark:text-red-400/70 mb-0.5">Outgoing</span>
-                      <span className="text-base font-bold text-red-700 dark:text-red-400 leading-tight">
+                    <div className="relative flex flex-col items-center justify-center rounded-lg border border-red-200/80 dark:border-red-800/40 bg-red-50/60 dark:bg-red-950/20 py-1.5 sm:py-2 px-1.5">
+                      <span className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider text-red-600/80 dark:text-red-400/70 mb-0.5">Out</span>
+                      <span className="text-sm sm:text-base font-bold text-red-700 dark:text-red-400 leading-tight">
                         {group.totalOutgoing > 0 ? formatNumber(group.totalOutgoing) : "0"}
                       </span>
-                      <span className="text-[9px] text-red-600/60 dark:text-red-400/50 font-medium">{unitShort}</span>
+                      <span className="text-[8px] sm:text-[9px] text-red-600/60 dark:text-red-400/50 font-medium">{unitShort}</span>
                     </div>
 
                     {/* Remaining — Dynamic badge */}
-                    <div className={`relative flex flex-col items-center justify-center rounded-xl border py-2.5 px-2 ${stockBgClass}`}>
-                      <span className={`text-[10px] font-semibold uppercase tracking-wider mb-0.5 ${
+                    <div className={`relative flex flex-col items-center justify-center rounded-lg border py-1.5 sm:py-2 px-1.5 ${stockBgClass}`}>
+                      <span className={`text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider mb-0.5 ${
                         stock <= 0 ? "text-red-600/80 dark:text-red-400/70" :
                         stock < 10 ? "text-amber-600/80 dark:text-amber-400/70" :
                         "text-green-600/80 dark:text-green-400/70"
-                      }`}>Remaining</span>
-                      <div className="flex items-center gap-1">
+                      }`}>Left</span>
+                      <div className="flex items-center gap-0.5">
                         <span className={`w-1.5 h-1.5 rounded-full ${stockDotClass} shrink-0`} />
-                        <span className={`text-base font-bold leading-tight ${stockColorClass}`}>
+                        <span className={`text-sm sm:text-base font-bold leading-tight ${stockColorClass}`}>
                           {formatNumber(stock)}
                         </span>
                       </div>
-                      <span className={`text-[9px] font-medium ${
+                      <span className={`text-[8px] sm:text-[9px] font-medium ${
                         stock <= 0 ? "text-red-600/60 dark:text-red-400/50" :
                         stock < 10 ? "text-amber-600/60 dark:text-amber-400/50" :
                         "text-green-600/60 dark:text-green-400/50"
@@ -1065,23 +1080,23 @@ export function InventoryTable({
                   </div>
 
                   {/* ═══ ADDITIONAL DETAILS — Weight + Expiry ═══ */}
-                  <div className="grid grid-cols-2 gap-2 mt-2">
-                    <div className="flex items-center gap-2 rounded-lg bg-slate-50/80 dark:bg-slate-800/30 border border-slate-200/60 dark:border-slate-700/40 px-3 py-2">
-                      <Package className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                  <div className="grid grid-cols-2 gap-1.5 mt-1.5">
+                    <div className="flex items-center gap-1.5 rounded-lg bg-slate-50/80 dark:bg-slate-800/30 border border-slate-200/60 dark:border-slate-700/40 px-2 py-1.5">
+                      <Package className="h-3 w-3 text-slate-400 shrink-0" />
                       <div className="min-w-0">
-                        <span className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold block leading-none mb-0.5">Weight</span>
-                        <span className="text-xs font-semibold text-foreground/80">
+                        <span className="text-[8px] sm:text-[9px] uppercase tracking-wider text-muted-foreground font-semibold block leading-none mb-0.5">Weight</span>
+                        <span className="text-[11px] sm:text-xs font-semibold text-foreground/80">
                           {group.avgWeight > 0 ? `${formatWeight(group.avgWeight)} kg` : "\u2014"}
                         </span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 rounded-lg bg-slate-50/80 dark:bg-slate-800/30 border border-slate-200/60 dark:border-slate-700/40 px-3 py-2">
-                      <svg className="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div className="flex items-center gap-1.5 rounded-lg bg-slate-50/80 dark:bg-slate-800/30 border border-slate-200/60 dark:border-slate-700/40 px-2 py-1.5">
+                      <svg className="h-3 w-3 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                       </svg>
                       <div className="min-w-0">
-                        <span className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold block leading-none mb-0.5">Expiry</span>
-                        <span className="text-xs font-semibold text-foreground/80">
+                        <span className="text-[8px] sm:text-[9px] uppercase tracking-wider text-muted-foreground font-semibold block leading-none mb-0.5">Expiry</span>
+                        <span className="text-[11px] sm:text-xs font-semibold text-foreground/80">
                           {formatTxnDate(group.expiryDate) !== "\u2014" ? formatTxnDate(group.expiryDate) : "\u2014"}
                         </span>
                       </div>
@@ -1091,22 +1106,22 @@ export function InventoryTable({
 
                 {/* ═══ ACTIONS — Show Barcode + Print (touch-friendly) ═══ */}
                 {group.barcode && (
-                  <div className="px-4 pb-4 pt-1">
-                    <div className="flex items-center gap-2">
+                  <div className="px-3 pb-3 pt-0.5">
+                    <div className="flex items-center gap-1.5">
                       <Button
                         size="sm"
                         variant="outline"
-                        className="flex-1 h-11 rounded-xl gap-2 text-sm font-semibold text-emerald-700 border-emerald-200/80 bg-emerald-50/40 hover:bg-emerald-100/60 hover:text-emerald-800 hover:border-emerald-300 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40 transition-all active:scale-[0.98]"
+                        className="flex-1 h-9 sm:h-10 rounded-lg gap-1.5 text-[11px] sm:text-sm font-semibold text-emerald-700 border-emerald-200/80 bg-emerald-50/40 hover:bg-emerald-100/60 hover:text-emerald-800 hover:border-emerald-300 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40 transition-all active:scale-[0.98]"
                         onClick={(e) => { e.stopPropagation(); setBarcodeViewItem({ barcode: group.barcode, productName: group.productName }) }}
                         title="Show Barcode"
                       >
-                        <Barcode className="h-4 w-4" />
-                        Show Barcode
+                        <Barcode className="h-3.5 w-3.5" />
+                        Barcode
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
-                        className="flex-1 h-11 rounded-xl gap-2 text-sm font-semibold text-blue-700 border-blue-200/80 bg-blue-50/40 hover:bg-blue-100/60 hover:text-blue-800 hover:border-blue-300 dark:text-blue-400 dark:border-blue-800 dark:bg-blue-950/20 dark:hover:bg-blue-950/40 transition-all active:scale-[0.98]"
+                        className="flex-1 h-9 sm:h-10 rounded-lg gap-1.5 text-[11px] sm:text-sm font-semibold text-blue-700 border-blue-200/80 bg-blue-50/40 hover:bg-blue-100/60 hover:text-blue-800 hover:border-blue-300 dark:text-blue-400 dark:border-blue-800 dark:bg-blue-950/20 dark:hover:bg-blue-950/40 transition-all active:scale-[0.98]"
                         onClick={(e) => {
                           e.stopPropagation()
                           setBarcodeViewItem({ barcode: group.barcode, productName: group.productName })
@@ -1117,7 +1132,7 @@ export function InventoryTable({
                         }}
                         title="Print Barcode"
                       >
-                        <Printer className="h-4 w-4" />
+                        <Printer className="h-3.5 w-3.5" />
                         Print
                       </Button>
                     </div>
@@ -1127,12 +1142,12 @@ export function InventoryTable({
                 {/* ═══ EXPANDED: Transaction History ═══ */}
                 {isExpanded && hasHistory && (
                   <div className="border-t border-blue-200/60 dark:border-blue-800/40 bg-slate-50/60 dark:bg-slate-900/20">
-                    <div className="flex items-center gap-2 px-4 py-2.5 bg-blue-50/70 dark:bg-blue-950/20 border-b border-blue-100/60 dark:border-blue-900/40">
-                      <History className="h-3.5 w-3.5 text-blue-500" />
-                      <span className="text-[11px] font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wider">
+                    <div className="flex items-center gap-2 px-3 py-2 bg-blue-50/70 dark:bg-blue-950/20 border-b border-blue-100/60 dark:border-blue-900/40">
+                      <History className="h-3 w-3 text-blue-500" />
+                      <span className="text-[10px] sm:text-[11px] font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wider">
                         Transaction History
                       </span>
-                      <span className="text-[10px] text-blue-500/60 dark:text-blue-400/40 ml-0.5">
+                      <span className="text-[9px] sm:text-[10px] text-blue-500/60 dark:text-blue-400/40 ml-0.5">
                         ({historyTransactions.length} {historyTransactions.length === 1 ? "record" : "records"})
                       </span>
                     </div>

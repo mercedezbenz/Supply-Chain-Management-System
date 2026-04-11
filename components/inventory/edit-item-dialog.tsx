@@ -26,21 +26,6 @@ import type { InventoryTransaction } from "@/lib/types"
 import { useToast } from "@/hooks/use-toast"
 import { getRegions, getProvinces, getCities, getBarangays, getZipCode } from "@/lib/ph-address-data"
 
-/* ───────────────────── Storage locations (match add-item-dialog) ────────── */
-const storageLocations: Record<string, string[]> = {
-  "Left Storage": [
-    "1LG1","1LG2","1LG3","1LG4","1LG5","1LG6","1LG7","1LG8","1LG9",
-    "1L21","1L22","1L23","1L24","1L25","1L26","1L27","1L28","1L29",
-    "1L30","1L31","1L32","1L33","1L34","1L35","1L36","1L37","1L38",
-    "1L39","1L40","1L41","1L42","1L43","1L44","1L45","1L46","1L47","1L48","1L49",
-  ],
-  "Right Storage": [
-    "1RG1","1RG2","1RG3","1RG4","1RG5","1RG6","1RG7","1RG8","1RG9",
-    "1R21","1R22","1R23","1R24","1R25","1R26","1R27","1R28","1R29",
-    "1R30","1R31","1R32","1R33","1R34","1R35","1R36","1R37","1R38",
-    "1R39","1R40","1R41","1R42","1R43","1R44","1R45","1R46","1R47","1R48","1R49",
-  ],
-}
 
 /* ───────────────────── Helper: parse date safely ───────────────────────── */
 function toInputDate(val: any): string {
@@ -83,7 +68,6 @@ export function EditItemDialog({ transaction, open, onOpenChange }: EditItemDial
     productionDate: "",
     processDate: "",
     expiryDate: "",
-    location: "",
     referenceNo: "",
   })
 
@@ -133,7 +117,6 @@ export function EditItemDialog({ transaction, open, onOpenChange }: EditItemDial
       productionDate: toInputDate(txn.production_date),
       processDate: toInputDate(txn.process_date),
       expiryDate: toInputDate(txn.expiry_date),
-      location: txn.location || "",
       referenceNo: txn.reference_no || "",
     })
 
@@ -362,7 +345,6 @@ export function EditItemDialog({ transaction, open, onOpenChange }: EditItemDial
           good_return: goodReturn,
           damage_return: damageReturn,
           avg_weight: avgWeight,
-          location: formData.location,
           reference_no: formData.referenceNo,
           production_date: formData.productionDate ? new Date(formData.productionDate + "T00:00:00") : null,
           process_date: formData.processDate ? new Date(formData.processDate + "T00:00:00") : null,
@@ -382,7 +364,6 @@ export function EditItemDialog({ transaction, open, onOpenChange }: EditItemDial
               good_return: goodReturn,
               damage_return: damageReturn,
               avg_weight: avgWeight,
-              location: formData.location,
               reference_no: formData.referenceNo,
             },
             editedAt: new Date(),
@@ -754,28 +735,6 @@ export function EditItemDialog({ transaction, open, onOpenChange }: EditItemDial
                     </div>
                   </div>
 
-                  {/* Location Section */}
-                  <div className="rounded-xl border border-violet-100 bg-violet-50/40 dark:bg-violet-950/20 dark:border-violet-900 p-4 grid gap-3">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-violet-600 dark:text-violet-400">Location</p>
-                    <div className="grid gap-1.5">
-                      <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">Storage Location</Label>
-                      <Select value={formData.location} onValueChange={(v) => updateField("location", v)}>
-                        <SelectTrigger className="h-10">
-                          <SelectValue placeholder="Select storage location" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {Object.entries(storageLocations).map(([group, locs]) => (
-                            <div key={group}>
-                              <p className="text-[10px] font-semibold uppercase text-muted-foreground px-2 pt-2 pb-1">{group}</p>
-                              {locs.map((loc) => (
-                                <SelectItem key={loc} value={loc}>{loc}</SelectItem>
-                              ))}
-                            </div>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
 
                   {/* Reference Section */}
                   <div className="rounded-xl border border-gray-200 bg-gray-50/40 dark:bg-gray-950/20 dark:border-gray-800 p-4 grid gap-3">

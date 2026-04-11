@@ -446,9 +446,7 @@ export function ExpiryNotifications() {
                             <Badge variant="destructive" className="text-xs">
                               {notification.stockLevel} units left
                             </Badge>
-                            {notification.item.location && (
-                              <span className="text-xs text-muted-foreground">📍 {notification.item.location}</span>
-                            )}
+
                           </div>
                         </div>
                       </DropdownMenuItem>
@@ -481,9 +479,7 @@ export function ExpiryNotifications() {
                             <Badge variant={getStatusVariant(notification.status)} className="text-xs">
                               {getStatusText(notification)}
                             </Badge>
-                            {notification.item.location && (
-                              <span className="text-xs text-muted-foreground">📍 {notification.item.location}</span>
-                            )}
+
                           </div>
                         </div>
                       </DropdownMenuItem>
@@ -516,9 +512,7 @@ export function ExpiryNotifications() {
                             <Badge variant={getStatusVariant(notification.status)} className="text-xs">
                               {getStatusText(notification)}
                             </Badge>
-                            {notification.item.location && (
-                              <span className="text-xs text-muted-foreground">📍 {notification.item.location}</span>
-                            )}
+
                           </div>
                         </div>
                       </DropdownMenuItem>

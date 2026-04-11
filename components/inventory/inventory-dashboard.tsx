@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
@@ -139,10 +139,30 @@ export function InventoryDashboard() {
   // Track newly added item IDs for animation & auto-scroll
   const [newItemIds, setNewItemIds] = useState<Set<string>>(new Set())
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { toast } = useToast()
   const previousItemsRef = useRef<Set<string>>(new Set())
   const scrollToItemIdRef = useRef<string | null>(null)
   const animationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Initialize filters from query param
+  useEffect(() => {
+    const initialFilter = searchParams.get("filter")
+    if (initialFilter) {
+      if (initialFilter === "low-stock" || initialFilter === "out-of-stock") {
+        setStockStatusFilter(initialFilter)
+      } else if (initialFilter === "expiring" || initialFilter === "expiring-soon") {
+        setExpirationFilter("expiring-soon")
+      }
+    }
+  }, [searchParams])
+
+  // Clear query param whenever a filter is removed manually
+  const clearQueryParam = useCallback(() => {
+    if (searchParams.toString()) {
+      router.replace(window.location.pathname, { scroll: false })
+    }
+  }, [router, searchParams])
 
   // ── Global USB barcode scanner listener ────────────────────────────────
   // Disabled when any dialog is already open so it doesn't interfere with
@@ -193,7 +213,8 @@ export function InventoryDashboard() {
     setSearchQuery("")
     setDebouncedSearch("")
     setSortMode("date-desc")
-  }, [])
+    clearQueryParam()
+  }, [clearQueryParam])
 
   // Check if any filter is active
   const hasActiveFilters = selectedCategory !== "all" || selectedType !== "all" || recentlyAddedFilter !== "all" || stockStatusFilter !== "all" || expirationFilter !== "all" || debouncedSearch !== ""
@@ -623,11 +644,11 @@ export function InventoryDashboard() {
     }
     if (stockStatusFilter !== "all") {
       const label = STOCK_STATUS_OPTIONS.find(o => o.value === stockStatusFilter)?.label || stockStatusFilter
-      tags.push({ key: "stock", label, onRemove: () => setStockStatusFilter("all") })
+      tags.push({ key: "stock", label, onRemove: () => { setStockStatusFilter("all"); clearQueryParam(); } })
     }
     if (expirationFilter !== "all") {
       const label = EXPIRATION_OPTIONS.find(o => o.value === expirationFilter)?.label || expirationFilter
-      tags.push({ key: "expiry", label, onRemove: () => setExpirationFilter("all") })
+      tags.push({ key: "expiry", label, onRemove: () => { setExpirationFilter("all"); clearQueryParam(); } })
     }
     if (recentlyAddedFilter !== "all") {
       const label = RECENTLY_ADDED_OPTIONS.find(o => o.value === recentlyAddedFilter)?.label || recentlyAddedFilter
@@ -637,7 +658,7 @@ export function InventoryDashboard() {
       tags.push({ key: "search", label: `"${debouncedSearch}"`, onRemove: () => { setSearchQuery(""); setDebouncedSearch("") } })
     }
     return tags
-  }, [selectedCategory, selectedType, stockStatusFilter, expirationFilter, recentlyAddedFilter, debouncedSearch])
+  }, [selectedCategory, selectedType, stockStatusFilter, expirationFilter, recentlyAddedFilter, debouncedSearch, clearQueryParam])
 
   if (loading) {
     return <InventoryDashboardSkeleton />
@@ -652,37 +673,37 @@ export function InventoryDashboard() {
             <p className="text-xs sm:text-sm text-muted-foreground">Monitor stock movement, expiration, and barcode management</p>
           </div>
           {!isGuest && (
-            <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:gap-2 shrink-0">
-              <Button onClick={() => setAddItemDialogOpen(true)} className="gap-1.5 sm:gap-2 h-9 sm:h-10 text-xs sm:text-sm px-3 sm:px-4">
-                <Plus className="h-4 w-4 shrink-0" />
-                <span>Add Item</span>
+            <div className="grid grid-cols-4 sm:flex sm:items-center gap-1.5 sm:gap-2 shrink-0">
+              <Button onClick={() => setAddItemDialogOpen(true)} className="gap-1 sm:gap-2 h-9 sm:h-10 text-[11px] sm:text-sm px-2 sm:px-4 rounded-lg">
+                <Plus className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+                <span className="truncate">Add Item</span>
               </Button>
               <Button
                 onClick={() => setScanDialogOpen(true)}
-                className="gap-1.5 sm:gap-2 h-9 sm:h-10 text-xs sm:text-sm px-3 sm:px-4 bg-violet-600 hover:bg-violet-700 text-white"
+                className="gap-1 sm:gap-2 h-9 sm:h-10 text-[11px] sm:text-sm px-2 sm:px-4 bg-violet-600 hover:bg-violet-700 text-white rounded-lg"
               >
-                <ScanLine className="h-4 w-4 shrink-0" />
-                <span>Scan Item</span>
+                <ScanLine className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+                <span className="truncate">Scan</span>
               </Button>
               <Button
                 onClick={() => setOutgoingDialogOpen(true)}
-                className="gap-1.5 sm:gap-2 h-9 sm:h-10 text-xs sm:text-sm px-3 sm:px-4 bg-orange-500 hover:bg-orange-600 text-white"
+                className="gap-1 sm:gap-2 h-9 sm:h-10 text-[11px] sm:text-sm px-2 sm:px-4 bg-orange-500 hover:bg-orange-600 text-white rounded-lg"
               >
-                <PackageMinus className="h-4 w-4 shrink-0" />
-                <span>Product Out</span>
+                <PackageMinus className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+                <span className="truncate">Out</span>
               </Button>
               <Button
                 onClick={() => setReturnDialogOpen(true)}
-                className="gap-1.5 sm:gap-2 h-9 sm:h-10 text-xs sm:text-sm px-3 sm:px-4 bg-teal-600 hover:bg-teal-700 text-white"
+                className="gap-1 sm:gap-2 h-9 sm:h-10 text-[11px] sm:text-sm px-2 sm:px-4 bg-teal-600 hover:bg-teal-700 text-white rounded-lg"
               >
-                <RotateCcw className="h-4 w-4 shrink-0" />
-                <span>Return Item</span>
+                <RotateCcw className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+                <span className="truncate">Return</span>
               </Button>
             </div>
           )}
         </div>
 
-        <div className="grid gap-3 sm:gap-4 md:gap-5 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-2.5 sm:gap-4 md:gap-5 grid-cols-2 lg:grid-cols-4">
           {/* 1. Today's Transactions */}
           <Card
             className="shadow-sm hover:shadow-md transition-shadow duration-200 cursor-pointer rounded-xl bg-white dark:bg-card"
@@ -694,23 +715,23 @@ export function InventoryDashboard() {
               setSelectedType("all")
             }}
           >
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Today&apos;s Transactions</CardTitle>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 sm:pb-2 px-3 sm:px-6 pt-3 sm:pt-6">
+              <CardTitle className="text-[11px] sm:text-sm font-medium text-muted-foreground">Today&apos;s Transactions</CardTitle>
               <TodaysMovementIcon />
             </CardHeader>
-            <CardContent>
+            <CardContent className="px-3 sm:px-6 pb-3 sm:pb-6">
               {todayTransactions.total === 0 ? (
                 <>
-                  <div className="text-3xl font-bold text-muted-foreground/40">0</div>
-                  <p className="text-xs text-muted-foreground mt-1">No transactions today</p>
+                  <div className="text-2xl sm:text-3xl font-bold text-muted-foreground/40">0</div>
+                  <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">No transactions today</p>
                 </>
               ) : (
                 <>
-                  <div className="text-3xl font-bold tracking-tight">{todayTransactions.total}</div>
-                  <div className="flex items-center gap-2 mt-2">
-                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/30 px-1.5 py-0.5 rounded-md">↑ {todayTransactions.incoming} In</span>
-                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 px-1.5 py-0.5 rounded-md">↓ {todayTransactions.outgoing} Out</span>
-                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 px-1.5 py-0.5 rounded-md">↺ {todayTransactions.returns} Rtn</span>
+                  <div className="text-2xl sm:text-3xl font-bold tracking-tight">{todayTransactions.total}</div>
+                  <div className="flex flex-wrap items-center gap-1 sm:gap-2 mt-1.5 sm:mt-2">
+                    <span className="inline-flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs font-semibold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/30 px-1 sm:px-1.5 py-0.5 rounded-md">↑ {todayTransactions.incoming} In</span>
+                    <span className="inline-flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 px-1 sm:px-1.5 py-0.5 rounded-md">↓ {todayTransactions.outgoing} Out</span>
+                    <span className="inline-flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 px-1 sm:px-1.5 py-0.5 rounded-md">↺ {todayTransactions.returns} Rtn</span>
                   </div>
                 </>
               )}
@@ -719,18 +740,18 @@ export function InventoryDashboard() {
 
           {/* 2. Stock Overview */}
           <Card className="shadow-sm hover:shadow-md transition-shadow duration-200 rounded-xl bg-white dark:bg-card">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Stock Overview</CardTitle>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 sm:pb-2 px-3 sm:px-6 pt-3 sm:pt-6">
+              <CardTitle className="text-[11px] sm:text-sm font-medium text-muted-foreground">Stock Overview</CardTitle>
               <StockOverviewIcon />
             </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold tracking-tight">{totalStock.toLocaleString()}</div>
-              <div className="flex items-center gap-2 mt-2">
-                <span className="inline-flex items-center text-xs text-muted-foreground bg-slate-50 dark:bg-slate-900/40 px-1.5 py-0.5 rounded-md">{totalItems} items</span>
+            <CardContent className="px-3 sm:px-6 pb-3 sm:pb-6">
+              <div className="text-2xl sm:text-3xl font-bold tracking-tight">{totalStock.toLocaleString()}</div>
+              <div className="flex flex-wrap items-center gap-1 sm:gap-2 mt-1.5 sm:mt-2">
+                <span className="inline-flex items-center text-[10px] sm:text-xs text-muted-foreground bg-slate-50 dark:bg-slate-900/40 px-1 sm:px-1.5 py-0.5 rounded-md">{totalItems} items</span>
                 {lowStockItems > 0 ? (
-                  <span className="inline-flex items-center text-xs font-semibold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-1.5 py-0.5 rounded-md">⚠ {lowStockItems} low</span>
+                  <span className="inline-flex items-center text-[10px] sm:text-xs font-semibold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-1 sm:px-1.5 py-0.5 rounded-md">⚠ {lowStockItems} low</span>
                 ) : (
-                  <span className="inline-flex items-center text-xs font-semibold text-green-600 bg-green-50 dark:bg-green-950/30 px-1.5 py-0.5 rounded-md">✓ All stocked</span>
+                  <span className="inline-flex items-center text-[10px] sm:text-xs font-semibold text-green-600 bg-green-50 dark:bg-green-950/30 px-1 sm:px-1.5 py-0.5 rounded-md">✓ All stocked</span>
                 )}
               </div>
             </CardContent>
@@ -747,24 +768,24 @@ export function InventoryDashboard() {
               setRecentlyAddedFilter("today")
             }}
           >
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Returns Summary</CardTitle>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 sm:pb-2 px-3 sm:px-6 pt-3 sm:pt-6">
+              <CardTitle className="text-[11px] sm:text-sm font-medium text-muted-foreground">Returns Summary</CardTitle>
               <ReturnsSummaryIcon />
             </CardHeader>
-            <CardContent>
+            <CardContent className="px-3 sm:px-6 pb-3 sm:pb-6">
               {todayReturns.total === 0 ? (
                 <>
-                  <div className="text-3xl font-bold text-muted-foreground/40">0</div>
-                  <p className="text-xs text-muted-foreground mt-1">No returns today</p>
+                  <div className="text-2xl sm:text-3xl font-bold text-muted-foreground/40">0</div>
+                  <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">No returns today</p>
                 </>
               ) : (
                 <>
-                  <div className="text-3xl font-bold tracking-tight">{todayReturns.total}</div>
-                  <div className="flex items-center gap-2 mt-2">
-                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/30 px-1.5 py-0.5 rounded-md">
+                  <div className="text-2xl sm:text-3xl font-bold tracking-tight">{todayReturns.total}</div>
+                  <div className="flex flex-wrap items-center gap-1 sm:gap-2 mt-1.5 sm:mt-2">
+                    <span className="inline-flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs font-semibold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/30 px-1 sm:px-1.5 py-0.5 rounded-md">
                       +{todayReturns.good} Good
                     </span>
-                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 px-1.5 py-0.5 rounded-md">
+                    <span className="inline-flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 px-1 sm:px-1.5 py-0.5 rounded-md">
                       +{todayReturns.damaged} Bad
                     </span>
                   </div>
@@ -775,27 +796,27 @@ export function InventoryDashboard() {
 
           {/* 4. Low Stock Alert */}
           <Card className="shadow-sm hover:shadow-md transition-shadow duration-200 rounded-xl bg-white dark:bg-card">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-orange-600 dark:text-orange-400">Low Stock Alert</CardTitle>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 sm:pb-2 px-3 sm:px-6 pt-3 sm:pt-6">
+              <CardTitle className="text-[11px] sm:text-sm font-medium text-orange-600 dark:text-orange-400">Low Stock Alert</CardTitle>
               <FastMovingIcon />
             </CardHeader>
-            <CardContent>
+            <CardContent className="px-3 sm:px-6 pb-3 sm:pb-6">
               {lowStockAlertList.length === 0 ? (
                 <>
-                  <div className="text-3xl font-bold text-muted-foreground/40">✔</div>
-                  <p className="text-xs text-green-600 mt-1">All items have sufficient stock</p>
+                  <div className="text-2xl sm:text-3xl font-bold text-muted-foreground/40">✔</div>
+                  <p className="text-[10px] sm:text-xs text-green-600 mt-1">All items have sufficient stock</p>
                 </>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-1.5 sm:space-y-2">
                   {lowStockAlertList.map((p, i) => (
-                    <div key={p.name + i} className="flex items-center justify-between gap-2 p-1.5 rounded-lg bg-orange-50/60 dark:bg-orange-950/20">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center shrink-0 bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400">
+                    <div key={p.name + i} className="flex items-center justify-between gap-1.5 sm:gap-2 p-1 sm:p-1.5 rounded-lg bg-orange-50/60 dark:bg-orange-950/20">
+                      <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
+                        <span className="text-[9px] sm:text-[10px] font-bold rounded-full w-4 h-4 sm:w-5 sm:h-5 flex items-center justify-center shrink-0 bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400">
                           !
                         </span>
-                        <span className="text-xs font-medium truncate" title={p.name}>{p.name}</span>
+                        <span className="text-[10px] sm:text-xs font-medium truncate" title={p.name}>{p.name}</span>
                       </div>
-                      <span className={`text-xs font-bold shrink-0 px-1.5 py-0.5 rounded ${p.stock <= 0 ? 'text-red-700 bg-red-100 dark:text-red-400 dark:bg-red-950/40' : 'text-orange-700 bg-orange-100 dark:text-orange-400 dark:bg-orange-950/40'}`}>{p.stock} {p.type}</span>
+                      <span className={`text-[10px] sm:text-xs font-bold shrink-0 px-1 sm:px-1.5 py-0.5 rounded ${p.stock <= 0 ? 'text-red-700 bg-red-100 dark:text-red-400 dark:bg-red-950/40' : 'text-orange-700 bg-orange-100 dark:text-orange-400 dark:bg-orange-950/40'}`}>{p.stock} {p.type}</span>
                     </div>
                   ))}
                 </div>
@@ -808,43 +829,43 @@ export function InventoryDashboard() {
         <Card className="shadow-sm rounded-xl bg-white dark:bg-card overflow-hidden">
           <CardHeader className="pb-0 px-0 pt-0">
             {/* ═══ TOP HEADER ROW — Title + Search inline ═══ */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 px-3 sm:px-4 md:px-6 pt-4 sm:pt-5 pb-3 sm:pb-4">
-              <div className="min-w-0">
-                <CardTitle className="text-base sm:text-lg font-semibold tracking-tight">Inventory Items</CardTitle>
-                <CardDescription className="mt-0.5 text-xs">
+            <div className="flex flex-row items-center justify-between gap-3 px-3 sm:px-4 md:px-6 pt-4 sm:pt-5 pb-3 sm:pb-4">
+              <div className="min-w-0 shrink-0">
+                <CardTitle className="text-sm sm:text-base md:text-lg font-semibold tracking-tight">Inventory Items</CardTitle>
+                <CardDescription className="mt-0.5 text-[10px] sm:text-xs">
                   <span className="font-medium text-foreground">{filteredItems.length}</span> of {totalItems} items
                   {hasActiveFilters && <span className="text-blue-600 dark:text-blue-400 ml-1">• Filtered</span>}
                 </CardDescription>
               </div>
               {/* ── Compact search bar — right-aligned, constrained width ── */}
-              <div className="relative w-full sm:w-[320px] shrink-0">
+              <div className="relative flex-1 max-w-[320px]">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60" />
                 <Input
                   type="text"
                   placeholder="Search products or barcodes…"
                   value={searchQuery}
                   onChange={(e) => handleSearchChange(e.target.value)}
-                  className="pl-9 pr-9 h-10 sm:h-9 rounded-lg border-gray-200/80 dark:border-border bg-gray-50/60 dark:bg-muted/30 hover:bg-white dark:hover:bg-muted/50 focus:bg-white focus:border-blue-300 focus:shadow-[0_0_0_3px_rgba(59,130,246,0.08)] dark:focus:bg-card transition-all duration-200 text-sm sm:text-[13px] placeholder:text-muted-foreground/50"
+                  className="pl-9 pr-9 h-9 rounded-lg border-gray-200/80 dark:border-border bg-gray-50/60 dark:bg-muted/30 hover:bg-white dark:hover:bg-muted/50 focus:bg-white focus:border-blue-300 focus:shadow-[0_0_0_3px_rgba(59,130,246,0.08)] dark:focus:bg-card transition-all duration-200 text-xs sm:text-[13px] placeholder:text-muted-foreground/50"
                 />
                 {searchQuery && (
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 sm:h-6 sm:w-6 p-0 rounded-md hover:bg-destructive/10 hover:text-destructive transition-colors"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6 p-0 rounded-md hover:bg-destructive/10 hover:text-destructive transition-colors"
                     onClick={() => { setSearchQuery(""); setDebouncedSearch("") }}
                   >
-                    <X className="h-3.5 w-3.5" />
+                    <X className="h-3 w-3" />
                   </Button>
                 )}
               </div>
             </div>
 
             {/* ═══ UNIFIED FILTER TOOLBAR ═══ */}
-            <div className="bg-gray-50/70 dark:bg-muted/20 border-y border-border/40 px-3 sm:px-4 md:px-5 py-2.5 sm:py-3">
-              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+            <div className="bg-gray-50/70 dark:bg-muted/20 border-y border-border/40 px-2.5 sm:px-4 md:px-5 py-2 sm:py-3">
+              <div className="flex flex-wrap items-center gap-1 sm:gap-2">
                 {/* ── Filter icon label ── */}
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider mr-1 select-none">
-                  <Filter className="h-3.5 w-3.5" />
+                <div className="flex items-center gap-1 text-[10px] sm:text-xs font-semibold text-muted-foreground uppercase tracking-wider mr-0.5 sm:mr-1 select-none">
+                  <Filter className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                   <span className="hidden sm:inline">Filters</span>
                 </div>
 
@@ -853,11 +874,11 @@ export function InventoryDashboard() {
 
                 {/* Category */}
                 <Select value={selectedCategory} onValueChange={handleCategoryChange}>
-                  <SelectTrigger className={`h-9 sm:h-[34px] w-auto min-w-0 sm:min-w-[130px] rounded-lg border text-[12px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2 sm:px-2.5 ${selectedCategory !== "all"
+                  <SelectTrigger className={`h-8 sm:h-[34px] w-auto min-w-0 sm:min-w-[130px] rounded-lg border text-[11px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-0.5 sm:gap-1 px-1.5 sm:px-2.5 ${selectedCategory !== "all"
                     ? "bg-blue-50 border-blue-200 text-blue-700 shadow-[inset_0_1px_0_rgba(59,130,246,0.08)] dark:bg-blue-950/40 dark:border-blue-700 dark:text-blue-300"
                     : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
                     }`}>
-                    <Package className={`h-3 w-3 shrink-0 ${selectedCategory !== "all" ? "text-blue-500" : "text-gray-400"}`} />
+                    <Package className={`h-3 w-3 shrink-0 hidden sm:block ${selectedCategory !== "all" ? "text-blue-500" : "text-gray-400"}`} />
                     <SelectValue placeholder="Category" />
                   </SelectTrigger>
                   <SelectContent>
@@ -878,11 +899,11 @@ export function InventoryDashboard() {
 
                 {/* Type */}
                 <Select value={selectedType} onValueChange={setSelectedType}>
-                  <SelectTrigger className={`h-9 sm:h-[34px] w-auto min-w-0 sm:min-w-[110px] rounded-lg border text-[12px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2 sm:px-2.5 ${selectedType !== "all"
+                  <SelectTrigger className={`h-8 sm:h-[34px] w-auto min-w-0 sm:min-w-[110px] rounded-lg border text-[11px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-0.5 sm:gap-1 px-1.5 sm:px-2.5 ${selectedType !== "all"
                     ? "bg-amber-50 border-amber-200 text-amber-700 shadow-[inset_0_1px_0_rgba(245,158,11,0.08)] dark:bg-amber-950/40 dark:border-amber-700 dark:text-amber-300"
                     : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
                     }`}>
-                    <Tag className={`h-3 w-3 shrink-0 ${selectedType !== "all" ? "text-amber-500" : "text-gray-400"}`} />
+                    <Tag className={`h-3 w-3 shrink-0 hidden sm:block ${selectedType !== "all" ? "text-amber-500" : "text-gray-400"}`} />
                     <SelectValue placeholder="Type" />
                   </SelectTrigger>
                   <SelectContent>
@@ -895,11 +916,11 @@ export function InventoryDashboard() {
 
                 {/* Stock Status */}
                 <Select value={stockStatusFilter} onValueChange={setStockStatusFilter}>
-                  <SelectTrigger className={`h-9 sm:h-[34px] w-auto min-w-0 sm:min-w-[120px] rounded-lg border text-[12px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2 sm:px-2.5 ${stockStatusFilter !== "all"
+                  <SelectTrigger className={`h-8 sm:h-[34px] w-auto min-w-0 sm:min-w-[120px] rounded-lg border text-[11px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-0.5 sm:gap-1 px-1.5 sm:px-2.5 ${stockStatusFilter !== "all"
                     ? "bg-sky-50 border-sky-200 text-sky-700 shadow-[inset_0_1px_0_rgba(14,165,233,0.08)] dark:bg-sky-950/40 dark:border-sky-700 dark:text-sky-300"
                     : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
                     }`}>
-                    <Layers className={`h-3 w-3 shrink-0 ${stockStatusFilter !== "all" ? "text-sky-500" : "text-gray-400"}`} />
+                    <Layers className={`h-3 w-3 shrink-0 hidden sm:block ${stockStatusFilter !== "all" ? "text-sky-500" : "text-gray-400"}`} />
                     <SelectValue placeholder="Status" />
                   </SelectTrigger>
                   <SelectContent>
@@ -911,11 +932,11 @@ export function InventoryDashboard() {
 
                 {/* Expiration */}
                 <Select value={expirationFilter} onValueChange={setExpirationFilter}>
-                  <SelectTrigger className={`h-9 sm:h-[34px] w-auto min-w-0 sm:min-w-[110px] rounded-lg border text-[12px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2 sm:px-2.5 ${expirationFilter !== "all"
+                  <SelectTrigger className={`h-8 sm:h-[34px] w-auto min-w-0 sm:min-w-[110px] rounded-lg border text-[11px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-0.5 sm:gap-1 px-1.5 sm:px-2.5 ${expirationFilter !== "all"
                     ? "bg-rose-50 border-rose-200 text-rose-700 shadow-[inset_0_1px_0_rgba(244,63,94,0.08)] dark:bg-rose-950/40 dark:border-rose-700 dark:text-rose-300"
                     : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
                     }`}>
-                    <CalendarClock className={`h-3 w-3 shrink-0 ${expirationFilter !== "all" ? "text-rose-500" : "text-gray-400"}`} />
+                    <CalendarClock className={`h-3 w-3 shrink-0 hidden sm:block ${expirationFilter !== "all" ? "text-rose-500" : "text-gray-400"}`} />
                     <SelectValue placeholder="Expiry" />
                   </SelectTrigger>
                   <SelectContent>
@@ -927,11 +948,11 @@ export function InventoryDashboard() {
 
                 {/* Date Added */}
                 <Select value={recentlyAddedFilter} onValueChange={setRecentlyAddedFilter}>
-                  <SelectTrigger className={`h-9 sm:h-[34px] w-auto min-w-0 sm:min-w-[110px] rounded-lg border text-[12px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2 sm:px-2.5 ${recentlyAddedFilter !== "all"
+                  <SelectTrigger className={`h-8 sm:h-[34px] w-auto min-w-0 sm:min-w-[110px] rounded-lg border text-[11px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-0.5 sm:gap-1 px-1.5 sm:px-2.5 ${recentlyAddedFilter !== "all"
                     ? "bg-emerald-50 border-emerald-200 text-emerald-700 shadow-[inset_0_1px_0_rgba(16,185,129,0.08)] dark:bg-emerald-950/40 dark:border-emerald-700 dark:text-emerald-300"
                     : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
                     }`}>
-                    <Clock className={`h-3 w-3 shrink-0 ${recentlyAddedFilter !== "all" ? "text-emerald-500" : "text-gray-400"}`} />
+                    <Clock className={`h-3 w-3 shrink-0 hidden sm:block ${recentlyAddedFilter !== "all" ? "text-emerald-500" : "text-gray-400"}`} />
                     <SelectValue placeholder="Date" />
                   </SelectTrigger>
                   <SelectContent>
@@ -947,13 +968,13 @@ export function InventoryDashboard() {
                 <div className="w-px h-6 bg-border/60 mx-0.5 hidden sm:block" />
 
                 {/* ── Sort + Rows inline ── */}
-                <div className="flex items-center gap-1.5 w-full sm:w-auto">
+                <div className="flex items-center gap-1 sm:gap-1.5 w-full sm:w-auto">
                   <Select value={sortMode} onValueChange={setSortMode}>
-                    <SelectTrigger className={`h-9 sm:h-[34px] w-auto flex-1 sm:flex-none sm:min-w-[140px] rounded-lg border text-[12px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-1 px-2 sm:px-2.5 ${sortMode !== "date-desc"
+                    <SelectTrigger className={`h-8 sm:h-[34px] w-auto flex-1 sm:flex-none sm:min-w-[140px] rounded-lg border text-[11px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-0.5 sm:gap-1 px-1.5 sm:px-2.5 ${sortMode !== "date-desc"
                       ? "bg-indigo-50 border-indigo-200 text-indigo-700 dark:bg-indigo-950/40 dark:border-indigo-700 dark:text-indigo-300"
                       : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
                       }`}>
-                      <ArrowDownUp className={`h-3 w-3 shrink-0 ${sortMode !== "date-desc" ? "text-indigo-500" : "text-gray-400"}`} />
+                      <ArrowDownUp className={`h-3 w-3 shrink-0 hidden sm:block ${sortMode !== "date-desc" ? "text-indigo-500" : "text-gray-400"}`} />
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -964,7 +985,7 @@ export function InventoryDashboard() {
                   </Select>
 
                   <Select value={String(rowsPerPage)} onValueChange={(v) => setRowsPerPage(Number(v))}>
-                    <SelectTrigger className="h-9 sm:h-[34px] w-[72px] rounded-lg border text-[12px] sm:text-[13px] font-medium bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50 transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 px-2 sm:px-2.5">
+                    <SelectTrigger className="h-8 sm:h-[34px] w-[60px] sm:w-[72px] rounded-lg border text-[11px] sm:text-[13px] font-medium bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50 transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 px-1.5 sm:px-2.5">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1032,6 +1053,7 @@ export function InventoryDashboard() {
               sortMode={sortMode}
               rowsPerPage={rowsPerPage}
               searchQuery={debouncedSearch}
+              highlightFilter={searchParams.get("filter") || undefined}
             />
           </CardContent>
         </Card>
