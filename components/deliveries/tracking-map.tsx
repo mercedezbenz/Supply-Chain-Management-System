@@ -1,17 +1,12 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { MapPin, Navigation, Clock, Zap, Moon, Sun } from "lucide-react"
+import { MapPin, Navigation, Clock, Zap } from "lucide-react"
 import type { Delivery } from "@/lib/types"
 import { SinotackTrackingService } from "@/lib/sinotrack-service"
 import { formatTimestamp } from "@/lib/utils"
-import { useMapbox, MAPBOX_STYLES, type MapboxStyleKey } from "@/hooks/use-mapbox"
-import { createMapboxTruckIcon, createMapboxPulseRing } from "@/lib/map-icons"
-import mapboxgl from "mapbox-gl"
-import "mapbox-gl/dist/mapbox-gl.css"
 
 interface TrackingMapProps {
   delivery: Delivery
@@ -26,30 +21,6 @@ interface LocationData {
 
 export function TrackingMap({ delivery }: TrackingMapProps) {
   const [location, setLocation] = useState<LocationData | undefined>(delivery.lastKnownLocation as LocationData | undefined)
-  const [isDarkMode, setIsDarkMode] = useState(false)
-  const [currentStyle, setCurrentStyle] = useState<MapboxStyleKey>("streets")
-  const [mapInitialized, setMapInitialized] = useState(false)
-  const [pathHistory, setPathHistory] = useState<[number, number][]>([])
-  const pathHistoryRef = useRef<[number, number][]>([])
-
-  const mapContainerRef = useRef<HTMLDivElement>(null)
-  const mapRef = useRef<mapboxgl.Map | null>(null)
-  const markerRef = useRef<mapboxgl.Marker | null>(null)
-  const pulseMarkerRef = useRef<mapboxgl.Marker | null>(null)
-
-  // Use the Mapbox hook
-  const { isReady, isLoading, error: mapError, accessToken } = useMapbox()
-
-  // Toggle map style
-  const toggleMapStyle = useCallback(() => {
-    if (!mapRef.current) return
-
-    const newIsDark = !isDarkMode
-    setIsDarkMode(newIsDark)
-    const newStyle = newIsDark ? "dark" : "streets"
-    setCurrentStyle(newStyle)
-    mapRef.current.setStyle(MAPBOX_STYLES[newStyle])
-  }, [isDarkMode])
 
   // Subscribe to real-time location updates
   useEffect(() => {
@@ -74,142 +45,6 @@ export function TrackingMap({ delivery }: TrackingMapProps) {
       if (unsubscribe) unsubscribe()
     }
   }, [delivery.sinotackDeviceId])
-
-  // Initialize Mapbox map
-  useEffect(() => {
-    if (!isReady || !accessToken || mapInitialized || !location) return
-
-    const initTimeout = setTimeout(() => {
-      if (!mapContainerRef.current) return
-
-      try {
-        const center: [number, number] = [location.longitude, location.latitude]
-
-        const map = new mapboxgl.Map({
-          container: mapContainerRef.current,
-          style: MAPBOX_STYLES[currentStyle],
-          center: center,
-          zoom: 15,
-          antialias: true,
-        })
-
-        // Add controls
-        map.addControl(new mapboxgl.NavigationControl(), "top-right")
-        map.addControl(new mapboxgl.FullscreenControl(), "top-right")
-
-        map.on("load", () => {
-          // Add source and layer for the path history (route line)
-          map.addSource("route", {
-            type: "geojson",
-            data: {
-              type: "Feature",
-              properties: {},
-              geometry: {
-                type: "LineString",
-                coordinates: pathHistoryRef.current,
-              },
-            },
-          })
-
-          map.addLayer({
-            id: "route",
-            type: "line",
-            source: "route",
-            layout: {
-              "line-join": "round",
-              "line-cap": "round",
-            },
-            paint: {
-              "line-color": "#0ea5e9", // primary color (sky-500)
-              "line-width": 4,
-              "line-opacity": 0.5,
-            },
-          })
-
-          // Create pulse ring marker
-          try {
-            const pulseEl = createMapboxPulseRing()
-            pulseMarkerRef.current = new mapboxgl.Marker({
-              element: pulseEl,
-              anchor: "center",
-            })
-              .setLngLat(center)
-              .addTo(map)
-
-            // Create truck marker
-            const truckEl = createMapboxTruckIcon()
-            markerRef.current = new mapboxgl.Marker({
-              element: truckEl,
-              anchor: "bottom",
-            })
-              .setLngLat(center)
-              .addTo(map)
-          } catch (err) {
-            console.error("[TrackingMap] Error creating markers:", err)
-          }
-        })
-
-        mapRef.current = map
-        setMapInitialized(true)
-      } catch (err) {
-        console.error("[TrackingMap] Error initializing map:", err)
-      }
-    }, 100)
-
-    return () => clearTimeout(initTimeout)
-  }, [isReady, accessToken, mapInitialized, currentStyle, location])
-
-  // Update marker position when location changes
-  useEffect(() => {
-    if (!mapRef.current || !location) return
-
-    const lngLat: [number, number] = [location.longitude, location.latitude]
-
-    // Update path history
-    const newPoint: [number, number] = [location.longitude, location.latitude]
-    const lastPoint = pathHistoryRef.current[pathHistoryRef.current.length - 1]
-
-    if (!lastPoint || (lastPoint[0] !== newPoint[0] || lastPoint[1] !== newPoint[1])) {
-      const updatedHistory = [...pathHistoryRef.current, newPoint]
-      pathHistoryRef.current = updatedHistory
-      setPathHistory(updatedHistory)
-
-      // Update map line source
-      if (mapRef.current && mapRef.current.getSource("route")) {
-        (mapRef.current.getSource("route") as mapboxgl.GeoJSONSource).setData({
-          type: "Feature",
-          properties: {},
-          geometry: {
-            type: "LineString",
-            coordinates: updatedHistory,
-          },
-        })
-      }
-    }
-
-    if (markerRef.current) {
-      markerRef.current.setLngLat(lngLat)
-    }
-
-    if (pulseMarkerRef.current) {
-      pulseMarkerRef.current.setLngLat(lngLat)
-    }
-
-    mapRef.current.flyTo({
-      center: lngLat,
-      duration: 1000,
-      essential: true,
-    })
-  }, [location])
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      markerRef.current?.remove()
-      pulseMarkerRef.current?.remove()
-      mapRef.current?.remove()
-    }
-  }, [])
 
   if (!delivery.sinotackDeviceId) {
     return (
@@ -243,40 +78,36 @@ export function TrackingMap({ delivery }: TrackingMapProps) {
                   Active
                 </Badge>
               )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={toggleMapStyle}
-                className="flex items-center gap-1"
-              >
-                {isDarkMode ? <Sun className="h-3 w-3" /> : <Moon className="h-3 w-3" />}
-              </Button>
             </div>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Error state */}
-          {mapError && (
-            <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
-              <p className="text-destructive text-sm">{mapError}</p>
-            </div>
-          )}
-
-          {/* Map container */}
-          <div className="w-full h-96 rounded-lg overflow-hidden border relative">
-            <div
-              ref={mapContainerRef}
-              className="w-full h-full"
-              style={{ minHeight: "384px" }}
-            />
-
-            {/* Loading overlay */}
-            {(isLoading || (!mapInitialized && isReady)) && (
-              <div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm">
-                <div className="text-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-2"></div>
-                  <p className="text-muted-foreground text-sm">Loading map...</p>
+          {/* GPS data placeholder (map removed) */}
+          <div className="w-full rounded-lg overflow-hidden border relative bg-muted/30 flex flex-col items-center justify-center" style={{ minHeight: "200px" }}>
+            {location ? (
+              <div className="text-center space-y-3 p-6">
+                <div className="flex items-center justify-center gap-2">
+                  <MapPin className="h-5 w-5 text-green-500" />
+                  <span className="text-sm font-medium">GPS Position Received</span>
+                  <span className="inline-flex h-2 w-2 rounded-full bg-green-500 animate-pulse" />
                 </div>
+                <div className="grid grid-cols-2 gap-3 max-w-xs mx-auto">
+                  <div className="bg-background rounded-md p-3 border">
+                    <p className="text-xs text-muted-foreground mb-1">Latitude</p>
+                    <p className="text-sm font-mono font-semibold">{location.latitude.toFixed(6)}</p>
+                  </div>
+                  <div className="bg-background rounded-md p-3 border">
+                    <p className="text-xs text-muted-foreground mb-1">Longitude</p>
+                    <p className="text-sm font-mono font-semibold">{location.longitude.toFixed(6)}</p>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">Map view has been disabled. GPS coordinates are shown above.</p>
+              </div>
+            ) : (
+              <div className="text-center p-6">
+                <MapPin className="h-8 w-8 mx-auto mb-2 text-muted-foreground/40" />
+                <p className="text-sm text-muted-foreground">Waiting for GPS data...</p>
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary mx-auto mt-3" />
               </div>
             )}
           </div>
