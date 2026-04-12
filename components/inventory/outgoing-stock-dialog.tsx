@@ -13,6 +13,13 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   Search,
   PackageOpen,
   AlertTriangle,
@@ -61,6 +68,31 @@ function getProductName(item: InventoryItem): string {
   return item.category
 }
 
+function getExpiryDateObj(val: any): Date | null {
+  if (!val) return null;
+  if (val.toDate) return val.toDate();
+  if (val.seconds) return new Date(val.seconds * 1000);
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function getCreatedAtObj(val: any): Date | null {
+  if (!val) return null;
+  if (val.toDate) return val.toDate();
+  if (val.seconds) return new Date(val.seconds * 1000);
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function isDateNearExpiry(val: any): boolean {
+  const expiry = getExpiryDateObj(val);
+  if (!expiry) return false;
+  const now = new Date();
+  const diffTime = expiry.getTime() - now.getTime();
+  const diffDays = diffTime / (1000 * 60 * 60 * 24);
+  return diffDays <= 90;
+}
+
 // ---
 // Component
 // ---
@@ -82,6 +114,8 @@ export function OutgoingStockDialog({
   const [detectedUnit, setDetectedUnit] = useState<"box" | "pack">("box")
   const [unitLoading, setUnitLoading] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [filterType, setFilterType] = useState<"all" | "near_expiry" | "pork" | "chicken" | "beef">("all")
+  const [sortBy, setSortBy] = useState<"added_desc" | "added_asc" | "expiry_asc" | "expiry_desc">("added_desc")
 
   // Items with stock > 0
   const availableItems = useMemo(
@@ -92,18 +126,54 @@ export function OutgoingStockDialog({
     [inventoryItems]
   )
 
-  // Search filter
+  // Search, Filter, and Sort
   const filteredItems = useMemo(() => {
-    if (!search.trim()) return availableItems
-    const q = search.trim().toLowerCase()
-    return availableItems.filter(
-      (item) =>
-        getProductName(item).toLowerCase().includes(q) ||
-        item.category.toLowerCase().includes(q) ||
-        (item.subcategory || "").toLowerCase().includes(q) ||
-        (item.barcode || "").toLowerCase().includes(q)
-    )
-  }, [availableItems, search])
+    let result = availableItems;
+
+    if (search.trim()) {
+      const q = search.trim().toLowerCase()
+      result = result.filter(
+        (item) =>
+          getProductName(item).toLowerCase().includes(q) ||
+          item.category.toLowerCase().includes(q) ||
+          (item.subcategory || "").toLowerCase().includes(q) ||
+          (item.barcode || "").toLowerCase().includes(q)
+      )
+    }
+
+    if (filterType === "near_expiry") {
+      result = result.filter(item => {
+         const val = (item as any).expiryDate || (item as any).expirationDate;
+         return isDateNearExpiry(val);
+      })
+    } else if (filterType !== "all") {
+      result = result.filter(item => {
+        const typeStr = [
+          (item as any).productType,
+          item.category,
+          item.subcategory,
+          getProductName(item)
+        ].join(" ").toLowerCase();
+        return typeStr.includes(filterType);
+      })
+    }
+
+    result = [...result].sort((a, b) => {
+       if (sortBy === "added_desc" || sortBy === "added_asc") {
+         const aTime = getCreatedAtObj(a.createdAt)?.getTime() || 0;
+         const bTime = getCreatedAtObj(b.createdAt)?.getTime() || 0;
+         return sortBy === "added_desc" ? bTime - aTime : aTime - bTime;
+       }
+       if (sortBy === "expiry_asc" || sortBy === "expiry_desc") {
+         const aExp = getExpiryDateObj((a as any).expiryDate || (a as any).expirationDate)?.getTime() || Infinity;
+         const bExp = getExpiryDateObj((b as any).expiryDate || (b as any).expirationDate)?.getTime() || Infinity;
+         return sortBy === "expiry_asc" ? aExp - bExp : bExp - aExp;
+       }
+       return 0;
+    })
+
+    return result;
+  }, [availableItems, search, filterType, sortBy])
 
   const stockLeft = selectedItem ? resolveStockLeft(selectedItem) : 0
   const quantityNum = Math.max(0, Number(quantity) || 0)
@@ -113,6 +183,8 @@ export function OutgoingStockDialog({
     setSelectedItem(null)
     setQuantity("")
     setSearch("")
+    setFilterType("all")
+    setSortBy("added_desc")
     setErrors({})
     setDetectedUnit("box")
     setUnitLoading(false)
@@ -300,6 +372,34 @@ export function OutgoingStockDialog({
                 />
               </div>
 
+              {/* Filters & Sorting */}
+              <div className="flex gap-2">
+                <Select value={filterType} onValueChange={(val: any) => setFilterType(val)}>
+                  <SelectTrigger className="w-[140px] h-9 text-xs">
+                    <SelectValue placeholder="Show..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all" className="text-xs">All Products</SelectItem>
+                    <SelectItem value="pork" className="text-xs">Pork</SelectItem>
+                    <SelectItem value="chicken" className="text-xs">Chicken</SelectItem>
+                    <SelectItem value="beef" className="text-xs">Beef</SelectItem>
+                    <SelectItem value="near_expiry" className="text-xs border-t mt-1">Near Expiry</SelectItem>
+                  </SelectContent>
+                </Select>
+                
+                <Select value={sortBy} onValueChange={(val: any) => setSortBy(val)}>
+                  <SelectTrigger className="flex-1 h-9 text-xs">
+                    <SelectValue placeholder="Sort by..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="added_desc" className="text-xs">Date Added (Newest)</SelectItem>
+                    <SelectItem value="added_asc" className="text-xs">Date Added (Oldest)</SelectItem>
+                    <SelectItem value="expiry_asc" className="text-xs">Expiry (Soonest)</SelectItem>
+                    <SelectItem value="expiry_desc" className="text-xs">Expiry (Farthest)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
               {/* Product List */}
               <div className="max-h-[380px] overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100">
                 {filteredItems.length === 0 ? (
@@ -326,9 +426,16 @@ export function OutgoingStockDialog({
                             <Package className="h-4 w-4 text-slate-500" />
                           </div>
                           <div className="min-w-0">
-                            <p className="font-medium text-sm text-slate-800 truncate">
-                              {getProductName(item)}
-                            </p>
+                            <div className="flex items-center gap-2">
+                              <p className="font-medium text-sm text-slate-800 truncate">
+                                {getProductName(item)}
+                              </p>
+                              {isDateNearExpiry((item as any).expiryDate || (item as any).expirationDate) && (
+                                <div className="flex items-center gap-1 text-[10px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded border border-red-100 shrink-0 font-medium whitespace-nowrap">
+                                  <AlertTriangle className="h-3 w-3" /> Near Expiry
+                                </div>
+                              )}
+                            </div>
                             <p className="text-xs text-slate-500 mt-0.5 truncate">
                               {item.category}
                               {item.barcode && ` · ${item.barcode}`}
