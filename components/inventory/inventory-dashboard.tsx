@@ -386,10 +386,10 @@ export function InventoryDashboard() {
           ...t,
           created_at: t.created_at instanceof Date ? t.created_at
             : t.created_at?.toDate ? t.created_at.toDate()
-            : new Date(t.created_at || 0),
+              : new Date(t.created_at || 0),
           transaction_date: t.transaction_date instanceof Date ? t.transaction_date
             : t.transaction_date?.toDate ? t.transaction_date.toDate()
-            : t.transaction_date ? new Date(t.transaction_date) : new Date(),
+              : t.transaction_date ? new Date(t.transaction_date) : new Date(),
         }))
         // Sort by created_at descending (newest first)
         normalized.sort((a: any, b: any) => {
@@ -558,7 +558,7 @@ export function InventoryDashboard() {
       const txDate = txn.transaction_date instanceof Date
         ? txn.transaction_date
         : txn.transaction_date?.toDate ? txn.transaction_date.toDate()
-        : new Date(txn.transaction_date || 0)
+          : new Date(txn.transaction_date || 0)
       if (isNaN(txDate.getTime()) || txDate < todayStart) return
       goodReturns += (txn.good_return ?? 0)
       damagedReturns += (txn.damage_return ?? 0)
@@ -577,7 +577,7 @@ export function InventoryDashboard() {
       const txDate = txn.transaction_date instanceof Date
         ? txn.transaction_date
         : txn.transaction_date?.toDate ? txn.transaction_date.toDate()
-        : new Date(txn.transaction_date || 0)
+          : new Date(txn.transaction_date || 0)
       if (isNaN(txDate.getTime()) || txDate < todayStart) return
       incoming += (txn.incoming_qty ?? 0)
       outgoing += (txn.outgoing_qty ?? 0)

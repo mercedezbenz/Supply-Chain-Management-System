@@ -24,9 +24,17 @@ import {
   CalendarDays,
   ArrowRightLeft,
   CornerDownLeft,
+  ShieldCheck,
+  Clock,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { InventoryItem } from "@/lib/types"
+import {
+  performFifoCheck,
+  FifoWarningDialog,
+  type FifoCheckResult,
+} from "./fifo-warning-dialog"
+import { TransactionService } from "@/services/firebase-service"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -76,6 +84,18 @@ function formatDate(d: any): string {
   }
 }
 
+function getDaysUntilExpiry(d: any): number | null {
+  if (!d) return null
+  try {
+    const date = d instanceof Date ? d : d?.toDate ? d.toDate() : new Date(d)
+    if (isNaN(date.getTime())) return null
+    const now = new Date()
+    return Math.ceil((date.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+  } catch {
+    return null
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
@@ -96,12 +116,17 @@ export function ScanItemDialog({
   const [foundItem, setFoundItem] = useState<InventoryItem | null>(null)
   const [lastScannedBarcode, setLastScannedBarcode] = useState("")
 
+  // FIFO state
+  const [fifoDialogOpen, setFifoDialogOpen] = useState(false)
+  const [fifoResult, setFifoResult] = useState<FifoCheckResult | null>(null)
+
   // ── Reset ─────────────────────────────────────────────────────────────
   const resetScan = useCallback(() => {
     setBarcodeValue("")
     setScanState("idle")
     setFoundItem(null)
     setLastScannedBarcode("")
+    setFifoResult(null)
     setTimeout(() => inputRef.current?.focus(), 100)
   }, [])
 
@@ -159,10 +184,75 @@ export function ScanItemDialog({
     }
   }
 
+  // ── FIFO-aware Product Out ──────────────────────────────────────────
   const handleProductOut = () => {
-    if (foundItem && onProductOut) {
+    if (!foundItem || !onProductOut) return
+
+    // Perform FIFO check
+    const result = performFifoCheck(foundItem, inventoryItems)
+
+    if (result.isFifoCompliant) {
+      // Scanned item IS the oldest → proceed directly
       onProductOut(foundItem)
       onOpenChange(false)
+    } else {
+      // Scanned item is NOT the oldest → show FIFO warning
+      setFifoResult(result)
+      setFifoDialogOpen(true)
+    }
+  }
+
+  // ── FIFO: proceed with oldest stock ─────────────────────────────────
+  const handleFifoProceedWithOldest = (item: InventoryItem) => {
+    setFifoDialogOpen(false)
+
+    // Log FIFO compliance
+    logFifoAction(item, foundItem!, "FIFO_FOLLOWED", "")
+
+    if (onProductOut) {
+      onProductOut(item)
+      onOpenChange(false)
+    }
+  }
+
+  // ── FIFO: override and proceed with scanned item ────────────────────
+  const handleFifoProceedWithScanned = (item: InventoryItem, reason: string) => {
+    setFifoDialogOpen(false)
+
+    // Log FIFO override
+    logFifoAction(item, fifoResult?.oldestItem ?? item, "FIFO_OVERRIDDEN", reason)
+
+    if (onProductOut) {
+      onProductOut(item)
+      onOpenChange(false)
+    }
+  }
+
+  // ── Log FIFO action to transactions ─────────────────────────────────
+  const logFifoAction = async (
+    selectedItem: InventoryItem,
+    alternativeItem: InventoryItem,
+    action: "FIFO_FOLLOWED" | "FIFO_OVERRIDDEN",
+    reason: string
+  ) => {
+    try {
+      // Log is appended to the fifo_logs collection via addDocument
+      const { FirebaseService } = await import("@/services/firebase-service")
+      await FirebaseService.addDocument("fifo_logs", {
+        action,
+        selected_item_id: selectedItem.id,
+        selected_item_barcode: selectedItem.barcode || "",
+        selected_item_name: getProductName(selectedItem),
+        alternative_item_id: alternativeItem.id,
+        alternative_item_barcode: alternativeItem.barcode || "",
+        alternative_item_name: getProductName(alternativeItem),
+        override_reason: reason,
+        timestamp: new Date(),
+      })
+      console.log(`[FIFO] Logged ${action} — selected: ${selectedItem.barcode}, alternative: ${alternativeItem.barcode}`)
+    } catch (err) {
+      console.warn("[FIFO] Failed to log FIFO action:", err)
+      // Non-blocking — don't prevent the product out flow
     }
   }
 
@@ -182,306 +272,393 @@ export function ScanItemDialog({
 
   const stockLeft = foundItem ? resolveStockLeft(foundItem) : 0
 
+  // Compute FIFO info for display badge when item is found
+  const fifoInfo = foundItem
+    ? performFifoCheck(foundItem, inventoryItems)
+    : null
+
+  // Expiry days for badge
+  const expiryDays = foundItem
+    ? getDaysUntilExpiry((foundItem as any).expiryDate ?? (foundItem as any).expirationDate)
+    : null
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!w-[98vw] sm:!w-auto sm:max-w-[680px] !p-0 !gap-0">
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="!w-[98vw] sm:!w-auto sm:max-w-[680px] !p-0 !gap-0">
 
-        {/* ════════ HEADER ════════ */}
-        <div className="px-3 sm:px-6 pt-4 sm:pt-6 pb-3 sm:pb-4 border-b border-slate-100">
-          <DialogHeader className="!space-y-1">
-            <DialogTitle className="flex items-center gap-2 sm:gap-2.5 text-lg sm:text-xl">
-              <div className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-lg bg-violet-100">
-                <ScanLine className="h-4 w-4 sm:h-5 sm:w-5 text-violet-600" />
+          {/* ════════ HEADER ════════ */}
+          <div className="px-3 sm:px-6 pt-4 sm:pt-6 pb-3 sm:pb-4 border-b border-slate-100">
+            <DialogHeader className="!space-y-1">
+              <DialogTitle className="flex items-center gap-2 sm:gap-2.5 text-lg sm:text-xl">
+                <div className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-lg bg-violet-100">
+                  <ScanLine className="h-4 w-4 sm:h-5 sm:w-5 text-violet-600" />
+                </div>
+                Scan Item
+              </DialogTitle>
+              <DialogDescription className="text-xs sm:text-sm text-slate-500">
+                Scan a barcode using your USB scanner or type it manually and press Enter.
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+
+          {/* ════════ SCANNER INPUT ════════ */}
+          <div className="px-3 sm:px-6 pt-4 sm:pt-5 pb-3 sm:pb-4">
+            <div className="relative">
+              <ScanLine className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-violet-400" />
+              <Input
+                ref={inputRef}
+                value={barcodeValue}
+                onChange={(e) => setBarcodeValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Scan barcode or type manually…"
+                className="pl-11 sm:pl-12 pr-16 sm:pr-20 h-12 sm:h-14 text-base sm:text-lg font-mono tracking-wider border-2 border-violet-200 focus-visible:ring-violet-300 focus-visible:border-violet-400 rounded-xl bg-white"
+                autoFocus
+                autoComplete="off"
+              />
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                {barcodeValue && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 px-2.5 text-xs text-slate-400 hover:text-slate-600"
+                    onClick={() => {
+                      setBarcodeValue("")
+                      inputRef.current?.focus()
+                    }}
+                  >
+                    Clear
+                  </Button>
+                )}
+                <kbd className="hidden sm:inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-400">
+                  <CornerDownLeft className="h-3 w-3" /> Enter
+                </kbd>
               </div>
-              Scan Item
-            </DialogTitle>
-            <DialogDescription className="text-xs sm:text-sm text-slate-500">
-              Scan a barcode using your USB scanner or type it manually and press Enter.
-            </DialogDescription>
-          </DialogHeader>
-        </div>
-
-        {/* ════════ SCANNER INPUT ════════ */}
-        <div className="px-3 sm:px-6 pt-4 sm:pt-5 pb-3 sm:pb-4">
-          <div className="relative">
-            <ScanLine className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-violet-400" />
-            <Input
-              ref={inputRef}
-              value={barcodeValue}
-              onChange={(e) => setBarcodeValue(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Scan barcode or type manually…"
-              className="pl-11 sm:pl-12 pr-16 sm:pr-20 h-12 sm:h-14 text-base sm:text-lg font-mono tracking-wider border-2 border-violet-200 focus-visible:ring-violet-300 focus-visible:border-violet-400 rounded-xl bg-white"
-              autoFocus
-              autoComplete="off"
-            />
-            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-              {barcodeValue && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 px-2.5 text-xs text-slate-400 hover:text-slate-600"
-                  onClick={() => {
-                    setBarcodeValue("")
-                    inputRef.current?.focus()
-                  }}
-                >
-                  Clear
-                </Button>
-              )}
-              <kbd className="hidden sm:inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-400">
-                <CornerDownLeft className="h-3 w-3" /> Enter
-              </kbd>
             </div>
           </div>
-        </div>
 
-        {/* ════════ CONTENT AREA ════════ */}
-        <div className="px-3 sm:px-6 pb-4 sm:pb-6">
+          {/* ════════ CONTENT AREA ════════ */}
+          <div className="px-3 sm:px-6 pb-4 sm:pb-6">
 
-          {/* ── IDLE STATE ────────────────────────────────────────── */}
-          {scanState === "idle" && (
-            <div className="flex flex-col items-center gap-3 py-8 sm:py-12 text-center">
-              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-50 border border-violet-100">
-                <ScanLine className="h-8 w-8 text-violet-300" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-slate-500">Ready to scan</p>
-                <p className="text-xs text-slate-400 mt-0.5">Point your scanner at a barcode — input captures automatically.</p>
-              </div>
-            </div>
-          )}
-
-          {/* ── SEARCHING ─────────────────────────────────────────── */}
-          {scanState === "searching" && (
-            <div className="flex items-center justify-center gap-3 py-12">
-              <Loader2 className="h-6 w-6 animate-spin text-violet-500" />
-              <p className="text-sm font-medium text-slate-600">Searching for barcode…</p>
-            </div>
-          )}
-
-          {/* ══════════════════════════════════════════════════════════
-              FOUND — Product Info
-          ══════════════════════════════════════════════════════════ */}
-          {scanState === "found" && foundItem && (
-            <div className="grid gap-4 animate-in fade-in-0 slide-in-from-bottom-3 duration-300">
-
-              {/* Match status banner */}
-              <div className="flex items-center gap-2.5 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3">
-                <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-emerald-700">Barcode Matched</p>
-                  <p className="text-xs text-emerald-600/70 font-mono">{lastScannedBarcode}</p>
+            {/* ── IDLE STATE ────────────────────────────────────────── */}
+            {scanState === "idle" && (
+              <div className="flex flex-col items-center gap-3 py-8 sm:py-12 text-center">
+                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-50 border border-violet-100">
+                  <ScanLine className="h-8 w-8 text-violet-300" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-slate-500">Ready to scan</p>
+                  <p className="text-xs text-slate-400 mt-0.5">Point your scanner at a barcode — input captures automatically.</p>
                 </div>
               </div>
+            )}
 
-              {/* Product Info Card */}
-              <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-                {/* Product header */}
-                <div className="px-5 py-4 bg-slate-50 border-b border-slate-100">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-lg font-bold text-slate-800 leading-tight">
-                        {getProductName(foundItem)}
-                      </p>
-                      <p className="text-sm text-slate-400 font-mono mt-1">{foundItem.barcode}</p>
-                    </div>
-                    <Badge
-                      className={cn(
-                        "text-sm font-bold px-3 py-1 shrink-0",
-                        stockLeft <= 0
-                          ? "bg-red-100 text-red-700 border-red-200"
-                          : stockLeft <= 5
-                            ? "bg-amber-100 text-amber-700 border-amber-200"
-                            : "bg-emerald-100 text-emerald-700 border-emerald-200"
+            {/* ── SEARCHING ─────────────────────────────────────────── */}
+            {scanState === "searching" && (
+              <div className="flex items-center justify-center gap-3 py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-violet-500" />
+                <p className="text-sm font-medium text-slate-600">Searching for barcode…</p>
+              </div>
+            )}
+
+            {/* ══════════════════════════════════════════════════════════
+                FOUND — Product Info
+            ══════════════════════════════════════════════════════════ */}
+            {scanState === "found" && foundItem && (
+              <div className="grid gap-4 animate-in fade-in-0 slide-in-from-bottom-3 duration-300">
+
+                {/* Match status banner */}
+                <div className="flex items-center gap-2.5 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3">
+                  <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-emerald-700">Barcode Matched</p>
+                    <p className="text-xs text-emerald-600/70 font-mono">{lastScannedBarcode}</p>
+                  </div>
+                  {/* FIFO status indicator */}
+                  {fifoInfo && (
+                    <div className={cn(
+                      "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border shrink-0",
+                      fifoInfo.isFifoCompliant
+                        ? "bg-emerald-100 border-emerald-200"
+                        : "bg-amber-100 border-amber-200"
+                    )}>
+                      {fifoInfo.isFifoCompliant ? (
+                        <>
+                          <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                          <span className="text-[10px] font-bold text-emerald-700">FIFO OK</span>
+                        </>
+                      ) : (
+                        <>
+                          <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                          <span className="text-[10px] font-bold text-amber-700">Older Stock Available</span>
+                        </>
                       )}
-                      variant="outline"
-                    >
-                      {stockLeft} Stock Left
-                    </Badge>
-                  </div>
-                </div>
-
-                {/* Info grid — 2 columns */}
-                <div className="p-3 sm:p-5 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 sm:gap-y-4">
-                  {/* Category */}
-                  <div className="flex items-start gap-3">
-                    <Package className="h-4 w-4 text-slate-400 mt-0.5 shrink-0" />
-                    <div>
-                      <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Category</p>
-                      <p className="text-sm font-semibold text-slate-700 mt-0.5">{foundItem.category}</p>
                     </div>
-                  </div>
-
-                  {/* Subcategory */}
-                  <div className="flex items-start gap-3">
-                    <Package className="h-4 w-4 text-slate-400 mt-0.5 shrink-0" />
-                    <div>
-                      <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Subcategory</p>
-                      <p className="text-sm font-semibold text-slate-700 mt-0.5">
-                        {(foundItem as any).subcategory || "—"}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Incoming */}
-                  <div className="flex items-start gap-3">
-                    <ArrowRightLeft className="h-4 w-4 text-emerald-400 mt-0.5 shrink-0" />
-                    <div>
-                      <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Incoming</p>
-                      <p className="text-sm font-semibold text-slate-700 mt-0.5">
-                        {(foundItem as any).incoming ?? 0}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Outgoing */}
-                  <div className="flex items-start gap-3">
-                    <ArrowRightLeft className="h-4 w-4 text-orange-400 mt-0.5 shrink-0" />
-                    <div>
-                      <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Outgoing</p>
-                      <p className="text-sm font-semibold text-slate-700 mt-0.5">
-                        {(foundItem as any).outgoing ?? 0}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Good Return */}
-                  <div className="flex items-start gap-3">
-                    <RotateCcw className="h-4 w-4 text-sky-400 mt-0.5 shrink-0" />
-                    <div>
-                      <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Good Return</p>
-                      <p className="text-sm font-semibold text-slate-700 mt-0.5">
-                        {(foundItem as any).goodReturnStock ?? 0}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Damage Return */}
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle className="h-4 w-4 text-red-400 mt-0.5 shrink-0" />
-                    <div>
-                      <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Damage Return</p>
-                      <p className="text-sm font-semibold text-slate-700 mt-0.5">
-                        {(foundItem as any).damageReturnStock ?? 0}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Expiry Date */}
-                  <div className="flex items-start gap-3">
-                    <CalendarDays className="h-4 w-4 text-violet-400 mt-0.5 shrink-0" />
-                    <div>
-                      <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Expiry Date</p>
-                      <p className="text-sm font-semibold text-slate-700 mt-0.5">
-                        {formatDate((foundItem as any).expiryDate ?? (foundItem as any).expirationDate)}
-                      </p>
-                    </div>
-                  </div>
-
-
-                </div>
-              </div>
-
-              {/* No stock warning */}
-              {stockLeft <= 0 && (
-                <div className="flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 px-4 py-2.5">
-                  <AlertTriangle className="h-4 w-4 text-red-500 shrink-0" />
-                  <p className="text-sm font-medium text-red-700">No stock available — Product Out is disabled.</p>
-                </div>
-              )}
-
-              {/* ── Action Buttons ── Product Out (primary) + Return (secondary) ── */}
-              <div className="grid grid-cols-2 gap-3 pt-1">
-                <Button
-                  type="button"
-                  onClick={handleProductOut}
-                  disabled={stockLeft <= 0}
-                  className={cn(
-                    "h-12 gap-2 font-semibold text-sm rounded-xl",
-                    stockLeft <= 0
-                      ? "bg-slate-200 text-slate-400 cursor-not-allowed hover:bg-slate-200"
-                      : "bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-200"
                   )}
-                >
-                  <Truck className="h-5 w-5" />
-                  Product Out
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleReturnItem}
-                  className="h-12 gap-2 font-semibold text-sm rounded-xl border-2 border-slate-300 text-slate-700 hover:bg-slate-50 hover:border-slate-400"
-                >
-                  <RotateCcw className="h-5 w-5" />
-                  Return Item
-                </Button>
-              </div>
+                </div>
 
-              {/* Scan again */}
-              <div className="flex justify-center pt-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={resetScan}
-                  className="gap-2 text-sm text-slate-400 hover:text-slate-600"
-                >
-                  <RotateCcw className="h-4 w-4" />
-                  Scan Another Item
-                </Button>
-              </div>
-            </div>
-          )}
+                {/* Product Info Card */}
+                <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                  {/* Product header */}
+                  <div className="px-5 py-4 bg-slate-50 border-b border-slate-100">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-lg font-bold text-slate-800 leading-tight">
+                          {getProductName(foundItem)}
+                        </p>
+                        <p className="text-sm text-slate-400 font-mono mt-1">{foundItem.barcode}</p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {/* Near Expiry badge */}
+                        {expiryDays !== null && expiryDays <= 30 && expiryDays >= 0 && (
+                          <Badge
+                            className={cn(
+                              "text-[10px] font-bold px-2 py-0.5 gap-1",
+                              expiryDays <= 3
+                                ? "bg-red-100 text-red-700 border-red-200"
+                                : expiryDays <= 7
+                                  ? "bg-amber-100 text-amber-700 border-amber-200"
+                                  : "bg-orange-100 text-orange-700 border-orange-200"
+                            )}
+                            variant="outline"
+                          >
+                            <Clock className="h-3 w-3" />
+                            {expiryDays <= 0 ? "Expired" : `${expiryDays}d left`}
+                          </Badge>
+                        )}
+                        {expiryDays !== null && expiryDays < 0 && (
+                          <Badge className="text-[10px] font-bold px-2 py-0.5 gap-1 bg-red-100 text-red-700 border-red-200" variant="outline">
+                            <AlertTriangle className="h-3 w-3" />
+                            Expired
+                          </Badge>
+                        )}
+                        <Badge
+                          className={cn(
+                            "text-sm font-bold px-3 py-1 shrink-0",
+                            stockLeft <= 0
+                              ? "bg-red-100 text-red-700 border-red-200"
+                              : stockLeft <= 5
+                                ? "bg-amber-100 text-amber-700 border-amber-200"
+                                : "bg-emerald-100 text-emerald-700 border-emerald-200"
+                          )}
+                          variant="outline"
+                        >
+                          {stockLeft} Stock Left
+                        </Badge>
+                      </div>
+                    </div>
+                  </div>
 
-          {/* ══════════════════════════════════════════════════════════
-              NOT FOUND
-          ══════════════════════════════════════════════════════════ */}
-          {scanState === "not-found" && (
-            <div className="grid gap-4 animate-in fade-in-0 slide-in-from-bottom-3 duration-300">
-              {/* Warning banner */}
-              <div className="flex items-center gap-2.5 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3">
-                <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-amber-700">Barcode Not Found</p>
-                  <p className="text-xs text-amber-600/70 font-mono">{lastScannedBarcode}</p>
+                  {/* Info grid — 2 columns */}
+                  <div className="p-3 sm:p-5 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 sm:gap-y-4">
+                    {/* Category */}
+                    <div className="flex items-start gap-3">
+                      <Package className="h-4 w-4 text-slate-400 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Category</p>
+                        <p className="text-sm font-semibold text-slate-700 mt-0.5">{foundItem.category}</p>
+                      </div>
+                    </div>
+
+                    {/* Subcategory */}
+                    <div className="flex items-start gap-3">
+                      <Package className="h-4 w-4 text-slate-400 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Subcategory</p>
+                        <p className="text-sm font-semibold text-slate-700 mt-0.5">
+                          {(foundItem as any).subcategory || "—"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Incoming */}
+                    <div className="flex items-start gap-3">
+                      <ArrowRightLeft className="h-4 w-4 text-emerald-400 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Incoming</p>
+                        <p className="text-sm font-semibold text-slate-700 mt-0.5">
+                          {(foundItem as any).incoming ?? 0}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Outgoing */}
+                    <div className="flex items-start gap-3">
+                      <ArrowRightLeft className="h-4 w-4 text-orange-400 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Outgoing</p>
+                        <p className="text-sm font-semibold text-slate-700 mt-0.5">
+                          {(foundItem as any).outgoing ?? 0}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Good Return */}
+                    <div className="flex items-start gap-3">
+                      <RotateCcw className="h-4 w-4 text-sky-400 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Good Return</p>
+                        <p className="text-sm font-semibold text-slate-700 mt-0.5">
+                          {(foundItem as any).goodReturnStock ?? 0}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Damage Return */}
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="h-4 w-4 text-red-400 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Damage Return</p>
+                        <p className="text-sm font-semibold text-slate-700 mt-0.5">
+                          {(foundItem as any).damageReturnStock ?? 0}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Expiry Date */}
+                    <div className="flex items-start gap-3">
+                      <CalendarDays className="h-4 w-4 text-violet-400 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Expiry Date</p>
+                        <p className="text-sm font-semibold text-slate-700 mt-0.5">
+                          {formatDate((foundItem as any).expiryDate ?? (foundItem as any).expirationDate)}
+                        </p>
+                      </div>
+                    </div>
+
+
+                  </div>
+                </div>
+
+                {/* FIFO warning banner — shown inline when not compliant */}
+                {fifoInfo && !fifoInfo.isFifoCompliant && (
+                  <div className="flex items-start gap-2.5 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 animate-in fade-in-0 duration-200">
+                    <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-sm font-semibold text-amber-700">Older stocks available</p>
+                      <p className="text-xs text-amber-600/80 mt-0.5">
+                        There are {fifoInfo.availableBatches.length - 1} older batch(es) for
+                        "{getProductName(foundItem)}". FIFO recommends dispatching the oldest first.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* No stock warning */}
+                {stockLeft <= 0 && (
+                  <div className="flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 px-4 py-2.5">
+                    <AlertTriangle className="h-4 w-4 text-red-500 shrink-0" />
+                    <p className="text-sm font-medium text-red-700">No stock available — Product Out is disabled.</p>
+                  </div>
+                )}
+
+                {/* ── Action Buttons ── Product Out (primary) + Return (secondary) ── */}
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <Button
+                    type="button"
+                    onClick={handleProductOut}
+                    disabled={stockLeft <= 0}
+                    className={cn(
+                      "h-12 gap-2 font-semibold text-sm rounded-xl",
+                      stockLeft <= 0
+                        ? "bg-slate-200 text-slate-400 cursor-not-allowed hover:bg-slate-200"
+                        : fifoInfo && !fifoInfo.isFifoCompliant
+                          ? "bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-200"
+                          : "bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-200"
+                    )}
+                  >
+                    <Truck className="h-5 w-5" />
+                    Product Out
+                    {fifoInfo && !fifoInfo.isFifoCompliant && (
+                      <AlertTriangle className="h-3.5 w-3.5 ml-0.5" />
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleReturnItem}
+                    className="h-12 gap-2 font-semibold text-sm rounded-xl border-2 border-slate-300 text-slate-700 hover:bg-slate-50 hover:border-slate-400"
+                  >
+                    <RotateCcw className="h-5 w-5" />
+                    Return Item
+                  </Button>
+                </div>
+
+                {/* Scan again */}
+                <div className="flex justify-center pt-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={resetScan}
+                    className="gap-2 text-sm text-slate-400 hover:text-slate-600"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    Scan Another Item
+                  </Button>
                 </div>
               </div>
+            )}
 
-              {/* Empty state card */}
-              <div className="rounded-xl border border-slate-200 bg-slate-50/60 flex flex-col items-center gap-3 py-10">
-                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 border border-amber-200">
-                  <AlertTriangle className="h-7 w-7 text-amber-500" />
+            {/* ══════════════════════════════════════════════════════════
+                NOT FOUND
+            ══════════════════════════════════════════════════════════ */}
+            {scanState === "not-found" && (
+              <div className="grid gap-4 animate-in fade-in-0 slide-in-from-bottom-3 duration-300">
+                {/* Warning banner */}
+                <div className="flex items-center gap-2.5 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3">
+                  <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-amber-700">Barcode Not Found</p>
+                    <p className="text-xs text-amber-600/70 font-mono">{lastScannedBarcode}</p>
+                  </div>
                 </div>
-                <p className="text-sm text-slate-500 max-w-[280px] text-center leading-relaxed">
-                  No item in inventory matches this barcode. You can register it as a new item or try scanning again.
-                </p>
-              </div>
 
-              {/* Action buttons */}
-              <div className="grid grid-cols-2 gap-3 pt-1">
-                <Button
-                  type="button"
-                  onClick={handleRegisterNew}
-                  className="h-12 gap-2.5 bg-violet-600 hover:bg-violet-700 text-white font-semibold text-sm rounded-xl"
-                >
-                  <PackagePlus className="h-5 w-5" />
-                  Register as New Item
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={resetScan}
-                  className="h-12 gap-2.5 font-semibold text-sm rounded-xl border-2"
-                >
-                  <RotateCcw className="h-4 w-4" />
-                  Scan Again
-                </Button>
+                {/* Empty state card */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50/60 flex flex-col items-center gap-3 py-10">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 border border-amber-200">
+                    <AlertTriangle className="h-7 w-7 text-amber-500" />
+                  </div>
+                  <p className="text-sm text-slate-500 max-w-[280px] text-center leading-relaxed">
+                    No item in inventory matches this barcode. You can register it as a new item or try scanning again.
+                  </p>
+                </div>
+
+                {/* Action buttons */}
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <Button
+                    type="button"
+                    onClick={handleRegisterNew}
+                    className="h-12 gap-2.5 bg-violet-600 hover:bg-violet-700 text-white font-semibold text-sm rounded-xl"
+                  >
+                    <PackagePlus className="h-5 w-5" />
+                    Register as New Item
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={resetScan}
+                    className="h-12 gap-2.5 font-semibold text-sm rounded-xl border-2"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    Scan Again
+                  </Button>
+                </div>
               </div>
-            </div>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── FIFO Warning Dialog (opens on top of scan dialog) ── */}
+      <FifoWarningDialog
+        open={fifoDialogOpen}
+        onOpenChange={setFifoDialogOpen}
+        fifoResult={fifoResult}
+        onProceedWithOldest={handleFifoProceedWithOldest}
+        onProceedWithScanned={handleFifoProceedWithScanned}
+        onCancel={() => setFifoDialogOpen(false)}
+      />
+    </>
   )
 }

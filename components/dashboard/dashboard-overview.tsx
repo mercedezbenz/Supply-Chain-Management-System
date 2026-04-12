@@ -1,9 +1,13 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { TrendingUp, TrendingDown, AlertCircle, X, ChevronLeft, ChevronRight, Clock, Package, AlertTriangle } from "lucide-react"
+import {
+  TrendingUp, TrendingDown, AlertCircle, X, ChevronLeft, ChevronRight,
+  Clock, Package, AlertTriangle, ShieldAlert, Zap, TrendingDown as SlowIcon,
+  RotateCcw, Trash2, ArrowUpCircle, ArrowDownCircle, RefreshCw
+} from "lucide-react"
 import { TotalStocksIcon, LowStockIcon, ExpiringSoonIcon } from "./dashboard-icons"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
@@ -14,15 +18,20 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import type { InventoryItem, InventoryTransaction } from "@/lib/types"
 import { formatExpirationDate as formatExpDate } from "@/lib/utils"
 import { DashboardOverviewSkeleton } from "@/components/skeletons/dashboard-skeleton"
+import {
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Area, AreaChart
+} from "recharts"
 
 interface DashboardStats {
   totalItems: number
   lowStockItems: number
   expiringSoon: number
+  outOfStock: number
 }
 
-// Mini sparkline bar chart for KPI cards
-const TrendChart = ({ trend, type }: { trend: "up" | "down"; type: "total" | "low" | "expiring" }) => {
+// ─── Mini sparkline bar chart for KPI cards ───
+const TrendChart = ({ trend, type }: { trend: "up" | "down"; type: "total" | "low" | "expiring" | "outofstock" }) => {
   const palettes: Record<string, { height: number; color: string }[]> = {
     total: [
       { height: 25, color: "#93C5FD" },
@@ -45,6 +54,13 @@ const TrendChart = ({ trend, type }: { trend: "up" | "down"; type: "total" | "lo
       { height: 45, color: "#F59E0B" },
       { height: 70, color: "#D97706" },
     ],
+    outofstock: [
+      { height: 60, color: "#FCA5A5" },
+      { height: 80, color: "#F87171" },
+      { height: 45, color: "#EF4444" },
+      { height: 30, color: "#DC2626" },
+      { height: 55, color: "#B91C1C" },
+    ],
   }
 
   const bars = palettes[type] || palettes.total
@@ -66,30 +82,83 @@ const TrendChart = ({ trend, type }: { trend: "up" | "down"; type: "total" | "lo
   )
 }
 
-// Action badge component for stock movements
+// ─── Out of Stock icon ───
+const OutOfStockIcon = ({ className }: { className?: string }) => (
+  <div
+    className={`group relative flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-300 hover:scale-110 ${className}`}
+    style={{
+      background: "linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)",
+      boxShadow: "0 4px 12px rgba(239, 68, 68, 0.3)",
+    }}
+  >
+    <div
+      className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+      style={{
+        background: "linear-gradient(135deg, #f87171 0%, #ef4444 100%)",
+        boxShadow: "0 0 20px rgba(239, 68, 68, 0.6)",
+      }}
+    />
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="relative z-10">
+      <path d="M20 7L12 3L4 7M20 7L12 11M20 7V17L12 21M12 11L4 7M12 11V21M4 7V17L12 21" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <line x1="4" y1="4" x2="20" y2="20" stroke="white" strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
+  </div>
+)
+
+// ─── Action badge component for stock movements ───
 const ActionBadge = ({ action }: { action: string }) => {
   const normalized = action?.toUpperCase()?.trim() || ""
 
   let label = action
   let className = "inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold tracking-wide uppercase "
+  let icon: React.ReactNode = null
 
   if (normalized.includes("INCOMING") || normalized === "IN" || normalized.includes("FROM")) {
     label = "IN"
     className += "bg-emerald-50 text-emerald-700 border border-emerald-200"
+    icon = <ArrowDownCircle className="h-3 w-3 mr-1" />
   } else if (normalized.includes("OUTGOING") || normalized === "OUT" || normalized === "PRODUCT_OUT") {
     label = "OUT"
     className += "bg-red-50 text-red-600 border border-red-200"
+    icon = <ArrowUpCircle className="h-3 w-3 mr-1" />
   } else if (normalized.includes("GOOD") || normalized === "GOOD_RETURN" || normalized === "GOOD RETURN") {
     label = "RETURN"
     className += "bg-blue-50 text-blue-600 border border-blue-200"
+    icon = <RefreshCw className="h-3 w-3 mr-1" />
   } else if (normalized.includes("BAD") || normalized.includes("DAMAGE") || normalized === "BAD_RETURN" || normalized === "BAD RETURN") {
     label = "BAD RETURN"
     className += "bg-gray-100 text-gray-500 border border-gray-200"
+    icon = <Trash2 className="h-3 w-3 mr-1" />
   } else {
     className += "bg-gray-50 text-gray-600 border border-gray-200"
   }
 
-  return <span className={className}>{label}</span>
+  return <span className={className}>{icon}{label}</span>
+}
+
+// ─── Movement type label ───
+const getMovementTypeLabel = (action: string) => {
+  const normalized = action?.toUpperCase()?.trim() || ""
+  if (normalized.includes("INCOMING") || normalized === "IN" || normalized.includes("FROM") || normalized.includes("SUPPLIER") || normalized.includes("PRODUCTION")) return "Restock"
+  if (normalized.includes("OUTGOING") || normalized === "OUT" || normalized === "PRODUCT_OUT") return "Usage"
+  if (normalized.includes("GOOD") || normalized === "GOOD_RETURN") return "Return"
+  if (normalized.includes("BAD") || normalized.includes("DAMAGE")) return "Damage"
+  return "Movement"
+}
+
+// ─── Stock Status Donut Chart Custom Label ───
+const DONUT_COLORS = ["#10B981", "#F59E0B", "#EF4444", "#F97316"]
+const renderDonutLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, name }: any) => {
+  if (percent < 0.05) return null
+  const RADIAN = Math.PI / 180
+  const radius = innerRadius + (outerRadius - innerRadius) * 0.5
+  const x = cx + radius * Math.cos(-midAngle * RADIAN)
+  const y = cy + radius * Math.sin(-midAngle * RADIAN)
+  return (
+    <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central" className="text-[11px] font-bold" style={{ fontSize: '11px', fontWeight: 700 }}>
+      {`${(percent * 100).toFixed(0)}%`}
+    </text>
+  )
 }
 
 export function DashboardOverview() {
@@ -99,7 +168,9 @@ export function DashboardOverview() {
     totalItems: 0,
     lowStockItems: 0,
     expiringSoon: 0,
+    outOfStock: 0,
   })
+  const [allInventoryItems, setAllInventoryItems] = useState<InventoryItem[]>([])
   const [stockAlerts, setStockAlerts] = useState<InventoryItem[]>([])
   const [recentlyAdded, setRecentlyAdded] = useState<InventoryItem[]>([])
   const [recentMovements, setRecentMovements] = useState<InventoryTransaction[]>([])
@@ -161,6 +232,16 @@ export function DashboardOverview() {
     setMovementCurrentPage(1)
   }, [recentMovements.length])
 
+  // Helper function to parse dates
+  const parseDate = (d: any) => {
+    if (!d) return null
+    if (typeof d === "string") return new Date(d)
+    if (d instanceof Date) return d
+    if (d && typeof d.toDate === "function") return d.toDate()
+    if (d && d.seconds) return new Date(d.seconds * 1000)
+    return null
+  }
+
   useEffect(() => {
     if (!user || firebaseError) {
       setLoading(false)
@@ -172,16 +253,6 @@ export function DashboardOverview() {
 
     let unsubscribeInventory: (() => void) | undefined
     let unsubscribeTransactions: (() => void) | undefined
-
-    // Helper function to parse dates
-    const parseDate = (d: any) => {
-      if (!d) return null
-      if (typeof d === "string") return new Date(d)
-      if (d instanceof Date) return d
-      if (d && typeof d.toDate === "function") return d.toDate()
-      if (d && d.seconds) return new Date(d.seconds * 1000)
-      return null
-    }
 
     try {
       // Subscribe to inventory collection
@@ -209,6 +280,8 @@ export function DashboardOverview() {
           }
         })
 
+        setAllInventoryItems(normalizedItems)
+
         // Filter low stock items
         const lowStockItems = normalizedItems.filter((item) => {
           const incomingStock = (item as any).incoming ?? 0
@@ -219,6 +292,12 @@ export function DashboardOverview() {
           return stockLeft < 10
         })
         setStockAlerts(lowStockItems.slice(0, 10))
+
+        // Filter out of stock
+        const outOfStockItems = normalizedItems.filter((item) => {
+          const stockLeft = (item as any).stockLeft ?? 0
+          return stockLeft <= 0
+        })
 
         // Filter expiring soon (within 30 days)
         const now = new Date()
@@ -245,6 +324,7 @@ export function DashboardOverview() {
           totalItems: items.length,
           lowStockItems: lowStock,
           expiringSoon: expiringItems.length,
+          outOfStock: outOfStockItems.length,
         }))
 
         setShowNotificationBanner(lowStock > 0)
@@ -389,6 +469,121 @@ export function DashboardOverview() {
     return txn.unit_type?.toLowerCase() || "pack"
   }
 
+  // ─── Computed: Stock Status Donut Data ───
+  const donutData = useMemo(() => {
+    const now = new Date()
+    const thirtyDays = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+    let inStock = 0, lowStock = 0, outOfStock = 0, expiringSoon = 0
+
+    allInventoryItems.forEach((item: any) => {
+      const stockLeft = item.stockLeft ?? 0
+      const expDate = parseDate(item.expiryDate ?? item.expirationDate)
+      const isExpiring = expDate && expDate > now && expDate <= thirtyDays
+
+      if (stockLeft <= 0) {
+        outOfStock++
+      } else if (isExpiring) {
+        expiringSoon++
+      } else if (stockLeft < 10) {
+        lowStock++
+      } else {
+        inStock++
+      }
+    })
+
+    return [
+      { name: "In Stock", value: inStock, color: "#10B981" },
+      { name: "Low Stock", value: lowStock, color: "#F59E0B" },
+      { name: "Out of Stock", value: outOfStock, color: "#EF4444" },
+      { name: "Expiring Soon", value: expiringSoon, color: "#F97316" },
+    ].filter(d => d.value > 0)
+  }, [allInventoryItems])
+
+  // ─── Computed: Inventory Insights ───
+  const insights = useMemo(() => {
+    const now = new Date()
+    const sevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+    const result: { type: string; icon: React.ReactNode; message: string; priority: number; category: "Critical" | "Warning" }[] = []
+
+    allInventoryItems.forEach((item: any) => {
+      const stockLeft = item.stockLeft ?? 0
+      const name = item.name ?? item.itemName ?? item.category ?? "Unknown"
+      const expDate = parseDate(item.expiryDate ?? item.expirationDate)
+
+      // 4. EXPIRED (Critical)
+      if (expDate && expDate < now) {
+        result.push({
+          type: "expired",
+          icon: <div className="h-2.5 w-2.5 rounded-full bg-gray-500 shadow-sm" />,
+          message: `${name} has expired. Record as waste.`,
+          priority: 1,
+          category: "Critical",
+        })
+      }
+      // 1. OUT OF STOCK (Critical)
+      else if (stockLeft <= 0) {
+        result.push({
+          type: "outofstock",
+          icon: <div className="h-2.5 w-2.5 rounded-full bg-red-500 shadow-sm shadow-red-500/20" />,
+          message: `${name} is currently out of stock. Consider restocking.`,
+          priority: 2,
+          category: "Critical",
+        })
+      }
+      // 3. EXPIRING SOON (Warning)
+      else if (expDate && expDate <= sevenDays) {
+        const days = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+        const daysText = days === 1 ? "1 day" : `${days} days`
+        result.push({
+          type: "expiring",
+          icon: <div className="h-2.5 w-2.5 rounded-full bg-orange-500 shadow-sm shadow-orange-500/20" />,
+          message: `${name} will expire in ${daysText}. Prioritize usage (FEFO).`,
+          priority: 3,
+          category: "Warning",
+        })
+      }
+      // 2. LOW STOCK (Warning)
+      else if (stockLeft < 10) {
+        result.push({
+          type: "lowstock",
+          icon: <div className="h-2.5 w-2.5 rounded-full bg-yellow-400 shadow-sm shadow-yellow-400/20" />,
+          message: `${name} is running low on stock.`,
+          priority: 4,
+          category: "Warning",
+        })
+      }
+    })
+
+    // Sort by priority and limit to top 8 most important
+    return result.sort((a, b) => a.priority - b.priority).slice(0, 8)
+  }, [allInventoryItems])
+
+  // ─── Computed: Usage Trend (from transactions) ───
+  const usageTrendData = useMemo(() => {
+    if (recentMovements.length === 0) return []
+
+    const dailyMap: Record<string, { date: string; used: number; restocked: number }> = {}
+
+    recentMovements.forEach((txn) => {
+      const dateObj = parseDate(txn.transaction_date || txn.created_at)
+      if (!dateObj || isNaN(dateObj.getTime())) return
+      const key = dateObj.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+
+      if (!dailyMap[key]) {
+        dailyMap[key] = { date: key, used: 0, restocked: 0 }
+      }
+
+      const action = getMovementAction(txn)
+      if (action === "OUT") {
+        dailyMap[key].used += txn.outgoing_qty || 0
+      } else if (action === "IN") {
+        dailyMap[key].restocked += txn.incoming_qty || 0
+      }
+    })
+
+    return Object.values(dailyMap).reverse().slice(-14)
+  }, [recentMovements])
+
   if (hasPermissionError || firebaseError) {
     return (
       <div className="space-y-6">
@@ -449,12 +644,12 @@ export function DashboardOverview() {
       </div>
 
       {/* ─── KPI Summary Cards ─── */}
-      <div className="grid gap-5 md:grid-cols-3">
+      <div className="grid gap-5 grid-cols-2 lg:grid-cols-4">
         {/* Total Stocks */}
         <Card className="rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.08)] transition-all duration-300 group">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 px-5 pt-5">
             <CardTitle className="text-sm font-semibold text-gray-500 dark:text-muted-foreground uppercase tracking-wide">
-              Total Stocks
+              Total Items
             </CardTitle>
             <TotalStocksIcon />
           </CardHeader>
@@ -488,7 +683,7 @@ export function DashboardOverview() {
           <CardContent className="px-5 pb-5">
             <div className="flex items-end justify-between">
               <div>
-                <div className="text-3xl font-bold text-red-500 leading-none mb-2">
+                <div className="text-3xl font-bold text-amber-500 leading-none mb-2">
                   {stats.lowStockItems}
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -515,7 +710,7 @@ export function DashboardOverview() {
           <CardContent className="px-5 pb-5">
             <div className="flex items-end justify-between">
               <div>
-                <div className="text-3xl font-bold text-amber-500 leading-none mb-2">
+                <div className="text-3xl font-bold text-orange-500 leading-none mb-2">
                   {stats.expiringSoon}
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -530,9 +725,160 @@ export function DashboardOverview() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Out of Stock */}
+        <Card className="rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.08)] transition-all duration-300 group">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 px-5 pt-5">
+            <CardTitle className="text-sm font-semibold text-gray-500 dark:text-muted-foreground uppercase tracking-wide">
+              Out of Stock
+            </CardTitle>
+            <OutOfStockIcon />
+          </CardHeader>
+          <CardContent className="px-5 pb-5">
+            <div className="flex items-end justify-between">
+              <div>
+                <div className="text-3xl font-bold text-red-500 leading-none mb-2">
+                  {stats.outOfStock}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-50 dark:bg-red-950/30">
+                    <ShieldAlert className="h-3 w-3 text-red-500" />
+                    <span className="text-xs font-semibold text-red-500 dark:text-red-400">critical</span>
+                  </div>
+                  <span className="text-xs text-gray-400">needs action</span>
+                </div>
+              </div>
+              <TrendChart trend="up" type="outofstock" />
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* ─── Main Content: Two-Panel Layout ─── */}
+      {/* ─── Donut Chart + Insights Panel ─── */}
+      <div className="grid gap-5 lg:grid-cols-5">
+
+        {/* ──── LEFT: Donut Chart (2 cols) ──── */}
+        <Card className="lg:col-span-2 rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.08)] transition-all duration-300 overflow-hidden">
+          <CardHeader className="px-6 pt-6 pb-2">
+            <CardTitle className="text-lg font-bold text-gray-900 dark:text-foreground">
+              Stock Status Overview
+            </CardTitle>
+            <CardDescription className="text-sm text-gray-400 dark:text-muted-foreground">
+              Current inventory distribution
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="px-6 pb-6">
+            {donutData.length > 0 ? (
+              <div className="flex flex-col items-center">
+                <div className="w-full h-[220px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={donutData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={55}
+                        outerRadius={90}
+                        paddingAngle={3}
+                        dataKey="value"
+                        labelLine={false}
+                        label={renderDonutLabel}
+                        stroke="none"
+                      >
+                        {donutData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <RechartsTooltip
+                        contentStyle={{
+                          backgroundColor: "white",
+                          border: "1px solid #e5e7eb",
+                          borderRadius: "12px",
+                          padding: "8px 14px",
+                          boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                          fontSize: "13px",
+                        }}
+                        formatter={(value: number, name: string) => [`${value} items`, name]}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                {/* Legend */}
+                <div className="grid grid-cols-2 gap-x-6 gap-y-2 mt-2 w-full max-w-[280px]">
+                  {donutData.map((entry) => (
+                    <div key={entry.name} className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: entry.color }} />
+                      <span className="text-xs text-gray-500 dark:text-muted-foreground truncate">{entry.name}</span>
+                      <span className="text-xs font-bold text-gray-700 dark:text-foreground ml-auto">{entry.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-12">
+                <Package className="h-10 w-10 text-gray-200 mb-3" />
+                <p className="text-sm text-gray-400">No inventory data available</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* ──── RIGHT: Inventory Insights (3 cols) ──── */}
+        <Card className="lg:col-span-3 rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.08)] transition-all duration-300 overflow-hidden">
+          <CardHeader className="px-6 pt-6 pb-2">
+            <CardTitle className="text-lg font-bold text-gray-900 dark:text-foreground flex items-center gap-2">
+              <Zap className="h-5 w-5 text-sky-500" />
+              Inventory Insights
+            </CardTitle>
+            <CardDescription className="text-sm text-gray-400 dark:text-muted-foreground">
+              Smart recommendations based on current stock health
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="px-6 pb-6">
+            {insights.length > 0 ? (
+              <div className="space-y-6 max-h-[340px] overflow-y-auto pr-1">
+                {(["Critical", "Warning"] as const).map((category) => {
+                  const categoryInsights = insights.filter((i) => i.category === category)
+                  if (categoryInsights.length === 0) return null
+
+                  return (
+                    <div key={category} className="space-y-3">
+                      <h4 className="text-[11px] font-bold text-gray-400 dark:text-muted-foreground uppercase tracking-widest pl-1">
+                        {category}
+                      </h4>
+                      <div className="space-y-2">
+                        {categoryInsights.map((insight, idx) => (
+                          <div
+                            key={`${category}-${idx}`}
+                            className="flex items-start gap-3.5 p-3.5 rounded-xl bg-gray-50/60 dark:bg-secondary/20 border border-gray-100/50 dark:border-border/30 hover:bg-gray-100/50 dark:hover:bg-secondary/40 transition-colors"
+                          >
+                            <div className="flex-shrink-0 mt-1.5 flex items-center justify-center">
+                              {insight.icon}
+                            </div>
+                            <p className="text-[13px] text-gray-700 dark:text-foreground leading-relaxed flex-1">
+                              {insight.message}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-12">
+                <div className="h-12 w-12 rounded-full bg-emerald-50 dark:bg-emerald-950/30 flex items-center justify-center mb-3">
+                  <TrendingUp className="h-5 w-5 text-emerald-500" />
+                </div>
+                <p className="text-sm font-medium text-gray-700 dark:text-foreground">All systems healthy!</p>
+                <p className="text-xs text-gray-400 mt-1">No immediate actions required</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ─── Main Content: Stock Alerts + Recent Movements ─── */}
       <div className="grid gap-5 lg:grid-cols-2">
 
         {/* ──────── LEFT: Stock Alert & Updates ──────── */}
@@ -780,10 +1126,10 @@ export function DashboardOverview() {
           <CardHeader className="flex flex-row items-start justify-between gap-4 pb-0 px-6 pt-6">
             <div className="flex-1 min-w-0">
               <CardTitle className="text-lg font-bold text-gray-900 dark:text-foreground mb-0.5">
-                Recent Stock Movements
+                Recent Activity
               </CardTitle>
               <CardDescription className="text-sm text-gray-400 dark:text-muted-foreground">
-                Inventory transactions log
+                Latest stock movements with timestamps
               </CardDescription>
             </div>
             {!isGuest && (
@@ -796,17 +1142,8 @@ export function DashboardOverview() {
             )}
           </CardHeader>
           <CardContent className="px-6 pb-5 pt-4">
-            {/* Table Header */}
-            <div className="grid grid-cols-[1.4fr_1.2fr_1.2fr_0.8fr_0.6fr] gap-2 text-[11px] font-semibold text-gray-400 dark:text-muted-foreground uppercase tracking-wider pb-3 border-b border-gray-100 dark:border-border">
-              <div>Date & Time</div>
-              <div>Product Name</div>
-              <div>Batch Number</div>
-              <div className="text-center">Action</div>
-              <div className="text-right">Quantity</div>
-            </div>
-
-            {/* Movement Rows */}
-            <div className="divide-y divide-gray-50 dark:divide-border/50">
+            {/* Movement Rows — Card Style */}
+            <div className="space-y-2">
               {(() => {
                 const { items, totalPages, totalItems } = getPaginatedMovements()
 
@@ -828,49 +1165,56 @@ export function DashboardOverview() {
                       const action = getMovementAction(txn)
                       const qty = getMovementQuantity(txn)
                       const unit = getMovementUnit(txn)
+                      const typeLabel = getMovementTypeLabel(action)
 
                       return (
                         <div
                           key={`mvmt-${txn.id}-${index}`}
-                          className="grid grid-cols-[1.4fr_1.2fr_1.2fr_0.8fr_0.6fr] gap-2 py-3.5 items-center transition-colors hover:bg-gray-50/50 dark:hover:bg-secondary/20"
+                          className="flex items-center gap-3 p-3 rounded-xl bg-gray-50/60 dark:bg-secondary/20 border border-gray-100/60 dark:border-border/30 hover:bg-gray-100/60 dark:hover:bg-secondary/40 transition-all duration-200"
                         >
-                          {/* Date & Time */}
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-gray-700 dark:text-foreground leading-snug truncate">
-                              {dt.time && `${dt.time}`}
-                            </p>
-                            <p className="text-[11px] text-gray-400 dark:text-muted-foreground mt-0.5 truncate">
-                              {dt.date}
-                            </p>
+                          {/* IN / OUT indicator */}
+                          <div className={`flex-shrink-0 h-9 w-9 rounded-lg flex items-center justify-center ${action === "IN" ? "bg-emerald-100 dark:bg-emerald-950/40" :
+                              action === "OUT" ? "bg-red-100 dark:bg-red-950/40" :
+                                action === "GOOD RETURN" ? "bg-blue-100 dark:bg-blue-950/40" :
+                                  "bg-gray-100 dark:bg-gray-800"
+                            }`}>
+                            {action === "IN" ? (
+                              <ArrowDownCircle className="h-4 w-4 text-emerald-600" />
+                            ) : action === "OUT" ? (
+                              <ArrowUpCircle className="h-4 w-4 text-red-500" />
+                            ) : action === "GOOD RETURN" ? (
+                              <RefreshCw className="h-4 w-4 text-blue-500" />
+                            ) : (
+                              <Trash2 className="h-4 w-4 text-gray-400" />
+                            )}
                           </div>
 
-                          {/* Product Name */}
-                          <div className="min-w-0">
-                            <p className="text-sm text-gray-700 dark:text-foreground truncate leading-snug">
+                          {/* Product info */}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-800 dark:text-foreground truncate leading-snug">
                               {txn.product_name || "N/A"}
                             </p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="text-[11px] text-gray-400 dark:text-muted-foreground">
+                                {dt.time && `${dt.time}`} · {dt.date}
+                              </span>
+                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${typeLabel === "Restock" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400" :
+                                  typeLabel === "Usage" ? "bg-red-50 text-red-500 dark:bg-red-950/30 dark:text-red-400" :
+                                    typeLabel === "Return" ? "bg-blue-50 text-blue-500 dark:bg-blue-950/30 dark:text-blue-400" :
+                                      "bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400"
+                                }`}>
+                                {typeLabel}
+                              </span>
+                            </div>
                           </div>
 
-                          {/* Batch Number / Barcode */}
-                          <div className="min-w-0">
-                            <p className="text-[12px] text-gray-400 dark:text-muted-foreground font-mono truncate leading-snug">
-                              {txn.barcode || txn.reference_no || "—"}
-                            </p>
-                          </div>
-
-                          {/* Action Badge */}
-                          <div className="flex justify-center">
+                          {/* Action badge + qty */}
+                          <div className="flex items-center gap-2.5 flex-shrink-0">
                             <ActionBadge action={action} />
-                          </div>
-
-                          {/* Quantity */}
-                          <div className="text-right">
-                            <span className="text-sm font-bold text-gray-800 dark:text-foreground">
-                              {qty}
-                            </span>
-                            <span className="text-[11px] text-gray-400 ml-1">
-                              {unit}
-                            </span>
+                            <div className="text-right min-w-[50px]">
+                              <span className="text-sm font-bold text-gray-800 dark:text-foreground">{qty}</span>
+                              <span className="text-[11px] text-gray-400 ml-1">{unit}</span>
+                            </div>
                           </div>
                         </div>
                       )
@@ -878,7 +1222,7 @@ export function DashboardOverview() {
 
                     {/* Pagination Controls */}
                     {totalPages > 1 && (
-                      <div className="flex items-center justify-between pt-4 mt-1">
+                      <div className="flex items-center justify-between pt-3 mt-1">
                         <div className="text-xs text-gray-400 dark:text-muted-foreground">
                           Showing {items.length} of {totalItems}
                         </div>
@@ -918,6 +1262,102 @@ export function DashboardOverview() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ─── Usage Trend Chart ─── */}
+      <Card className="rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.08)] transition-all duration-300 overflow-hidden">
+        <CardHeader className="px-6 pt-6 pb-2">
+          <CardTitle className="text-lg font-bold text-gray-900 dark:text-foreground">
+            Inventory Usage Trend
+          </CardTitle>
+          <CardDescription className="text-sm text-gray-400 dark:text-muted-foreground">
+            Daily usage and restocking patterns over time
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="px-6 pb-6">
+          {usageTrendData.length > 0 ? (
+            <div className="w-full h-[280px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={usageTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="usedGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#EF4444" stopOpacity={0.15} />
+                      <stop offset="95%" stopColor="#EF4444" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="restockedGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10B981" stopOpacity={0.15} />
+                      <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 11, fill: "#9CA3AF" }}
+                    tickLine={false}
+                    axisLine={{ stroke: "#e5e7eb" }}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 11, fill: "#9CA3AF" }}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <RechartsTooltip
+                    contentStyle={{
+                      backgroundColor: "white",
+                      border: "1px solid #e5e7eb",
+                      borderRadius: "12px",
+                      padding: "10px 16px",
+                      boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                      fontSize: "13px",
+                    }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="used"
+                    stroke="#EF4444"
+                    strokeWidth={2.5}
+                    fill="url(#usedGradient)"
+                    name="Used / Outgoing"
+                    dot={{ fill: "#EF4444", r: 3, strokeWidth: 0 }}
+                    activeDot={{ r: 5, fill: "#EF4444", strokeWidth: 2, stroke: "white" }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="restocked"
+                    stroke="#10B981"
+                    strokeWidth={2.5}
+                    fill="url(#restockedGradient)"
+                    name="Restocked / Incoming"
+                    dot={{ fill: "#10B981", r: 3, strokeWidth: 0 }}
+                    activeDot={{ r: 5, fill: "#10B981", strokeWidth: 2, stroke: "white" }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-16">
+              <div className="h-14 w-14 rounded-full bg-gray-50 dark:bg-secondary/50 flex items-center justify-center mb-3">
+                <TrendingUp className="h-6 w-6 text-gray-300" />
+              </div>
+              <p className="text-sm text-gray-400">No usage data available yet</p>
+              <p className="text-xs text-gray-300 mt-1">Trend data will appear as transactions are logged</p>
+            </div>
+          )}
+
+          {/* Legend */}
+          {usageTrendData.length > 0 && (
+            <div className="flex items-center justify-center gap-6 mt-3 pt-3 border-t border-gray-100 dark:border-border">
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-[3px] rounded-full bg-red-500" />
+                <span className="text-xs text-gray-500 dark:text-muted-foreground">Used / Outgoing</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-[3px] rounded-full bg-emerald-500" />
+                <span className="text-xs text-gray-500 dark:text-muted-foreground">Restocked / Incoming</span>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }
