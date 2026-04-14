@@ -10,9 +10,11 @@ interface BarcodeModalProps {
   onOpenChange: (open: boolean) => void
   barcode: string
   productName: string
+  productionDate?: string
+  expiryDate?: string
 }
 
-export function BarcodeModal({ open, onOpenChange, barcode, productName }: BarcodeModalProps) {
+export function BarcodeModal({ open, onOpenChange, barcode, productName, productionDate, expiryDate }: BarcodeModalProps) {
   const barcodeSvgRef = useRef<SVGSVGElement | null>(null)
   const [svgMounted, setSvgMounted] = useState(false)
 
@@ -45,92 +47,144 @@ export function BarcodeModal({ open, onOpenChange, barcode, productName }: Barco
     })
   }, [svgMounted, barcode])
 
-  // ── Print handler (hidden iframe — clean print layout) ─────────────────
+  // ── Print handler — opens clean 48mm thermal print window ────────────────
   const handlePrint = useCallback(() => {
     const svgEl = barcodeSvgRef.current
     if (!svgEl) return
-    const svgHtml = svgEl.outerHTML
 
-    const iframe = document.createElement("iframe")
-    iframe.style.position = "fixed"
-    iframe.style.top = "-10000px"
-    iframe.style.left = "-10000px"
-    iframe.style.width = "0"
-    iframe.style.height = "0"
-    iframe.style.border = "none"
-    document.body.appendChild(iframe)
+    // Clone SVG and ensure it fills 100% width for 48mm paper
+    const svgClone = svgEl.cloneNode(true) as SVGSVGElement
+    svgClone.setAttribute("width", "100%")
+    svgClone.removeAttribute("height")
+    svgClone.style.width = "100%"
+    svgClone.style.display = "block"
+    const svgHtml = svgClone.outerHTML
 
-    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document
-    if (!iframeDoc) {
-      document.body.removeChild(iframe)
-      return
+    // Format dates safely
+    const prodLabel = productionDate ? `Production: ${productionDate}` : ""
+    const expLabel  = expiryDate     ? `Expiration: ${expiryDate}`   : ""
+    const datesHtml = (prodLabel || expLabel)
+      ? `<div class="dates">${prodLabel ? `<div>${prodLabel}</div>` : ""}${expLabel ? `<div>${expLabel}</div>` : ""}</div>`
+      : ""
+
+    // Build the full print page as a blob URL so we can open it
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Label — ${barcode}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* Screen preview (before print dialog opens) */
+    body {
+      background: #f0f0f0;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 12px;
+      font-family: Arial, Helvetica, sans-serif;
     }
 
-    iframeDoc.open()
-    iframeDoc.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Print Barcode — ${barcode}</title>
-          <style>
-            body {
-              margin: 0;
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              justify-content: center;
-              min-height: 100vh;
-              background: white;
-              font-family: Arial, Helvetica, sans-serif;
-            }
-            .label-container {
-              text-align: center;
-              padding: 20px;
-            }
-            .product-name {
-              font-size: 14pt;
-              font-weight: bold;
-              margin-bottom: 4px;
-            }
-            .barcode-code {
-              font-size: 10pt;
-              font-family: monospace;
-              letter-spacing: 2px;
-              color: #555;
-              margin-bottom: 12px;
-            }
-            svg { max-width: 95%; }
-          </style>
-        </head>
-        <body>
-          <div class="label-container">
-            <div class="product-name">${productName}</div>
-            <div class="barcode-code">${barcode}</div>
-            ${svgHtml}
-          </div>
-        </body>
-      </html>
-    `)
-    iframeDoc.close()
-
-    iframe.onload = () => {
-      setTimeout(() => {
-        iframe.contentWindow?.focus()
-        iframe.contentWindow?.print()
-        setTimeout(() => { document.body.removeChild(iframe) }, 1000)
-      }, 250)
+    .print-container {
+      width: 48mm;
+      background: #fff;
+      padding: 4px;
+      text-align: center;
+      font-family: Arial, sans-serif;
     }
 
-    setTimeout(() => {
-      if (document.body.contains(iframe)) {
-        iframe.contentWindow?.focus()
-        iframe.contentWindow?.print()
-        setTimeout(() => {
-          if (document.body.contains(iframe)) document.body.removeChild(iframe)
-        }, 1000)
+    .product-name {
+      font-size: 11px;
+      font-weight: bold;
+      margin-bottom: 3px;
+      word-break: break-word;
+    }
+
+    .barcode {
+      width: 100%;
+      display: block;
+      margin: 4px 0;
+    }
+
+    .barcode svg,
+    .barcode canvas {
+      width: 100% !important;
+      height: auto !important;
+      display: block;
+    }
+
+    .barcode-text {
+      font-size: 9px;
+      letter-spacing: 1px;
+      margin-bottom: 4px;
+    }
+
+    .dates {
+      font-size: 8px;
+      line-height: 1.4;
+    }
+
+    /* ── Thermal print styles ── */
+    @media print {
+      @page {
+        size: 48mm auto;
+        margin: 0;
       }
-    }, 500)
-  }, [barcode, productName])
+
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: white;
+        width: 48mm;
+      }
+
+      .print-container {
+        width: 48mm;
+        padding: 4px;
+        text-align: center;
+        font-family: Arial, sans-serif;
+        page-break-after: avoid;
+      }
+
+      .product-name  { font-size: 11px; font-weight: bold; margin-bottom: 3px; }
+      .barcode       { width: 100%; display: block; margin: 4px 0; }
+      .barcode svg, .barcode canvas { width: 100% !important; height: auto !important; display: block; }
+      .barcode-text  { font-size: 9px; letter-spacing: 1px; margin-bottom: 4px; }
+      .dates         { font-size: 8px; line-height: 1.4; }
+    }
+  </style>
+</head>
+<body>
+  <div class="print-container">
+    <div class="product-name">${productName}</div>
+    <div class="barcode">${svgHtml}</div>
+    <div class="barcode-text">${barcode}</div>
+    ${datesHtml}
+  </div>
+  <script>
+    window.onload = function () {
+      setTimeout(function () {
+        window.print();
+        window.onafterprint = function () { window.close(); };
+      }, 150);
+    };
+  <\/script>
+</body>
+</html>`
+
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" })
+    const url  = URL.createObjectURL(blob)
+    const win  = window.open(url, "_blank", "width=300,height=500,toolbar=no,scrollbars=no,menubar=no")
+
+    // Revoke the blob URL after the window has had time to load
+    if (win) {
+      win.addEventListener("load", () => URL.revokeObjectURL(url), { once: true })
+    } else {
+      // If popup was blocked, revoke after a delay
+      setTimeout(() => URL.revokeObjectURL(url), 10_000)
+    }
+  }, [barcode, productName, productionDate, expiryDate])
 
   // ── Download as PNG ──────────────────────────────────────────────────────
   const handleDownload = useCallback(() => {

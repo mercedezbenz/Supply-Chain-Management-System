@@ -338,7 +338,7 @@ export function InventoryTable({
   const [cancelLoading, setCancelLoading] = useState(false)
   const [expandedBarcodes, setExpandedBarcodes] = useState<Set<string>>(new Set())
   const [currentPage, setCurrentPage] = useState(1)
-  const [barcodeViewItem, setBarcodeViewItem] = useState<{ barcode: string; productName: string } | null>(null)
+  const [barcodeViewItem, setBarcodeViewItem] = useState<{ barcode: string; productName: string; productionDate?: string; expiryDate?: string } | null>(null)
   const [badReturnDetailsView, setBadReturnDetailsView] = useState<{ productName: string; details: any; quantity: number } | null>(null)
 
   // ─── Scroll-aware indicators ────────────────────────────────────────────
@@ -970,7 +970,7 @@ export function InventoryTable({
                                   size="sm"
                                   variant="outline"
                                   className="h-8 px-2.5 gap-1.5 text-xs font-medium text-emerald-700 border-emerald-200 hover:text-emerald-800 hover:bg-emerald-50 hover:border-emerald-300 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-950/30 transition-colors shrink-0"
-                                  onClick={() => setBarcodeViewItem({ barcode: group.barcode, productName: group.productName })}
+                                  onClick={() => setBarcodeViewItem({ barcode: group.barcode, productName: group.productName, productionDate: formatTxnDate(group.productionDate) !== "\u2014" ? formatTxnDate(group.productionDate) : undefined, expiryDate: formatTxnDate(group.expiryDate) !== "\u2014" ? formatTxnDate(group.expiryDate) : undefined })}
                                   title="Show Barcode"
                                 >
                                   <Barcode className="h-3.5 w-3.5 shrink-0" />
@@ -981,7 +981,7 @@ export function InventoryTable({
                                   variant="outline"
                                   className="h-8 px-2.5 gap-1.5 text-xs font-medium text-blue-700 border-blue-200 hover:text-blue-800 hover:bg-blue-50 hover:border-blue-300 dark:text-blue-400 dark:border-blue-800 dark:hover:bg-blue-950/30 transition-colors shrink-0"
                                   onClick={() => {
-                                    setBarcodeViewItem({ barcode: group.barcode, productName: group.productName })
+                                    setBarcodeViewItem({ barcode: group.barcode, productName: group.productName, productionDate: formatTxnDate(group.productionDate) !== "\u2014" ? formatTxnDate(group.productionDate) : undefined, expiryDate: formatTxnDate(group.expiryDate) !== "\u2014" ? formatTxnDate(group.expiryDate) : undefined })
                                     setTimeout(() => {
                                       const printBtn = document.querySelector('[data-barcode-print]') as HTMLButtonElement
                                       if (printBtn) printBtn.click()
@@ -1261,7 +1261,7 @@ export function InventoryTable({
                         size="sm"
                         variant="outline"
                         className="flex-1 h-9 sm:h-10 rounded-lg gap-1.5 text-[11px] sm:text-sm font-semibold text-emerald-700 border-emerald-200/80 bg-emerald-50/40 hover:bg-emerald-100/60 hover:text-emerald-800 hover:border-emerald-300 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40 transition-all active:scale-[0.98]"
-                        onClick={(e) => { e.stopPropagation(); setBarcodeViewItem({ barcode: group.barcode, productName: group.productName }) }}
+                        onClick={(e) => { e.stopPropagation(); setBarcodeViewItem({ barcode: group.barcode, productName: group.productName, productionDate: formatTxnDate(group.productionDate) !== "\u2014" ? formatTxnDate(group.productionDate) : undefined, expiryDate: formatTxnDate(group.expiryDate) !== "\u2014" ? formatTxnDate(group.expiryDate) : undefined }) }}
                         title="Show Barcode"
                       >
                         <Barcode className="h-3.5 w-3.5" />
@@ -1273,7 +1273,7 @@ export function InventoryTable({
                         className="flex-1 h-9 sm:h-10 rounded-lg gap-1.5 text-[11px] sm:text-sm font-semibold text-blue-700 border-blue-200/80 bg-blue-50/40 hover:bg-blue-100/60 hover:text-blue-800 hover:border-blue-300 dark:text-blue-400 dark:border-blue-800 dark:bg-blue-950/20 dark:hover:bg-blue-950/40 transition-all active:scale-[0.98]"
                         onClick={(e) => {
                           e.stopPropagation()
-                          setBarcodeViewItem({ barcode: group.barcode, productName: group.productName })
+                          setBarcodeViewItem({ barcode: group.barcode, productName: group.productName, productionDate: formatTxnDate(group.productionDate) !== "\u2014" ? formatTxnDate(group.productionDate) : undefined, expiryDate: formatTxnDate(group.expiryDate) !== "\u2014" ? formatTxnDate(group.expiryDate) : undefined })
                           setTimeout(() => {
                             const printBtn = document.querySelector('[data-barcode-print]') as HTMLButtonElement
                             if (printBtn) printBtn.click()
@@ -1464,6 +1464,8 @@ export function InventoryTable({
         onOpenChange={(open) => { if (!open) setBarcodeViewItem(null) }}
         barcode={barcodeViewItem?.barcode || ""}
         productName={barcodeViewItem?.productName || ""}
+        productionDate={barcodeViewItem?.productionDate}
+        expiryDate={barcodeViewItem?.expiryDate}
       />
 
       {/* Bad Return Details Modal */}
