@@ -20,12 +20,16 @@ import {
   RotateCcw,
   Loader2,
   Package,
-  MapPin,
   CalendarDays,
   ArrowRightLeft,
   CornerDownLeft,
   ShieldCheck,
   Clock,
+  Scale,
+  Layers,
+  ChevronRight,
+  ArrowLeft,
+  X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { InventoryItem } from "@/lib/types"
@@ -34,7 +38,6 @@ import {
   FifoWarningDialog,
   type FifoCheckResult,
 } from "./fifo-warning-dialog"
-import { TransactionService } from "@/services/firebase-service"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -73,6 +76,15 @@ function getProductName(item: InventoryItem): string {
   return item.category
 }
 
+function parseDate(d: any): Date | null {
+  if (!d) return null
+  if (d instanceof Date) return d
+  if (d?.toDate) return d.toDate()
+  if (d?.seconds) return new Date(d.seconds * 1000)
+  const parsed = new Date(d)
+  return isNaN(parsed.getTime()) ? null : parsed
+}
+
 function formatDate(d: any): string {
   if (!d) return "—"
   try {
@@ -96,6 +108,248 @@ function getDaysUntilExpiry(d: any): number | null {
   }
 }
 
+function getExpiryBadge(d: any): { label: string; className: string } | null {
+  const days = getDaysUntilExpiry(d)
+  if (days === null) return null
+  if (days < 0) return { label: "Expired", className: "bg-red-100 text-red-700 border-red-200" }
+  if (days <= 3) return { label: `${days}d left`, className: "bg-red-100 text-red-700 border-red-200" }
+  if (days <= 7) return { label: `${days}d left`, className: "bg-amber-100 text-amber-700 border-amber-200" }
+  if (days <= 30) return { label: `${days}d left`, className: "bg-orange-100 text-orange-700 border-orange-200" }
+  return null
+}
+
+// Weight tally helper (mirrors outgoing-stock-dialog logic)
+type TallyStatus = "tally" | "not-tally" | "no-data"
+
+function getWeightTally(item: InventoryItem): {
+  productionWeight: number | null
+  packingWeight: number | null
+  difference: number | null
+  status: TallyStatus
+} {
+  const pw = (item as any).production_weight ?? null
+  const pkw = (item as any).packing_weight ?? null
+  if (pw === null || pw === undefined) {
+    return { productionWeight: null, packingWeight: pkw, difference: null, status: "no-data" }
+  }
+  if (pkw === null || pkw === undefined) {
+    return { productionWeight: pw, packingWeight: null, difference: null, status: "no-data" }
+  }
+  const diff = Math.abs(Number(pw) - Number(pkw))
+  return {
+    productionWeight: Number(pw),
+    packingWeight: Number(pkw),
+    difference: diff,
+    status: diff <= 5 ? "tally" : "not-tally",
+  }
+}
+
+/**
+ * Get all batches for the same product that have stock > 0, sorted oldest-first (FIFO order).
+ */
+function getAvailableBatchesFifo(
+  scannedItem: InventoryItem,
+  allItems: InventoryItem[]
+): InventoryItem[] {
+  const scannedName = getProductName(scannedItem).toLowerCase().trim()
+  const sameName = allItems.filter((item) => {
+    const name = getProductName(item).toLowerCase().trim()
+    return name === scannedName && resolveStockLeft(item) > 0
+  })
+  return [...sameName].sort((a, b) => {
+    const aExpiry = parseDate((a as any).expiryDate ?? (a as any).expirationDate)
+    const bExpiry = parseDate((b as any).expiryDate ?? (b as any).expirationDate)
+    if (aExpiry && bExpiry) {
+      const diff = aExpiry.getTime() - bExpiry.getTime()
+      if (diff !== 0) return diff
+    } else if (aExpiry && !bExpiry) {
+      return -1
+    } else if (!aExpiry && bExpiry) {
+      return 1
+    }
+    const aCreated = parseDate(a.createdAt)?.getTime() ?? Infinity
+    const bCreated = parseDate(b.createdAt)?.getTime() ?? Infinity
+    return aCreated - bCreated
+  })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Older Stock Modal
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface OlderStockModalProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  productName: string
+  batches: InventoryItem[]
+  onSelectBatch: (item: InventoryItem) => void
+}
+
+function OlderStockModal({
+  open,
+  onOpenChange,
+  productName,
+  batches,
+  onSelectBatch,
+}: OlderStockModalProps) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="!w-[98vw] sm:!w-auto sm:max-w-[600px] !p-0 !gap-0 !overflow-hidden">
+
+        {/* ════ HEADER ════ */}
+        <div className="px-5 sm:px-6 pt-5 pb-4 border-b border-slate-100 bg-gradient-to-r from-blue-50 to-indigo-50">
+          <DialogHeader className="!space-y-1">
+            <DialogTitle className="flex items-center gap-2.5 text-lg">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-100 border border-blue-200">
+                <Layers className="h-5 w-5 text-blue-600" />
+              </div>
+              <div>
+                <span className="text-slate-800">Available Stock Batches</span>
+                <p className="text-xs font-normal text-blue-700/80 mt-0.5">
+                  Sorted oldest first · FIFO order
+                </p>
+              </div>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500 mt-1">
+              Select a batch below to proceed with Product Out for{" "}
+              <span className="font-semibold text-slate-700">{productName}</span>.
+            </DialogDescription>
+          </DialogHeader>
+        </div>
+
+        {/* ════ BODY ════ */}
+        <div className="px-5 sm:px-6 py-4 max-h-[60vh] overflow-y-auto space-y-3">
+          {batches.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 py-10 text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 border border-slate-200">
+                <Package className="h-7 w-7 text-slate-400" />
+              </div>
+              <p className="text-sm text-slate-500">No other batches with available stock found.</p>
+            </div>
+          ) : (
+            batches.map((item, idx) => {
+              const stockLeft = resolveStockLeft(item)
+              const expiry = (item as any).expiryDate ?? (item as any).expirationDate
+              const expiryDays = getDaysUntilExpiry(expiry)
+              const expiryBadge = getExpiryBadge(expiry)
+              const createdAt = parseDate(item.createdAt)
+              const isOldest = idx === 0
+
+              return (
+                <div
+                  key={item.id}
+                  className={cn(
+                    "rounded-xl border-2 p-4 transition-all duration-200",
+                    isOldest
+                      ? "border-emerald-300 bg-emerald-50/50"
+                      : "border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/30"
+                  )}
+                >
+                  {/* Batch header */}
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-[10px] font-bold text-slate-400 bg-slate-100 rounded-full px-2 py-0.5 shrink-0">
+                        #{idx + 1}
+                      </span>
+                      <p className="text-sm font-mono font-semibold text-slate-700 truncate">
+                        {item.barcode || "No barcode"}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {isOldest && (
+                        <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px] font-bold px-2 py-0.5 gap-1">
+                          <ShieldCheck className="h-3 w-3" />
+                          FIFO First
+                        </Badge>
+                      )}
+                      {expiryBadge && (
+                        <Badge
+                          className={cn("text-[10px] font-bold px-2 py-0.5 gap-1", expiryBadge.className)}
+                          variant="outline"
+                        >
+                          <Clock className="h-3 w-3" />
+                          {expiryBadge.label}
+                        </Badge>
+                      )}
+                      <Badge
+                        className={cn(
+                          "text-xs font-bold px-2.5 py-0.5",
+                          stockLeft <= 5
+                            ? "bg-amber-100 text-amber-700 border-amber-200"
+                            : "bg-emerald-100 text-emerald-700 border-emerald-200"
+                        )}
+                        variant="outline"
+                      >
+                        {stockLeft} left
+                      </Badge>
+                    </div>
+                  </div>
+
+                  {/* Info grid */}
+                  <div className="grid grid-cols-2 gap-y-2 gap-x-4 mb-3">
+                    <div className="flex items-center gap-2">
+                      <CalendarDays className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                      <div>
+                        <p className="text-[10px] text-slate-400 uppercase tracking-wider font-medium">Date Added</p>
+                        <p className="text-sm font-semibold text-slate-700">
+                          {createdAt
+                            ? createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                            : "—"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Clock className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                      <div>
+                        <p className="text-[10px] text-slate-400 uppercase tracking-wider font-medium">Expiry Date</p>
+                        <p className="text-sm font-semibold text-slate-700">
+                          {formatDate(expiry)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Select button */}
+                  <Button
+                    type="button"
+                    onClick={() => onSelectBatch(item)}
+                    className={cn(
+                      "w-full h-10 gap-2 font-semibold text-sm rounded-xl transition-all",
+                      isOldest
+                        ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-200"
+                        : "bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-200"
+                    )}
+                  >
+                    <Truck className="h-4 w-4" />
+                    Use This Batch
+                    <ChevronRight className="h-4 w-4 ml-auto" />
+                  </Button>
+                </div>
+              )
+            })
+          )}
+        </div>
+
+        {/* ════ FOOTER ════ */}
+        <div className="px-5 sm:px-6 py-3.5 border-t border-slate-100 bg-slate-50/60 flex items-center justify-between">
+          <p className="text-xs text-slate-400">
+            {batches.length} batch{batches.length !== 1 ? "es" : ""} available with stock
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            className="h-9 px-4 gap-2 text-sm rounded-xl border-slate-300"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Go Back
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
@@ -116,9 +370,13 @@ export function ScanItemDialog({
   const [foundItem, setFoundItem] = useState<InventoryItem | null>(null)
   const [lastScannedBarcode, setLastScannedBarcode] = useState("")
 
-  // FIFO state
+  // FIFO state (for when stock IS available but older stock exists)
   const [fifoDialogOpen, setFifoDialogOpen] = useState(false)
   const [fifoResult, setFifoResult] = useState<FifoCheckResult | null>(null)
+
+  // "View Older Stock" modal state (for when scanned batch = 0 stock)
+  const [olderStockModalOpen, setOlderStockModalOpen] = useState(false)
+  const [olderStockBatches, setOlderStockBatches] = useState<InventoryItem[]>([])
 
   // ── Reset ─────────────────────────────────────────────────────────────
   const resetScan = useCallback(() => {
@@ -127,6 +385,7 @@ export function ScanItemDialog({
     setFoundItem(null)
     setLastScannedBarcode("")
     setFifoResult(null)
+    setOlderStockBatches([])
     setTimeout(() => inputRef.current?.focus(), 100)
   }, [])
 
@@ -184,11 +443,13 @@ export function ScanItemDialog({
     }
   }
 
-  // ── FIFO-aware Product Out ──────────────────────────────────────────
+  // ── Product Out ──────────────────────────────────────────────────────
+  // Only called when scanned batch has stock > 0.
+  // Checks FIFO compliance; if not compliant, shows FIFO warning.
   const handleProductOut = () => {
     if (!foundItem || !onProductOut) return
 
-    // Perform FIFO check
+    // Perform FIFO check (only relevant when scanned item has stock)
     const result = performFifoCheck(foundItem, inventoryItems)
 
     if (result.isFifoCompliant) {
@@ -196,9 +457,27 @@ export function ScanItemDialog({
       onProductOut(foundItem)
       onOpenChange(false)
     } else {
-      // Scanned item is NOT the oldest → show FIFO warning
+      // Scanned item is NOT the oldest → show FIFO warning (suggestion, not forced)
       setFifoResult(result)
       setFifoDialogOpen(true)
+    }
+  }
+
+  // ── "View Older Stock" clicked ───────────────────────────────────────
+  // Called when the scanned batch has 0 stock; opens the batch selection modal.
+  const handleViewOlderStock = () => {
+    if (!foundItem) return
+    const batches = getAvailableBatchesFifo(foundItem, inventoryItems)
+    setOlderStockBatches(batches)
+    setOlderStockModalOpen(true)
+  }
+
+  // ── Older Stock: user selected a batch ──────────────────────────────
+  const handleSelectOlderBatch = (item: InventoryItem) => {
+    setOlderStockModalOpen(false)
+    if (onProductOut) {
+      onProductOut(item)
+      onOpenChange(false)
     }
   }
 
@@ -236,7 +515,6 @@ export function ScanItemDialog({
     reason: string
   ) => {
     try {
-      // Log is appended to the fifo_logs collection via addDocument
       const { FirebaseService } = await import("@/services/firebase-service")
       await FirebaseService.addDocument("fifo_logs", {
         action,
@@ -252,7 +530,6 @@ export function ScanItemDialog({
       console.log(`[FIFO] Logged ${action} — selected: ${selectedItem.barcode}, alternative: ${alternativeItem.barcode}`)
     } catch (err) {
       console.warn("[FIFO] Failed to log FIFO action:", err)
-      // Non-blocking — don't prevent the product out flow
     }
   }
 
@@ -272,15 +549,24 @@ export function ScanItemDialog({
 
   const stockLeft = foundItem ? resolveStockLeft(foundItem) : 0
 
-  // Compute FIFO info for display badge when item is found
-  const fifoInfo = foundItem
+  // Compute FIFO info for display badge when item has stock (stock > 0 only)
+  const fifoInfo = foundItem && stockLeft > 0
     ? performFifoCheck(foundItem, inventoryItems)
     : null
+
+  // When stock = 0, check if OTHER batches of same product have stock
+  const hasOlderStockAvailable =
+    foundItem && stockLeft <= 0
+      ? getAvailableBatchesFifo(foundItem, inventoryItems).length > 0
+      : false
 
   // Expiry days for badge
   const expiryDays = foundItem
     ? getDaysUntilExpiry((foundItem as any).expiryDate ?? (foundItem as any).expirationDate)
     : null
+
+  // Weight tally for found item
+  const weightTally = foundItem ? getWeightTally(foundItem) : null
 
   return (
     <>
@@ -375,8 +661,8 @@ export function ScanItemDialog({
                     <p className="text-sm font-semibold text-emerald-700">Barcode Matched</p>
                     <p className="text-xs text-emerald-600/70 font-mono">{lastScannedBarcode}</p>
                   </div>
-                  {/* FIFO status indicator */}
-                  {fifoInfo && (
+                  {/* FIFO status indicator — only show when item has stock */}
+                  {fifoInfo && stockLeft > 0 && (
                     <div className={cn(
                       "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border shrink-0",
                       fifoInfo.isFifoCompliant
@@ -527,12 +813,81 @@ export function ScanItemDialog({
                       </div>
                     </div>
 
+                    {/* Production Weight */}
+                    <div className="flex items-start gap-3">
+                      <Scale className="h-4 w-4 text-slate-400 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Production Weight</p>
+                        <p className="text-sm font-semibold text-slate-700 mt-0.5">
+                          {weightTally?.productionWeight !== null && weightTally?.productionWeight !== undefined
+                            ? `${Number(weightTally.productionWeight).toFixed(1)} kg`
+                            : "N/A"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Packing Weight */}
+                    <div className="flex items-start gap-3">
+                      <Scale className="h-4 w-4 text-slate-400 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Packing Weight</p>
+                        <p className="text-sm font-semibold text-slate-700 mt-0.5">
+                          {weightTally?.packingWeight !== null && weightTally?.packingWeight !== undefined
+                            ? `${Number(weightTally.packingWeight).toFixed(1)} kg`
+                            : "N/A"}
+                        </p>
+                      </div>
+                    </div>
 
                   </div>
                 </div>
 
-                {/* FIFO warning banner — shown inline when not compliant */}
-                {fifoInfo && !fifoInfo.isFifoCompliant && (
+                {/* Weight Tally Status Banner */}
+                {weightTally && weightTally.status !== "no-data" && weightTally.difference !== null && (
+                  <div
+                    className={cn(
+                      "rounded-xl border px-4 py-3 flex items-start gap-3 animate-in fade-in-0 duration-200",
+                      weightTally.status === "tally"
+                        ? "bg-emerald-50 border-emerald-200"
+                        : "bg-red-50 border-red-200"
+                    )}
+                  >
+                    {weightTally.status === "tally" ? (
+                      <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertTriangle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+                    )}
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className={cn(
+                          "text-sm font-semibold",
+                          weightTally.status === "tally" ? "text-emerald-700" : "text-red-700"
+                        )}>
+                          {weightTally.status === "tally" ? "Weight Tally ✅" : "Not Tally ⚠️"}
+                        </p>
+                        <span className={cn(
+                          "text-[11px] font-bold px-2 py-0.5 rounded-full border",
+                          weightTally.status === "tally"
+                            ? "bg-emerald-100 text-emerald-700 border-emerald-300"
+                            : "bg-red-100 text-red-700 border-red-300"
+                        )}>
+                          {weightTally.difference.toFixed(1)} kg diff
+                        </span>
+                      </div>
+                      <p className={cn(
+                        "text-xs mt-0.5",
+                        weightTally.status === "tally" ? "text-emerald-600/80" : "text-red-600/80"
+                      )}>
+                        Production: <b>{weightTally.productionWeight !== null ? `${Number(weightTally.productionWeight).toFixed(1)} kg` : "N/A"}</b>
+                        {" · "}
+                        Packing: <b>{weightTally.packingWeight !== null ? `${Number(weightTally.packingWeight).toFixed(1)} kg` : "N/A"}</b>
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* FIFO suggestion banner — only shown when item HAS stock but older stock exists */}
+                {fifoInfo && stockLeft > 0 && !fifoInfo.isFifoCompliant && (
                   <div className="flex items-start gap-2.5 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 animate-in fade-in-0 duration-200">
                     <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
                     <div>
@@ -545,11 +900,38 @@ export function ScanItemDialog({
                   </div>
                 )}
 
-                {/* No stock warning */}
+                {/* ── OUT OF STOCK: Warning + View Older Stock ─────────────── */}
                 {stockLeft <= 0 && (
-                  <div className="flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 px-4 py-2.5">
-                    <AlertTriangle className="h-4 w-4 text-red-500 shrink-0" />
-                    <p className="text-sm font-medium text-red-700">No stock available — Product Out is disabled.</p>
+                  <div className="rounded-xl border border-red-200 bg-red-50 overflow-hidden animate-in fade-in-0 duration-200">
+                    <div className="px-4 py-3 flex items-start gap-3">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-red-100 border border-red-200 shrink-0">
+                        <AlertTriangle className="h-5 w-5 text-red-500" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-red-700">Scanned batch is out of stock</p>
+                        <p className="text-xs text-red-600/80 mt-0.5">
+                          This batch has no remaining stock.
+                          {hasOlderStockAvailable
+                            ? " You can view older available stock for this product."
+                            : " No other batches are available for this product."}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* "View Older Stock" button — shown only when other stock exists */}
+                    {hasOlderStockAvailable && (
+                      <div className="px-4 pb-3">
+                        <Button
+                          type="button"
+                          onClick={handleViewOlderStock}
+                          className="w-full h-10 gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-xl shadow-md shadow-blue-200 transition-all hover:scale-[1.01]"
+                        >
+                          <Layers className="h-4 w-4" />
+                          View Older Stock
+                          <ChevronRight className="h-4 w-4 ml-auto" />
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -570,7 +952,7 @@ export function ScanItemDialog({
                   >
                     <Truck className="h-5 w-5" />
                     Product Out
-                    {fifoInfo && !fifoInfo.isFifoCompliant && (
+                    {fifoInfo && !fifoInfo.isFifoCompliant && stockLeft > 0 && (
                       <AlertTriangle className="h-3.5 w-3.5 ml-0.5" />
                     )}
                   </Button>
@@ -650,7 +1032,7 @@ export function ScanItemDialog({
         </DialogContent>
       </Dialog>
 
-      {/* ── FIFO Warning Dialog (opens on top of scan dialog) ── */}
+      {/* ── FIFO Warning Dialog (opens on top of scan dialog) — only for stock > 0 ── */}
       <FifoWarningDialog
         open={fifoDialogOpen}
         onOpenChange={setFifoDialogOpen}
@@ -658,6 +1040,15 @@ export function ScanItemDialog({
         onProceedWithOldest={handleFifoProceedWithOldest}
         onProceedWithScanned={handleFifoProceedWithScanned}
         onCancel={() => setFifoDialogOpen(false)}
+      />
+
+      {/* ── Older Stock Selection Modal — for when scanned batch = 0 stock ── */}
+      <OlderStockModal
+        open={olderStockModalOpen}
+        onOpenChange={setOlderStockModalOpen}
+        productName={foundItem ? getProductName(foundItem) : ""}
+        batches={olderStockBatches}
+        onSelectBatch={handleSelectOlderBatch}
       />
     </>
   )

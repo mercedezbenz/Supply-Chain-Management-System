@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation"
 import { ThemeProvider } from "@/components/theme-provider"
 import { SidebarProvider } from "@/components/layout/sidebar-context"
 import { AuthProvider } from "@/hooks/use-auth"
+import { Toaster } from "@/components/ui/sonner"
 
 export function ConditionalLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
@@ -21,7 +22,8 @@ export function ConditionalLayout({ children }: { children: React.ReactNode }) {
       <SidebarProvider>
         <AuthProvider>{children}</AuthProvider>
       </SidebarProvider>
+      {/* Sonner toast notifications — mounted once at the root */}
+      <Toaster />
     </ThemeProvider>
   )
 }
-

@@ -46,6 +46,13 @@ export interface InventoryItem {
   avgWeightMin?: number // Lower bound of average weight range (kg)
   avgWeightMax?: number // Upper bound of average weight range (kg)
   productionDate?: Date | any // Production date for incoming stock
+  // Weight tracking fields
+  production_weight?: number | null // Production weight in kg (required at entry, stored)
+  packing_weight?: number | null    // Packing weight in kg (optional)
+  weight_difference?: number | null // |production_weight - packing_weight|, stored for quick query
+  // Transaction reference documents
+  sales_invoice_no?: string | null
+  delivery_receipt_no?: string | null
   createdBy?: string
   createdAt: Date
   updatedAt: Date
@@ -148,6 +155,13 @@ export interface InventoryTransaction {
   process_date?: Date | any
   source: string             // supplier / production / customer_return / delivery
   created_at: Date | any
+  // Weight tracking fields
+  production_weight?: number | null
+  packing_weight?: number | null
+  weight_difference?: number | null
+  // Transaction reference documents
+  sales_invoice_no?: string | null
+  delivery_receipt_no?: string | null
 }
 
 export interface CustomerTransaction {

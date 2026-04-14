@@ -138,7 +138,6 @@ interface GroupedProduct {
   latestDate: any
   unitType: string
   totalIncoming: number
-  avgWeight: number
   totalOutgoing: number
   totalGoodReturn: number
   totalDamageReturn: number
@@ -151,6 +150,13 @@ interface GroupedProduct {
   expiryDate: any
   productionDate: any
   supplierName: string
+  // Weight tracking
+  production_weight: number | null
+  packing_weight: number | null
+  weight_difference: number | null
+  // Transaction references
+  sales_invoice_no: string | null
+  delivery_receipt_no: string | null
 }
 
 
@@ -367,7 +373,6 @@ export function InventoryTable({
           latestDate: (txn as any).transaction_date,
           unitType: deriveUnitType(txn),
           totalIncoming: 0,
-          avgWeight: 0,
           totalOutgoing: 0,
           totalGoodReturn: 0,
           totalDamageReturn: 0,
@@ -379,6 +384,13 @@ export function InventoryTable({
           expiryDate: null,
           productionDate: null,
           supplierName: "",
+          // Weight tracking
+          production_weight: null,
+          packing_weight: null,
+          weight_difference: null,
+          // Transaction references
+          sales_invoice_no: null,
+          delivery_receipt_no: null,
         })
       }
 
@@ -391,11 +403,6 @@ export function InventoryTable({
       group.totalGoodReturn += ((txn as any).good_return ?? 0)
       group.totalDamageReturn += ((txn as any).damage_return ?? 0)
 
-      // Capture avg_weight — use the latest non-zero value found
-      const txnAvgWeight = (txn as any).avg_weight ?? (txn as any).incoming_weight ?? 0
-      if (txnAvgWeight > 0) {
-        group.avgWeight = txnAvgWeight
-      }
 
       // Track latest transaction date
       const txnDateMs = parseDateToMs((txn as any).transaction_date)
@@ -431,7 +438,12 @@ export function InventoryTable({
         group.expiryDate = (earliestIncoming as any).expiry_date || null
         group.productionDate = (earliestIncoming as any).production_date || null
         group.supplierName = (earliestIncoming as any).supplier_name || ""
-
+        // Extract weight tracking & doc refs from earliest incoming txn
+        group.production_weight = (earliestIncoming as any).production_weight ?? null
+        group.packing_weight = (earliestIncoming as any).packing_weight ?? null
+        group.weight_difference = (earliestIncoming as any).weight_difference ?? null
+        group.sales_invoice_no = (earliestIncoming as any).sales_invoice_no ?? null
+        group.delivery_receipt_no = (earliestIncoming as any).delivery_receipt_no ?? null
       }
 
       // Fallback: if no incoming source match, use the very first transaction
@@ -613,21 +625,27 @@ export function InventoryTable({
   }
 
   // ─── Summary table columns (inventory tracking layout) ────
+  // width:  fixed px class applied to <th>   (controls min column width)
+  // Extra flag `weightGroup` marks the weight columns for the subtle group divider
   const SUMMARY_COLUMNS = [
-    { key: "expand", label: "", align: "center" as const, width: "w-10" },
-    { key: "dateAdded", label: "Date Added", align: "left" as const },
-    { key: "product", label: "Product Name", align: "left" as const },
-    { key: "barcode", label: "Barcode", align: "left" as const },
-
-    { key: "expiryDate", label: "Expiry Date", align: "left" as const },
-    { key: "incoming", label: "Incoming", align: "right" as const, width: "min-w-[110px]" },
-    { key: "outgoing", label: "Outgoing", align: "right" as const, width: "min-w-[110px]" },
-    { key: "goodReturn", label: "Good Rtn", align: "right" as const, width: "min-w-[110px]" },
-    { key: "badReturn", label: "Bad Rtn", align: "right" as const, width: "min-w-[110px]" },
-    { key: "remainingStock", label: "Remaining", align: "right" as const, width: "min-w-[120px]" },
-    { key: "weight", label: "Weight", align: "right" as const, width: "min-w-[100px]" },
-    { key: "unit", label: "Unit", align: "center" as const, width: "min-w-[80px]" },
-    { key: "actions", label: "Actions", align: "center" as const, width: "min-w-[140px]" },
+    { key: "expand",            label: "",                   align: "center" as const, width: "w-10 min-w-[40px]" },
+    { key: "dateAdded",         label: "Date Added",          align: "center" as const, width: "min-w-[110px] w-[110px]" },
+    { key: "product",           label: "Product Name",        align: "left"   as const, width: "min-w-[200px]" },
+    { key: "barcode",           label: "Barcode",             align: "left"   as const, width: "min-w-[150px]" },
+    { key: "expiryDate",        label: "Expiry Date",         align: "center" as const, width: "min-w-[110px] w-[110px]" },
+    { key: "incoming",          label: "Incoming",            align: "right"  as const, width: "min-w-[100px] w-[100px]" },
+    { key: "outgoing",          label: "Outgoing",            align: "right"  as const, width: "min-w-[100px] w-[100px]" },
+    { key: "goodReturn",        label: "Good Rtn",            align: "right"  as const, width: "min-w-[100px] w-[100px]" },
+    { key: "badReturn",         label: "Bad Rtn",             align: "right"  as const, width: "min-w-[100px] w-[100px]" },
+    { key: "remainingStock",    label: "Remaining",           align: "right"  as const, width: "min-w-[120px] w-[120px]" },
+    // ── Weight group: subtle left-border on first column ──
+    { key: "productionWeight",  label: "Prod. Weight",        align: "right"  as const, width: "min-w-[110px] w-[110px]", weightGroup: true },
+    { key: "packingWeight",     label: "Pack. Weight",        align: "right"  as const, width: "min-w-[110px] w-[110px]" },
+    { key: "weightDifference",  label: "Wt. Diff.",           align: "right"  as const, width: "min-w-[100px] w-[100px]" },
+    { key: "salesInvoiceNo",    label: "Sales Inv. No.",      align: "left"   as const, width: "min-w-[140px]" },
+    { key: "deliveryReceiptNo", label: "Delivery Rcpt. No.",  align: "left"   as const, width: "min-w-[160px]" },
+    { key: "unit",              label: "Unit",                align: "center" as const, width: "min-w-[72px]  w-[72px]" },
+    { key: "actions",           label: "Actions",             align: "center" as const, width: "min-w-[148px] w-[148px]" },
   ]
 
 
@@ -647,17 +665,21 @@ export function InventoryTable({
         <div className="hidden lg:block relative rounded-xl border border-border/40 bg-card overflow-hidden shadow-sm">
           <div
             ref={scrollContainerRef}
-            className="overflow-auto max-h-[65vh] inventory-scroll-container"
+            className="overflow-x-auto overflow-y-auto max-h-[65vh] inventory-scroll-container"
           >
-            <table className="w-full text-left min-w-max">
-              <thead className="sticky top-0 z-20 bg-gray-50 dark:bg-muted/50 border-b border-border/60">
+            <table className="w-full text-left" style={{ minWidth: "max-content" }}>
+              <thead className="sticky top-0 z-20 bg-gray-50/95 dark:bg-muted/60 border-b-2 border-border/50 backdrop-blur-sm">
                 <tr>
                   {SUMMARY_COLUMNS.map((col) => (
                     <th
                       key={col.key}
-                      className={`h-12 px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap ${
-                        col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left"
-                      } ${col.width || ""} ${col.key === "actions" ? "bg-gray-50 dark:bg-muted/50" : ""}`}
+                      className={[
+                        "h-11 px-4 py-2.5 text-[11px] font-bold text-muted-foreground/80 uppercase tracking-wider whitespace-nowrap select-none",
+                        col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left",
+                        col.width || "",
+                        (col as any).weightGroup ? "border-l-2 border-border/50" : "",
+                        col.key === "actions" ? "sticky right-0 bg-gray-50/95 dark:bg-muted/60 shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.06)]" : "",
+                      ].filter(Boolean).join(" ")}
                     >
                       {col.label}
                     </th>
@@ -696,6 +718,11 @@ export function InventoryTable({
                     else if (highlightFilter === "out-of-stock") highlightRing = "bg-red-50/60 dark:bg-red-950/20 ring-1 ring-red-400 ring-inset border-transparent relative z-10"
                     else if (highlightFilter === "expiring" || highlightFilter === "expiring-soon") highlightRing = "bg-orange-50/60 dark:bg-orange-950/20 ring-1 ring-orange-400 ring-inset border-transparent relative z-10"
                   }
+                  // Weight discrepancy indicator — secondary highlight (only when no filter highlight active)
+                  const hasWeightDiscrepancy = group.weight_difference != null && group.weight_difference > 5
+                  if (!isHighlighted && hasWeightDiscrepancy) {
+                    highlightRing = "ring-1 ring-orange-300 ring-inset border-transparent relative z-10"
+                  }
 
                   return (
                     <>{/* Fragment for summary + expanded rows */}
@@ -705,21 +732,21 @@ export function InventoryTable({
                         id={`inventory-item-${group.barcode}`}
                         ref={(el) => { if (el) itemRowRefs.current.set(group.barcode, el) }}
                         className={[
-                          "group border-b border-border/30 transition-colors duration-150",
+                          "group border-b border-border/25 transition-colors duration-150",
                           hasHistory ? "cursor-pointer" : "",
                           isExpanded
                             ? "bg-blue-50/70 dark:bg-blue-950/20"
                             : groupIndex % 2 === 0
                               ? "bg-white dark:bg-card"
-                              : "bg-gray-50/40 dark:bg-muted/10",
-                          "hover:bg-slate-100/70 dark:hover:bg-muted/30",
+                              : "bg-gray-50/50 dark:bg-muted/10",
+                          "hover:bg-blue-50/40 dark:hover:bg-muted/25",
                           highlightRing,
                         ].filter(Boolean).join(" ")}
                         onClick={() => hasHistory && toggleExpand(group.barcode)}
-                        title={hasHistory ? "Click to view transaction history" : ""}      
+                        title={hasHistory ? "Click to view transaction history" : ""}
                       >
                         {/* Expand Icon */}
-                        <td className="h-14 px-4 py-2 align-middle text-center w-10">
+                        <td className="h-14 px-3 py-2 align-middle text-center w-10">
                           {hasHistory ? (
                             <div className={`inline-flex items-center justify-center w-6 h-6 rounded-md transition-all duration-200 ${
                               isExpanded
@@ -736,77 +763,104 @@ export function InventoryTable({
                           )}
                         </td>
 
-                        {/* Date Added */}
-                        <td className="h-14 px-4 py-2 text-sm text-foreground/70 align-middle whitespace-nowrap">
-                          {formatTxnDate(group.dateAdded)}
+                        {/* Date Added — center aligned, narrow */}
+                        <td className="h-14 px-4 py-2 text-xs text-foreground/65 align-middle whitespace-nowrap text-center">
+                          {formatTxnDate(group.dateAdded) !== "\u2014"
+                            ? formatTxnDate(group.dateAdded)
+                            : <span className="text-muted-foreground">—</span>
+                          }
                         </td>
 
-                        {/* Product Name — with type icon + search highlight */}
+                        {/* Product Name — left aligned, wide */}
                         <td className="h-14 px-4 py-2 font-medium text-sm text-foreground align-middle">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
                             <span className="text-base shrink-0" aria-hidden="true">
                               {(() => {
                                 const name = (group.productName || "").toLowerCase();
                                 if (name.includes("chicken")) return "🐔";
                                 if (name.includes("pork") || name.includes("belly") || name.includes("back fat")) return "🥩";
                                 if (name.includes("beef")) return "🐄";
-                                if (name.includes("raw")) return "📦";
                                 return "📦";
                               })()}
                             </span>
-                            <span className="line-clamp-1" title={group.productName}>{highlightMatch(group.productName, searchQuery)}</span>
+                            <span className="line-clamp-1 min-w-0" title={group.productName}>
+                              {highlightMatch(group.productName, searchQuery)}
+                            </span>
                           </div>
                         </td>
 
-                        {/* Barcode */}
-                        <td className="h-14 px-4 py-2 font-mono text-sm text-foreground align-middle">
-                          <div className="truncate max-w-[150px]" title={group.barcode}>{highlightMatch(group.barcode, searchQuery)}</div>
+                        {/* Barcode — left aligned, wide, mono */}
+                        <td className="h-14 px-4 py-2 align-middle">
+                          <div className="font-mono text-[12px] text-foreground/80 truncate" title={group.barcode}>
+                            {group.barcode
+                              ? highlightMatch(group.barcode, searchQuery)
+                              : <span className="text-muted-foreground">—</span>
+                            }
+                          </div>
                         </td>
 
-
-
-                        {/* Expiry Date */}
-                        <td className="h-14 px-4 py-2 text-sm align-middle whitespace-nowrap">
+                        {/* Expiry Date — centered, narrow */}
+                        <td className="h-14 px-4 py-2 text-xs align-middle whitespace-nowrap text-center">
                           {formatTxnDate(group.expiryDate) !== "\u2014" ? (
-                            <span className="text-foreground/70 text-xs">{formatTxnDate(group.expiryDate)}</span>
+                            <span className="text-foreground/70">{formatTxnDate(group.expiryDate)}</span>
                           ) : (
-                            <span className="text-muted-foreground">{"\u2014"}</span>
+                            <span className="text-muted-foreground">—</span>
                           )}
                         </td>
 
-                        {/* Incoming Stock (with unit label) */}
-                        <td className="text-right h-14 px-4 py-2 font-medium text-sm align-middle">
-                          <span className={group.totalIncoming > 0 ? "text-green-600 dark:text-green-400 font-semibold" : "text-muted-foreground"}>
-                            {formatNumber(group.totalIncoming)} <span className="text-[11px] font-normal opacity-80">{group.unitType === "PACK" ? "packs" : "boxes"}</span>
+                        {/* Incoming Stock — right aligned */}
+                        <td className="h-14 px-4 py-2 align-middle text-right">
+                          <span className={`text-sm font-semibold ${
+                            group.totalIncoming > 0 ? "text-green-600 dark:text-green-400" : "text-muted-foreground font-normal"
+                          }`}>
+                            {formatNumber(group.totalIncoming)}
+                            <span className="text-[10px] font-normal opacity-70 ml-1">
+                              {group.unitType === "PACK" ? "pks" : "bx"}
+                            </span>
                           </span>
                         </td>
 
-                        {/* Outgoing Stock (with unit label) */}
-                        <td className="text-right h-14 px-4 py-2 font-medium text-sm align-middle">
-                          <span className={group.totalOutgoing > 0 ? "text-red-600 dark:text-red-400 font-semibold" : "text-muted-foreground"}>
-                            {formatNumber(group.totalOutgoing)} <span className="text-[11px] font-normal opacity-80">{group.unitType === "PACK" ? "packs" : "boxes"}</span>
+                        {/* Outgoing Stock — right aligned */}
+                        <td className="h-14 px-4 py-2 align-middle text-right">
+                          <span className={`text-sm font-semibold ${
+                            group.totalOutgoing > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground font-normal"
+                          }`}>
+                            {formatNumber(group.totalOutgoing)}
+                            <span className="text-[10px] font-normal opacity-70 ml-1">
+                              {group.unitType === "PACK" ? "pks" : "bx"}
+                            </span>
                           </span>
                         </td>
 
-                        {/* Good Return Stock — BLUE */}
-                        <td className="text-right h-14 px-4 py-2 font-medium text-sm align-middle">
-                          <span className={group.totalGoodReturn > 0 ? "text-blue-600 dark:text-blue-400 font-semibold" : "text-muted-foreground"}>
-                            {group.totalGoodReturn > 0 ? "+" : ""}{formatNumber(group.totalGoodReturn)} <span className="text-[11px] font-normal opacity-80">{group.unitType === "PACK" ? "packs" : "boxes"}</span>
+                        {/* Good Return — right aligned */}
+                        <td className="h-14 px-4 py-2 align-middle text-right">
+                          <span className={`text-sm font-semibold ${
+                            group.totalGoodReturn > 0 ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground font-normal"
+                          }`}>
+                            {group.totalGoodReturn > 0 ? "+" : ""}{formatNumber(group.totalGoodReturn)}
+                            <span className="text-[10px] font-normal opacity-70 ml-1">
+                              {group.unitType === "PACK" ? "pks" : "bx"}
+                            </span>
                           </span>
                         </td>
 
-                        {/* Bad Return Stock — GRAY */}
-                        <td className="text-right h-14 px-4 py-2 font-medium text-sm align-middle">
-                          <span className={group.totalDamageReturn > 0 ? "text-slate-500 dark:text-slate-400 font-semibold" : "text-muted-foreground"}>
-                            {formatNumber(group.totalDamageReturn)} <span className="text-[11px] font-normal opacity-80">{group.unitType === "PACK" ? "packs" : "boxes"}</span>
+                        {/* Bad Return — right aligned */}
+                        <td className="h-14 px-4 py-2 align-middle text-right">
+                          <span className={`text-sm font-semibold ${
+                            group.totalDamageReturn > 0 ? "text-slate-500 dark:text-slate-400" : "text-muted-foreground font-normal"
+                          }`}>
+                            {formatNumber(group.totalDamageReturn)}
+                            <span className="text-[10px] font-normal opacity-70 ml-1">
+                              {group.unitType === "PACK" ? "pks" : "bx"}
+                            </span>
                           </span>
                         </td>
 
-                        {/* Remaining Stock — Dynamic color: green (healthy ≥10), yellow (low 1-9), red (0) */}
-                        <td className="text-right h-14 px-4 py-2 font-medium text-sm align-middle">
+                        {/* Remaining Stock — right aligned, colored badge */}
+                        <td className="h-14 px-4 py-2 align-middle text-right">
                           {(() => {
                             const stock = group.stockLeft;
-                            const unit = group.unitType === "PACK" ? "packs" : "boxes";
+                            const unit = group.unitType === "PACK" ? "pks" : "bx";
                             let colorClass = "text-green-700 dark:text-green-400";
                             let bgClass = "bg-green-50 dark:bg-green-950/20";
                             let dotClass = "bg-green-500";
@@ -820,47 +874,112 @@ export function InventoryTable({
                               dotClass = "bg-amber-500";
                             }
                             return (
-                              <span className={`inline-flex items-center gap-1.5 font-bold px-2 py-0.5 rounded-md ${colorClass} ${bgClass}`}>
+                              <span className={`inline-flex items-center gap-1.5 font-bold text-sm px-2 py-0.5 rounded-md ${colorClass} ${bgClass}`}>
                                 <span className={`w-1.5 h-1.5 rounded-full ${dotClass} shrink-0`} />
-                                {formatNumber(stock)} <span className="text-[11px] font-normal opacity-80">{unit}</span>
+                                {formatNumber(stock)}
+                                <span className="text-[10px] font-normal opacity-75">{unit}</span>
                               </span>
                             );
                           })()}
                         </td>
 
-                        {/* Weight */}
-                        <td className="text-right h-14 px-4 py-2 font-medium text-sm align-middle">
-                          {group.avgWeight > 0 ? (
-                            <span className="text-foreground/80">{formatWeight(group.avgWeight)} kg</span>
+                        {/* Production Weight — weight-group left border, right aligned */}
+                        <td className="h-14 px-4 py-2 align-middle text-right border-l-2 border-border/40">
+                          {group.production_weight != null ? (
+                            <span className="text-sm font-medium text-foreground/80">
+                              {formatWeight(group.production_weight)}
+                              <span className="text-[10px] text-muted-foreground ml-0.5">kg</span>
+                            </span>
                           ) : (
-                            <span className="text-muted-foreground">{"\u2014"}</span>
+                            <span className="text-muted-foreground text-xs">N/A</span>
                           )}
                         </td>
 
-                        {/* Unit (Box / Pack) */}
-                        <td className="text-center h-14 px-4 py-2 font-medium text-sm align-middle whitespace-nowrap">
-                          <span className="text-foreground/70 text-xs">{group.unitType === "PACK" ? "Packs" : "Boxes"}</span>
+                        {/* Packing Weight — right aligned */}
+                        <td className="h-14 px-4 py-2 align-middle text-right">
+                          {group.packing_weight != null ? (
+                            <span className="text-sm font-medium text-foreground/80">
+                              {formatWeight(group.packing_weight)}
+                              <span className="text-[10px] text-muted-foreground ml-0.5">kg</span>
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">N/A</span>
+                          )}
                         </td>
 
-                        {/* Actions — Show Barcode + Print Barcode */}
-                        <td className="h-14 px-4 py-2 align-middle whitespace-nowrap text-center">
-                          <div className="flex items-center justify-center gap-2" onClick={(e) => e.stopPropagation()}>
+                        {/* Weight Difference — right aligned, badge */}
+                        <td className="h-14 px-4 py-2 align-middle text-right">
+                          {group.weight_difference != null ? (
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold ${
+                              group.weight_difference > 5
+                                ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                                : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                            }`}>
+                              {group.weight_difference > 5 && <span aria-label="warning">⚠</span>}
+                              {formatWeight(group.weight_difference)} kg
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">N/A</span>
+                          )}
+                        </td>
+
+                        {/* Sales Invoice No. — left aligned, flexible */}
+                        <td className="h-14 px-4 py-2 align-middle">
+                          {group.sales_invoice_no ? (
+                            <span
+                              className="font-mono text-[11px] text-foreground/80 block truncate"
+                              title={group.sales_invoice_no}
+                            >
+                              {group.sales_invoice_no}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          )}
+                        </td>
+
+                        {/* Delivery Receipt No. — left aligned, flexible */}
+                        <td className="h-14 px-4 py-2 align-middle">
+                          {group.delivery_receipt_no ? (
+                            <span
+                              className="font-mono text-[11px] text-foreground/80 block truncate"
+                              title={group.delivery_receipt_no}
+                            >
+                              {group.delivery_receipt_no}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          )}
+                        </td>
+
+                        {/* Unit — center aligned, narrow */}
+                        <td className="h-14 px-4 py-2 align-middle text-center whitespace-nowrap">
+                          <span className="text-[11px] font-medium text-foreground/60 uppercase tracking-wide">
+                            {group.unitType === "PACK" ? "Pack" : "Box"}
+                          </span>
+                        </td>
+
+                        {/* Actions — sticky right, equal-gap buttons */}
+                        <td className="h-14 px-4 py-2 align-middle text-center whitespace-nowrap sticky right-0 shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.06)] bg-inherit">
+                          <div
+                            className="flex items-center justify-center gap-2"
+                            onClick={(e) => e.stopPropagation()}
+                          >
                             {group.barcode && (
                               <>
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  className="h-8 px-3 gap-1.5 text-xs font-medium text-emerald-700 border-emerald-200 hover:text-emerald-800 hover:bg-emerald-50 hover:border-emerald-300 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-950/30 transition-colors"
+                                  className="h-8 px-2.5 gap-1.5 text-xs font-medium text-emerald-700 border-emerald-200 hover:text-emerald-800 hover:bg-emerald-50 hover:border-emerald-300 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-950/30 transition-colors shrink-0"
                                   onClick={() => setBarcodeViewItem({ barcode: group.barcode, productName: group.productName })}
                                   title="Show Barcode"
                                 >
-                                  <Barcode className="h-3.5 w-3.5" />
+                                  <Barcode className="h-3.5 w-3.5 shrink-0" />
                                   Show
                                 </Button>
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  className="h-8 px-3 gap-1.5 text-xs font-medium text-blue-700 border-blue-200 hover:text-blue-800 hover:bg-blue-50 hover:border-blue-300 dark:text-blue-400 dark:border-blue-800 dark:hover:bg-blue-950/30 transition-colors"
+                                  className="h-8 px-2.5 gap-1.5 text-xs font-medium text-blue-700 border-blue-200 hover:text-blue-800 hover:bg-blue-50 hover:border-blue-300 dark:text-blue-400 dark:border-blue-800 dark:hover:bg-blue-950/30 transition-colors shrink-0"
                                   onClick={() => {
                                     setBarcodeViewItem({ barcode: group.barcode, productName: group.productName })
                                     setTimeout(() => {
@@ -870,7 +989,7 @@ export function InventoryTable({
                                   }}
                                   title="Print Barcode"
                                 >
-                                  <Printer className="h-3.5 w-3.5" />
+                                  <Printer className="h-3.5 w-3.5 shrink-0" />
                                   Print
                                 </Button>
                               </>
@@ -1064,17 +1183,8 @@ export function InventoryTable({
                     </div>
                   </div>
 
-                  {/* ═══ ADDITIONAL DETAILS — Weight + Expiry ═══ */}
-                  <div className="grid grid-cols-2 gap-1.5 mt-1.5">
-                    <div className="flex items-center gap-1.5 rounded-lg bg-slate-50/80 dark:bg-slate-800/30 border border-slate-200/60 dark:border-slate-700/40 px-2 py-1.5">
-                      <Package className="h-3 w-3 text-slate-400 shrink-0" />
-                      <div className="min-w-0">
-                        <span className="text-[8px] sm:text-[9px] uppercase tracking-wider text-muted-foreground font-semibold block leading-none mb-0.5">Weight</span>
-                        <span className="text-[11px] sm:text-xs font-semibold text-foreground/80">
-                          {group.avgWeight > 0 ? `${formatWeight(group.avgWeight)} kg` : "\u2014"}
-                        </span>
-                      </div>
-                    </div>
+                  {/* ═══ ADDITIONAL DETAILS — Expiry ═══ */}
+                  <div className="grid grid-cols-1 gap-1.5 mt-1.5">
                     <div className="flex items-center gap-1.5 rounded-lg bg-slate-50/80 dark:bg-slate-800/30 border border-slate-200/60 dark:border-slate-700/40 px-2 py-1.5">
                       <svg className="h-3 w-3 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -1087,6 +1197,60 @@ export function InventoryTable({
                       </div>
                     </div>
                   </div>
+
+                  {/* ═══ WEIGHT TRACKING — Prod. / Pack. / Diff ═══ */}
+                  {(group.production_weight != null || group.packing_weight != null) && (
+                    <div className="grid grid-cols-3 gap-1.5 mt-1.5">
+                      <div className="flex flex-col rounded-lg bg-slate-50/80 dark:bg-slate-800/30 border border-slate-200/60 dark:border-slate-700/40 px-2 py-1.5">
+                        <span className="text-[8px] sm:text-[9px] uppercase tracking-wider text-muted-foreground font-semibold block leading-none mb-0.5">Prod. Wt</span>
+                        <span className="text-[11px] sm:text-xs font-semibold text-foreground/80">
+                          {group.production_weight != null ? `${formatWeight(group.production_weight)} kg` : "N/A"}
+                        </span>
+                      </div>
+                      <div className="flex flex-col rounded-lg bg-slate-50/80 dark:bg-slate-800/30 border border-slate-200/60 dark:border-slate-700/40 px-2 py-1.5">
+                        <span className="text-[8px] sm:text-[9px] uppercase tracking-wider text-muted-foreground font-semibold block leading-none mb-0.5">Pack. Wt</span>
+                        <span className="text-[11px] sm:text-xs font-semibold text-foreground/80">
+                          {group.packing_weight != null ? `${formatWeight(group.packing_weight)} kg` : "N/A"}
+                        </span>
+                      </div>
+                      <div className="flex flex-col rounded-lg border px-2 py-1.5 items-start justify-center">
+                        <span className="text-[8px] sm:text-[9px] uppercase tracking-wider text-muted-foreground font-semibold block leading-none mb-0.5">Wt. Diff</span>
+                        {group.weight_difference != null ? (
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                            group.weight_difference > 5
+                              ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                              : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                          }`}>
+                            {group.weight_difference > 5 ? "⚠ " : ""}{formatWeight(group.weight_difference)} kg
+                          </span>
+                        ) : (
+                          <span className="text-[11px] font-semibold text-muted-foreground">N/A</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ═══ DOCUMENT REFERENCES ═══ */}
+                  {(group.sales_invoice_no || group.delivery_receipt_no) && (
+                    <div className="grid grid-cols-2 gap-1.5 mt-1.5">
+                      {group.sales_invoice_no && (
+                        <div className="flex flex-col rounded-lg bg-violet-50/60 dark:bg-violet-900/10 border border-violet-200/60 dark:border-violet-800/30 px-2 py-1.5">
+                          <span className="text-[8px] sm:text-[9px] uppercase tracking-wider text-violet-500 font-semibold block leading-none mb-0.5">Sales Inv.</span>
+                          <span className="text-[10px] sm:text-xs font-semibold text-foreground/80 font-mono truncate" title={group.sales_invoice_no}>
+                            {group.sales_invoice_no}
+                          </span>
+                        </div>
+                      )}
+                      {group.delivery_receipt_no && (
+                        <div className="flex flex-col rounded-lg bg-violet-50/60 dark:bg-violet-900/10 border border-violet-200/60 dark:border-violet-800/30 px-2 py-1.5">
+                          <span className="text-[8px] sm:text-[9px] uppercase tracking-wider text-violet-500 font-semibold block leading-none mb-0.5">Deliv. Rcpt.</span>
+                          <span className="text-[10px] sm:text-xs font-semibold text-foreground/80 font-mono truncate" title={group.delivery_receipt_no}>
+                            {group.delivery_receipt_no}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* ═══ ACTIONS — Show Barcode + Print (touch-friendly) ═══ */}

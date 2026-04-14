@@ -28,7 +28,7 @@ import { Calendar } from "@/components/ui/calendar"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/hooks/use-auth"
 import { InventoryService, BarcodeService, TransactionService } from "@/services/firebase-service"
-import { useToast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import {
   CATEGORIES,
   getTypesForCategory,
@@ -125,9 +125,12 @@ const EMPTY_FORM = {
   expirationDate: undefined as Date | undefined,
   incomingStock: "",
   incomingUnit: "box" as "box" | "pack",
-  weightKg: "",
-  avgWeightMin: "",
-  avgWeightMax: "",
+  // Weight tracking
+  productionWeight: "",
+  packingWeight: "",
+  // Transaction references
+  salesInvoiceNo: "",
+  deliveryReceiptNo: "",
 }
 
 // Special sentinel value for "+ Add Item" option
@@ -136,7 +139,6 @@ const ADD_NEW_PRODUCT_SENTINEL = "__ADD_NEW_PRODUCT__"
 export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialogProps) {
   const isScanned = !!scannedItem
   const { user } = useAuth()
-  const { toast } = useToast()
   const [loading, setLoading] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [datePickerOpen, setDatePickerOpen] = useState(false)
@@ -292,10 +294,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
     setNewProductName("")
     setErrors((prev) => ({ ...prev, productName: "" }))
 
-    toast({
-      title: "Product Added",
-      description: `"${trimmed}" has been added to the dropdown.`,
-    })
+    toast(`"${trimmed}" has been added to the dropdown.`)
   }
 
   // Check if we can generate barcode
@@ -387,15 +386,12 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
 
       // Build formatted dates for the toast
       const prodDateFormatted = format(formData.productionDate, "MMMM dd, yyyy")
-      toast({
-        title: "Barcode Generated & Saved",
+      toast.success("Barcode Generated & Saved", {
         description: `Barcode: ${finalBarcode} | Production: ${prodDateFormatted}`,
       })
     } catch (error: any) {
-      toast({
-        title: "Barcode Generation Failed",
+      toast.error("Barcode Generation Failed", {
         description: error.message || "Please try again.",
-        variant: "destructive",
       })
     } finally {
       setIsGenerating(false)
@@ -596,20 +592,6 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
     }
 
 
-    // Average weight validation
-    const avgMin = parseFloat(formData.avgWeightMin)
-    const avgMax = parseFloat(formData.avgWeightMax)
-    const totalWeight = parseFloat(formData.weightKg)
-    const packs = parseInt(formData.incomingStock)
-    if (formData.avgWeightMin && formData.avgWeightMax && formData.weightKg && formData.incomingStock) {
-      if (!isNaN(avgMin) && !isNaN(avgMax) && !isNaN(totalWeight) && !isNaN(packs) && packs > 0) {
-        const weightPerPack = totalWeight / packs
-        if (weightPerPack < avgMin || weightPerPack > avgMax) {
-          newErrors.weightKg = `Weight per pack (${weightPerPack.toFixed(2)} kg) is outside the average range (${avgMin}-${avgMax} kg)`
-          newErrors.avgWeight = `Computed ${weightPerPack.toFixed(2)} kg/pack does not match range`
-        }
-      }
-    }
 
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
@@ -620,20 +602,13 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
     e.preventDefault()
 
     if (!user) {
-      toast({
-        title: "Authentication Error",
+      toast.error("Authentication Error", {
         description: "You must be logged in to add items.",
-        variant: "destructive",
       })
       return
     }
 
     if (!validateForm()) {
-      toast({
-        title: "Validation Error",
-        description: "Please fill in all required fields correctly.",
-        variant: "destructive",
-      })
       return
     }
 
@@ -641,6 +616,11 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
     try {
       const incoming = Number.parseInt(formData.incomingStock) || 0
       const stockLeft = incoming
+
+      // Compute weight difference
+      const prodW = formData.productionWeight ? parseFloat(formData.productionWeight) : null
+      const packW = formData.packingWeight ? parseFloat(formData.packingWeight) : null
+      const weightDiff = prodW !== null && packW !== null ? Math.abs(prodW - packW) : null
 
       const itemData: any = {
         barcode: formData.barcode.trim(),
@@ -663,9 +643,13 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         expiryDate: formData.expirationDate || null,
         expirationDate: formData.expirationDate || null,
         unit_type: formData.incomingUnit.toUpperCase(),
-        avg_weight: formData.weightKg ? parseFloat(formData.weightKg) : 0,
-        avgWeightMin: formData.avgWeightMin ? parseFloat(formData.avgWeightMin) : null,
-        avgWeightMax: formData.avgWeightMax ? parseFloat(formData.avgWeightMax) : null,
+        // Weight tracking
+        production_weight: prodW,
+        packing_weight: packW,
+        weight_difference: weightDiff,
+        // Transaction references
+        sales_invoice_no: formData.salesInvoiceNo.trim() || null,
+        delivery_receipt_no: formData.deliveryReceiptNo.trim() || null,
         qualityStatus: "GOOD" as const,
         transactionDocuments: {
           transaction_type: "incoming",
@@ -679,10 +663,6 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
       await InventoryService.addItem(itemData)
 
       // APPEND-ONLY LEDGER: Always create a NEW transaction row for every incoming event
-      const avgWeight = formData.weightKg ? parseFloat(formData.weightKg) : 0
-
-      console.log("[AddItem] Payload avg_weight:", avgWeight)
-
       await TransactionService.addTransaction({
         transaction_date: new Date(),
         product_name: autoProductName || formData.category,
@@ -695,7 +675,6 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         incoming_qty: incoming,
         incoming_packs: incoming,
         incoming_unit: formData.incomingUnit,
-        avg_weight: avgWeight,
         outgoing_qty: 0,
         outgoing_packs: 0,
         good_return: 0,
@@ -703,25 +682,30 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         stock_left: stockLeft,
         production_date: formData.productionDate || null,
         expiry_date: formData.expirationDate || null,
-        reference_no: "",
+        reference_no: formData.salesInvoiceNo.trim() || formData.deliveryReceiptNo.trim() || "",
         source: "incoming",
         process_date: null,
         created_at: new Date(),
+        // Weight tracking
+        production_weight: prodW,
+        packing_weight: packW,
+        weight_difference: weightDiff,
+        // Transaction references
+        sales_invoice_no: formData.salesInvoiceNo.trim() || null,
+        delivery_receipt_no: formData.deliveryReceiptNo.trim() || null,
       } as any)
 
-      toast({
-        title: "✅ Item Successfully Added",
-        description: `${itemData.name} has been added to inventory.`,
+      toast.success("Success", {
+        description: "Item successfully added to inventory.",
+        icon: "✅",
       })
 
       resetAll()
       onOpenChange(false)
     } catch (error: any) {
       console.error("Error adding item:", error)
-      toast({
-        title: "❌ Failed to Add Item",
-        description: error.message || "Something went wrong. Please try again.",
-        variant: "destructive",
+      toast.error("Error", {
+        description: "Something went wrong. Please try again.",
       })
     } finally {
       setLoading(false)
@@ -976,6 +960,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
               <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-5 grid gap-4">
                 <p className="text-xs font-semibold uppercase tracking-widest text-blue-500">Stock Entry</p>
 
+                {/* Row 1: Incoming Stock (full width on mobile, half on sm+) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {/* Incoming Stock */}
                   <div className="grid gap-1.5">
@@ -1010,152 +995,216 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                     </div>
                     {errors.incomingStock && <p className="text-xs text-destructive">{errors.incomingStock}</p>}
                   </div>
+                </div>
 
-                  {/* Weight */}
+                {/* Row 2: Production Weight | Packing Weight */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Production Weight */}
                   <div className="grid gap-1.5">
                     <Label className="text-sm font-medium text-slate-700">
-                      Weight <span className="text-slate-400 font-normal">(kg)</span>
+                      Production Weight
                     </Label>
                     <div className="flex gap-1.5 items-center">
                       <Input
+                        id="productionWeight"
                         type="number"
                         min="0"
                         step="0.01"
-                        value={formData.weightKg}
-                        onChange={(e) => {
-                          setFormData((prev) => ({ ...prev, weightKg: e.target.value }))
-                          setErrors((prev) => ({ ...prev, weightKg: "", avgWeight: "" }))
-                        }}
-                        placeholder="e.g. 25.5"
-                        className={cn("h-9 flex-1", errors.weightKg ? "border-red-500 bg-red-50" : "")}
+                        value={formData.productionWeight}
+                        onChange={(e) =>
+                          setFormData((prev) => ({ ...prev, productionWeight: e.target.value }))
+                        }
+                        placeholder="e.g. 120.5"
+                        className="h-9 flex-1"
                       />
-                      <span className="text-sm font-medium text-slate-500 shrink-0">kg</span>
+                      <span className="text-sm font-medium text-slate-400 shrink-0">kg</span>
                     </div>
-                    {errors.weightKg && <p className="text-xs text-red-600">{errors.weightKg}</p>}
+                  </div>
+
+                  {/* Packing Weight */}
+                  <div className="grid gap-1.5">
+                    <Label className="text-sm font-medium text-slate-700">
+                      Packing Weight
+                    </Label>
+                    <div className="flex gap-1.5 items-center">
+                      <Input
+                        id="packingWeight"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={formData.packingWeight}
+                        onChange={(e) =>
+                          setFormData((prev) => ({ ...prev, packingWeight: e.target.value }))
+                        }
+                        placeholder="e.g. 118.0"
+                        className="h-9 flex-1"
+                      />
+                      <span className="text-sm font-medium text-slate-400 shrink-0">kg</span>
+                    </div>
                   </div>
                 </div>
 
-                {/* Weight Range (optional) */}
-                <div className="grid gap-1.5">
-                  <Label className="text-sm font-medium text-slate-700">
-                    Weight Range <span className="text-slate-400 font-normal">(kg per pack/box, optional)</span>
-                  </Label>
-                  <div className="flex gap-2 items-center">
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.1"
-                      value={formData.avgWeightMin}
-                      onChange={(e) => {
-                        setFormData((prev) => ({ ...prev, avgWeightMin: e.target.value }))
-                        setErrors((prev) => ({ ...prev, avgWeight: "" }))
-                      }}
-                      placeholder="Min (e.g. 4)"
-                      className={cn("h-9 flex-1", errors.avgWeight ? "border-red-500 bg-red-50" : "")}
-                    />
-                    <span className="text-sm font-medium text-slate-400">to</span>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.1"
-                      value={formData.avgWeightMax}
-                      onChange={(e) => {
-                        setFormData((prev) => ({ ...prev, avgWeightMax: e.target.value }))
-                        setErrors((prev) => ({ ...prev, avgWeight: "" }))
-                      }}
-                      placeholder="Max (e.g. 5)"
-                      className={cn("h-9 flex-1", errors.avgWeight ? "border-red-500 bg-red-50" : "")}
-                    />
-                    <span className="text-sm font-medium text-slate-500 shrink-0">kg</span>
-                  </div>
-                  {errors.avgWeight && <p className="text-xs text-red-600">{errors.avgWeight}</p>}
-                  {(() => {
-                    const packs = parseInt(formData.incomingStock)
-                    const weight = parseFloat(formData.weightKg)
-                    const min = parseFloat(formData.avgWeightMin)
-                    const max = parseFloat(formData.avgWeightMax)
-                    if (!isNaN(packs) && packs > 0 && !isNaN(weight) && !isNaN(min) && !isNaN(max)) {
-                      const wpp = weight / packs
-                      const ok = wpp >= min && wpp <= max
-                      return (
-                        <p className={cn("text-xs font-medium", ok ? "text-emerald-600" : "text-red-600")}>
-                          {ok ? "✓" : "✗"} Weight per pack: {wpp.toFixed(2)} kg (range: {min}-{max} kg)
-                        </p>
-                      )
-                    }
-                    return null
-                  })()}
-                </div>
+                {/* Row 3: Real-time Weight Difference Indicator */}
+                {(() => {
+                  const pw = parseFloat(formData.productionWeight)
+                  const pkw = parseFloat(formData.packingWeight)
+                  if (!isNaN(pw) && formData.productionWeight && !isNaN(pkw) && formData.packingWeight) {
+                    const diff = Math.abs(pw - pkw)
+                    const isOk = diff <= 5
+                    return (
+                      <div className={cn(
+                        "rounded-lg border px-4 py-3 flex items-start gap-3 transition-colors",
+                        isOk ? "border-emerald-200 bg-emerald-50/60" : "border-red-200 bg-red-50/60"
+                      )}>
+                        <span className={cn(
+                          "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold",
+                          isOk ? "bg-emerald-500 text-white" : "bg-red-500 text-white"
+                        )}>
+                          {isOk ? "✓" : "!"}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className={cn("text-sm font-semibold", isOk ? "text-emerald-700" : "text-red-700")}>
+                            Weight Difference:{" "}
+                            <span className={cn(
+                              "inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-sm font-bold",
+                              isOk ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
+                            )}>
+                              {diff.toFixed(2)} kg
+                            </span>
+                          </p>
+                          {!isOk && (
+                            <p className="text-xs text-red-600 mt-1">
+                              ⚠️ Weight discrepancy exceeds 5 kg. Please verify values.
+                            </p>
+                          )}
+                          {isOk && (
+                            <p className="text-xs text-emerald-600 mt-1">Within acceptable range (≤ 5 kg)</p>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  }
+                  if ((formData.productionWeight || formData.packingWeight) && !(formData.productionWeight && formData.packingWeight)) {
+                    return (
+                      <p className="text-xs text-slate-400 italic">
+                        Enter both weights to see the difference.
+                      </p>
+                    )
+                  }
+                  return null
+                })()}
               </div>
 
               {/* ── 3. PRODUCTION, EXPIRATION & STORAGE ──────────────────── */}
               <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-5 grid gap-4">
                 <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Production, Expiration & Storage</p>
-                {/* Production Date */}
-                <div className="grid gap-1.5">
-                  <Label className="text-sm font-medium text-slate-700">
-                    Production Date <span className="text-red-500">*</span>
-                  </Label>
-                  <Input
-                    type="date"
-                    value={formData.productionDate ? format(formData.productionDate, "yyyy-MM-dd") : ""}
-                    onChange={(e) => {
-                      const val = e.target.value
-                      if (val) {
-                        const parsed = new Date(val + "T00:00:00")
-                        if (!isNaN(parsed.getTime())) {
-                          setFormData((prev) => ({ ...prev, productionDate: parsed, barcode: "" }))
-                          setBarcodeReady(false)
-                          if (errors.productionDate) {
-                            setErrors((prev) => ({ ...prev, productionDate: "" }))
-                          }
-                        }
-                      } else {
-                        setFormData((prev) => ({ ...prev, productionDate: undefined, barcode: "" }))
-                        setBarcodeReady(false)
-                      }
-                    }}
-                    className={cn(
-                      "h-9 text-sm",
-                      errors.productionDate && "border-destructive",
-                      formData.productionDate && "text-slate-800 font-medium"
-                    )}
-                  />
-                  {errors.productionDate && <p className="text-xs text-destructive">{errors.productionDate}</p>}
-                </div>
-
+                {/* Production Date | Expiration Date — side-by-side 50/50 */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="relative grid gap-1.5">
+                  {/* Production Date */}
+                  <div className="grid gap-1.5">
+                    <Label className="text-sm font-medium text-slate-700">
+                      Production Date <span className="text-red-500">*</span>
+                    </Label>
+                    <Input
+                      type="date"
+                      value={formData.productionDate ? format(formData.productionDate, "yyyy-MM-dd") : ""}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        if (val) {
+                          const parsed = new Date(val + "T00:00:00")
+                          if (!isNaN(parsed.getTime())) {
+                            setFormData((prev) => ({ ...prev, productionDate: parsed, barcode: "" }))
+                            setBarcodeReady(false)
+                            if (errors.productionDate) {
+                              setErrors((prev) => ({ ...prev, productionDate: "" }))
+                            }
+                          }
+                        } else {
+                          setFormData((prev) => ({ ...prev, productionDate: undefined, barcode: "" }))
+                          setBarcodeReady(false)
+                        }
+                      }}
+                      className={cn(
+                        "h-9 w-full text-sm",
+                        errors.productionDate && "border-destructive",
+                        formData.productionDate && "text-slate-800 font-medium"
+                      )}
+                    />
+                    {errors.productionDate && <p className="text-xs text-destructive">{errors.productionDate}</p>}
+                  </div>
+
+                  {/* Expiration Date */}
+                  <div className="grid gap-1.5">
                     <Label className="text-sm font-medium text-slate-700">
                       Expiration Date <span className="text-red-500">*</span>
                     </Label>
-                    {/* Manual date input */}
-                    <div className="flex gap-1.5">
-                      <Input
-                        type="date"
-                        value={formData.expirationDate ? format(formData.expirationDate, "yyyy-MM-dd") : ""}
-                        onChange={(e) => {
-                          const val = e.target.value
-                          if (val) {
-                            const parsed = new Date(val + "T00:00:00")
-                            if (!isNaN(parsed.getTime())) {
-                              setFormData((prev) => ({ ...prev, expirationDate: parsed }))
-                              if (errors.expirationDate) {
-                                setErrors((prev) => ({ ...prev, expirationDate: "" }))
-                              }
+                    <Input
+                      type="date"
+                      value={formData.expirationDate ? format(formData.expirationDate, "yyyy-MM-dd") : ""}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        if (val) {
+                          const parsed = new Date(val + "T00:00:00")
+                          if (!isNaN(parsed.getTime())) {
+                            setFormData((prev) => ({ ...prev, expirationDate: parsed }))
+                            if (errors.expirationDate) {
+                              setErrors((prev) => ({ ...prev, expirationDate: "" }))
                             }
-                          } else {
-                            setFormData((prev) => ({ ...prev, expirationDate: undefined }))
                           }
-                        }}
-                        className={cn(
-                          "h-9 flex-1 text-sm",
-                          errors.expirationDate && "border-destructive",
-                          formData.expirationDate && "text-slate-800 font-medium"
-                        )}
-                      />
-                    </div>
+                        } else {
+                          setFormData((prev) => ({ ...prev, expirationDate: undefined }))
+                        }
+                      }}
+                      className={cn(
+                        "h-9 w-full text-sm",
+                        errors.expirationDate && "border-destructive",
+                        formData.expirationDate && "text-slate-800 font-medium"
+                      )}
+                    />
                     {errors.expirationDate && <p className="text-xs text-destructive">{errors.expirationDate}</p>}
+                  </div>
+                </div>
+              </div>
+
+              {/* ── 4. TRANSACTION REFERENCES ────────────────────────────── */}
+              <div className="rounded-xl border border-violet-100 bg-violet-50/30 p-5 grid gap-4">
+                <p className="text-xs font-semibold uppercase tracking-widest text-violet-500">
+                  Transaction References
+                  <span className="ml-2 font-normal normal-case text-violet-400">(optional)</span>
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Sales Invoice No. */}
+                  <div className="grid gap-1.5">
+                    <Label className="text-sm font-medium text-slate-700">
+                      Sales Invoice No.
+                    </Label>
+                    <Input
+                      id="salesInvoiceNo"
+                      type="text"
+                      value={formData.salesInvoiceNo}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, salesInvoiceNo: e.target.value }))
+                      }
+                      placeholder="e.g. SI-2024-0001"
+                      className="h-9"
+                    />
+                  </div>
+
+                  {/* Delivery Receipt No. */}
+                  <div className="grid gap-1.5">
+                    <Label className="text-sm font-medium text-slate-700">
+                      Delivery Receipt No.
+                    </Label>
+                    <Input
+                      id="deliveryReceiptNo"
+                      type="text"
+                      value={formData.deliveryReceiptNo}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, deliveryReceiptNo: e.target.value }))
+                      }
+                      placeholder="e.g. DR-2024-0001"
+                      className="h-9"
+                    />
                   </div>
                 </div>
               </div>
