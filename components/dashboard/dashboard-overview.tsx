@@ -1265,95 +1265,175 @@ export function DashboardOverview() {
 
       {/* ─── Usage Trend Chart ─── */}
       <Card className="rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.08)] transition-all duration-300 overflow-hidden">
-        <CardHeader className="px-6 pt-6 pb-2">
-          <CardTitle className="text-lg font-bold text-gray-900 dark:text-foreground">
-            Inventory Usage Trend
-          </CardTitle>
-          <CardDescription className="text-sm text-gray-400 dark:text-muted-foreground">
-            Daily usage and restocking patterns over time
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="px-6 pb-6">
-          {usageTrendData.length > 0 ? (
-            <div className="w-full h-[280px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={usageTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="usedGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#EF4444" stopOpacity={0.15} />
-                      <stop offset="95%" stopColor="#EF4444" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="restockedGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10B981" stopOpacity={0.15} />
-                      <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fontSize: 11, fill: "#9CA3AF" }}
-                    tickLine={false}
-                    axisLine={{ stroke: "#e5e7eb" }}
-                  />
-                  <YAxis
-                    tick={{ fontSize: 11, fill: "#9CA3AF" }}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <RechartsTooltip
-                    contentStyle={{
-                      backgroundColor: "white",
-                      border: "1px solid #e5e7eb",
-                      borderRadius: "12px",
-                      padding: "10px 16px",
-                      boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
-                      fontSize: "13px",
-                    }}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="used"
-                    stroke="#EF4444"
-                    strokeWidth={2.5}
-                    fill="url(#usedGradient)"
-                    name="Used / Outgoing"
-                    dot={{ fill: "#EF4444", r: 3, strokeWidth: 0 }}
-                    activeDot={{ r: 5, fill: "#EF4444", strokeWidth: 2, stroke: "white" }}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="restocked"
-                    stroke="#10B981"
-                    strokeWidth={2.5}
-                    fill="url(#restockedGradient)"
-                    name="Restocked / Incoming"
-                    dot={{ fill: "#10B981", r: 3, strokeWidth: 0 }}
-                    activeDot={{ r: 5, fill: "#10B981", strokeWidth: 2, stroke: "white" }}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-16">
-              <div className="h-14 w-14 rounded-full bg-gray-50 dark:bg-secondary/50 flex items-center justify-center mb-3">
-                <TrendingUp className="h-6 w-6 text-gray-300" />
-              </div>
-              <p className="text-sm text-gray-400">No usage data available yet</p>
-              <p className="text-xs text-gray-300 mt-1">Trend data will appear as transactions are logged</p>
+        {/* ── Card Header ── */}
+        <CardHeader className="px-6 pt-6 pb-3 flex flex-row items-start justify-between gap-4">
+          <div>
+            <CardTitle className="text-lg font-bold text-gray-900 dark:text-foreground">
+              Inventory Usage Trend
+            </CardTitle>
+            <CardDescription className="text-sm text-gray-400 dark:text-muted-foreground mt-0.5">
+              Daily usage and restocking patterns over the last 14 days
+            </CardDescription>
+          </div>
+          {/* Header-level legend pills */}
+          {usageTrendData.length > 0 && (
+            <div className="flex items-center gap-2 flex-shrink-0 pt-0.5">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800">
+                <span className="w-2 h-2 rounded-full bg-green-500 shadow-sm shadow-green-500/40" />
+                Incoming (Restock)
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800">
+                <span className="w-2 h-2 rounded-full bg-red-500 shadow-sm shadow-red-500/40" />
+                Outgoing (Usage)
+              </span>
             </div>
           )}
+        </CardHeader>
 
-          {/* Legend */}
-          {usageTrendData.length > 0 && (
-            <div className="flex items-center justify-center gap-6 mt-3 pt-3 border-t border-gray-100 dark:border-border">
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-[3px] rounded-full bg-red-500" />
-                <span className="text-xs text-gray-500 dark:text-muted-foreground">Used / Outgoing</span>
+        <CardContent className="px-2 sm:px-4 pb-6 pt-0">
+          {usageTrendData.length > 0 ? (
+            <>
+              {/* ── Chart ── */}
+              <div className="w-full h-[300px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart
+                    data={usageTrendData}
+                    margin={{ top: 16, right: 20, left: -10, bottom: 4 }}
+                  >
+                    {/* ── Gradient defs ── */}
+                    <defs>
+                      {/* Outgoing / Usage — Red */}
+                      <linearGradient id="gradOutgoing" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%"   stopColor="#ef4444" stopOpacity={0.18} />
+                        <stop offset="100%" stopColor="#ef4444" stopOpacity={0.01} />
+                      </linearGradient>
+                      {/* Incoming / Restock — Green */}
+                      <linearGradient id="gradIncoming" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%"   stopColor="#22c55e" stopOpacity={0.18} />
+                        <stop offset="100%" stopColor="#22c55e" stopOpacity={0.01} />
+                      </linearGradient>
+                    </defs>
+
+                    {/* ── Grid — horizontal lines only, very light ── */}
+                    <CartesianGrid
+                      strokeDasharray="4 4"
+                      stroke="#f1f5f9"
+                      vertical={false}
+                      horizontal={true}
+                    />
+
+                    {/* ── Axes ── */}
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fontSize: 11, fill: "#94a3b8", fontFamily: "inherit" }}
+                      tickLine={false}
+                      axisLine={{ stroke: "#e2e8f0", strokeWidth: 1 }}
+                      dy={6}
+                      interval="preserveStartEnd"
+                    />
+                    <YAxis
+                      tick={{ fontSize: 11, fill: "#94a3b8", fontFamily: "inherit" }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(v: number) => (v === 0 ? "0" : v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${v}`)}
+                      width={38}
+                    />
+
+                    {/* ── Custom Tooltip ── */}
+                    <RechartsTooltip
+                      cursor={{ stroke: "#e2e8f0", strokeWidth: 1.5, strokeDasharray: "4 4" }}
+                      contentStyle={{
+                        backgroundColor: "#ffffff",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: "14px",
+                        padding: "10px 16px",
+                        boxShadow: "0 8px 24px rgba(0,0,0,0.10)",
+                        fontSize: "12px",
+                        fontFamily: "inherit",
+                        minWidth: "160px",
+                      }}
+                      labelStyle={{ fontWeight: 700, color: "#1e293b", marginBottom: "6px", fontSize: "12px" }}
+                      formatter={(value: number, name: string) => {
+                        const isOutgoing = name === "used"
+                        const label = isOutgoing ? "Outgoing (Usage)" : "Incoming (Restock)"
+                        const color = isOutgoing ? "#ef4444" : "#22c55e"
+                        const unit = value === 1 ? "unit" : "units"
+                        return [
+                          <span key="val" style={{ color, fontWeight: 700, fontSize: "13px" }}>
+                            {value} <span style={{ fontWeight: 400, color: "#64748b", fontSize: "11px" }}>{unit}</span>
+                          </span>,
+                          label,
+                        ]
+                      }}
+                    />
+
+                    {/* ── Outgoing (Usage) — Red ── */}
+                    <Area
+                      type="monotoneX"
+                      dataKey="used"
+                      name="used"
+                      stroke="#ef4444"
+                      strokeWidth={3}
+                      fill="url(#gradOutgoing)"
+                      dot={{ r: 3.5, fill: "#ef4444", stroke: "#ffffff", strokeWidth: 2 }}
+                      activeDot={{ r: 6, fill: "#ef4444", stroke: "#ffffff", strokeWidth: 2.5, style: { filter: "drop-shadow(0 0 4px rgba(239,68,68,0.5))" } }}
+                      isAnimationActive={true}
+                      animationDuration={900}
+                      animationEasing="ease-out"
+                    />
+
+                    {/* ── Incoming (Restock) — Green ── */}
+                    <Area
+                      type="monotoneX"
+                      dataKey="restocked"
+                      name="restocked"
+                      stroke="#22c55e"
+                      strokeWidth={3}
+                      fill="url(#gradIncoming)"
+                      dot={{ r: 3.5, fill: "#22c55e", stroke: "#ffffff", strokeWidth: 2 }}
+                      activeDot={{ r: 6, fill: "#22c55e", stroke: "#ffffff", strokeWidth: 2.5, style: { filter: "drop-shadow(0 0 4px rgba(34,197,94,0.5))" } }}
+                      isAnimationActive={true}
+                      animationDuration={900}
+                      animationBegin={150}
+                      animationEasing="ease-out"
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-[3px] rounded-full bg-emerald-500" />
-                <span className="text-xs text-gray-500 dark:text-muted-foreground">Restocked / Incoming</span>
+
+              {/* ── Bottom summary strip ── */}
+              <div className="flex items-center justify-between gap-4 mt-4 pt-4 border-t border-gray-100 dark:border-border px-2">
+                {/* Summary stats */}
+                <div className="flex items-center gap-5">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-2.5 w-2.5 rounded-full bg-green-500 shadow-sm shadow-green-500/40" />
+                    <span className="text-[11px] font-semibold text-gray-500 dark:text-muted-foreground">Incoming (Restock)</span>
+                    <span className="text-[11px] font-bold text-green-600 dark:text-green-400 ml-1">
+                      {usageTrendData.reduce((s, d) => s + (d.restocked ?? 0), 0)} units
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-2.5 w-2.5 rounded-full bg-red-500 shadow-sm shadow-red-500/40" />
+                    <span className="text-[11px] font-semibold text-gray-500 dark:text-muted-foreground">Outgoing (Usage)</span>
+                    <span className="text-[11px] font-bold text-red-600 dark:text-red-400 ml-1">
+                      {usageTrendData.reduce((s, d) => s + (d.used ?? 0), 0)} units
+                    </span>
+                  </div>
+                </div>
+                <span className="text-[10px] text-gray-300 dark:text-muted-foreground/50 hidden sm:block">
+                  Last {usageTrendData.length} day{usageTrendData.length !== 1 ? "s" : ""}
+                </span>
               </div>
+            </>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-20">
+              <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-gray-50 to-gray-100 dark:from-secondary/30 dark:to-secondary/50 flex items-center justify-center mb-4 shadow-sm">
+                <TrendingUp className="h-7 w-7 text-gray-300 dark:text-muted-foreground/40" />
+              </div>
+              <p className="text-sm font-medium text-gray-400 dark:text-muted-foreground">No usage data available yet</p>
+              <p className="text-xs text-gray-300 dark:text-muted-foreground/50 mt-1 text-center max-w-[240px]">
+                Trend data will appear here as inventory transactions are logged
+              </p>
             </div>
           )}
         </CardContent>
