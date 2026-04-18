@@ -48,7 +48,7 @@ export function TransactionsTable({
   logColumnLabel,
   showStatusBadge = false,
 }: TransactionsTableProps) {
-  const { isGuest } = useAuth()
+  const { isReadOnly } = useAuth()
   const [trackingDriverId, setTrackingDriverId] = useState<string | null>(null)
   const [trackingDriverName, setTrackingDriverName] = useState<string | null>(null)
   const [trackingDriverPhotoUrl, setTrackingDriverPhotoUrl] = useState<string | null>(null)
@@ -247,7 +247,7 @@ export function TransactionsTable({
                         <td className="h-16 px-4 align-middle text-center">
                           <TooltipProvider>
                             <div className="flex items-center justify-center gap-1.5">
-                              {!isGuest && onAssignDriver && transaction.transactionType === "PRODUCT_OUT" && (
+                              {!isReadOnly && onAssignDriver && transaction.transactionType === "PRODUCT_OUT" && (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Button

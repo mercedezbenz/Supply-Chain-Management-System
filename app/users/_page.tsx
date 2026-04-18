@@ -171,7 +171,7 @@ export default function UsersPage() {
   const isDeliveryTab = filterRole === "delivery"
 
   return (
-    <ProtectedRoute adminOnly>
+    <ProtectedRoute allowedRoles={["admin"]}>
       <MainLayout>
         <div className="space-y-6">
         {/* Header */}

@@ -26,7 +26,7 @@ export function DeliveryTable({ deliveries, documents, loading }: DeliveryTableP
   const [editingDelivery, setEditingDelivery] = useState<Delivery | null>(null)
   const [assigningDelivery, setAssigningDelivery] = useState<Delivery | null>(null)
   const [assigningTracking, setAssigningTracking] = useState<Delivery | null>(null)
-  const { isGuest } = useAuth()
+  const { isReadOnly } = useAuth()
 
   const handleDelete = async (id: string) => {
     if (confirm("Are you sure you want to delete this delivery?")) {
@@ -140,7 +140,7 @@ export function DeliveryTable({ deliveries, documents, loading }: DeliveryTableP
                   </TableCell>
                   <TableCell>{formatTimestamp(delivery.createdAt)}</TableCell>
                   <TableCell>
-                    {!isGuest && (
+                    {!isReadOnly && (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" className="h-8 w-8 p-0">

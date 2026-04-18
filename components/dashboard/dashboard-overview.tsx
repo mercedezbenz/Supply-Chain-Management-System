@@ -162,7 +162,7 @@ const renderDonutLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent,
 }
 
 export function DashboardOverview() {
-  const { user, firebaseError, isGuest } = useAuth()
+  const { user, firebaseError, isReadOnly } = useAuth()
   const router = useRouter()
   const [stats, setStats] = useState<DashboardStats>({
     totalItems: 0,
@@ -892,7 +892,7 @@ export function DashboardOverview() {
                 Items requiring immediate attention
               </CardDescription>
             </div>
-            {!isGuest && (
+            {!isReadOnly && (
               <Button
                 asChild
                 className="h-9 px-5 rounded-full bg-sky-500 hover:bg-sky-600 text-white font-semibold text-sm flex-shrink-0 transition-all hover:scale-[1.02] hover:shadow-md"
@@ -1132,7 +1132,7 @@ export function DashboardOverview() {
                 Latest stock movements with timestamps
               </CardDescription>
             </div>
-            {!isGuest && (
+            {!isReadOnly && (
               <Button
                 asChild
                 className="h-9 px-5 rounded-full bg-sky-500 hover:bg-sky-600 text-white font-semibold text-sm flex-shrink-0 transition-all hover:scale-[1.02] hover:shadow-md"

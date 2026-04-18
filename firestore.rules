@@ -12,10 +12,11 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
     }
 
-    // ✅ Helper: allow STAFF or ADMIN (any capitalization)
+    // ✅ Helper: allow STAFF, ADMIN, PURCHASING, or ENCODER (any capitalization)
+    // NOTE: 'owner' is intentionally EXCLUDED — owner is read-only
     function isStaffOrAdmin() {
       return isAuthed() &&
-        (userRole() in ['STAFF', 'ADMIN', 'staff', 'admin', 'Staff', 'Admin']);
+        (userRole() in ['STAFF', 'ADMIN', 'staff', 'admin', 'Staff', 'Admin', 'purchasing', 'PURCHASING', 'Purchasing', 'encoder', 'ENCODER', 'Encoder']);
     }
 
     // ✅ If you want admin-only (for viewing all users)
@@ -82,6 +83,28 @@ service cloud.firestore {
     match /transactions/{transactionId} {
       allow read: if true;              // ⭐ Guest can view transactions
       allow write: if isStaffOrAdmin();
+    }
+
+    // ---- ORDERS (customer orders for sales dashboard) ----
+    match /orders/{orderId} {
+      allow read: if isAuthed();
+      allow create: if true;
+      allow update: if isAuthed() && userRole() in ['sales', 'SALES', 'Sales', 'encoder', 'ENCODER', 'Encoder', 'admin', 'ADMIN', 'Admin'];
+      allow delete: if isAdmin();
+    }
+
+    // ---- EVALUATION MODULE ----
+    match /evaluations/{evalId} {
+      allow read: if isAuthed();
+      allow write: if isStaffOrAdmin();
+    }
+
+    // ---- ENCODER TASKS ----
+    match /encoder_tasks/{taskId} {
+      allow read: if isAuthed() && userRole() in ['encoder', 'ENCODER', 'Encoder', 'admin', 'ADMIN', 'Admin', 'sales', 'SALES', 'Sales', 'owner', 'OWNER', 'Owner'];
+      allow create: if isAuthed() && userRole() in ['sales', 'SALES', 'Sales', 'admin', 'ADMIN', 'Admin'];
+      allow update: if isAuthed() && userRole() in ['encoder', 'ENCODER', 'Encoder', 'admin', 'ADMIN', 'Admin'];
+      allow delete: if false;
     }
 
     // ---- OTHER COLLECTIONS ----

@@ -5,24 +5,20 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { BarChart3, Package, Truck, Users, Menu, X, ChevronLeft, ChevronRight } from "lucide-react"
+import { Menu, X, ChevronLeft, ChevronRight } from "lucide-react"
 import Image from "next/image"
 import { useSidebar } from "./sidebar-context"
 import { useAuth } from "@/hooks/use-auth"
-
-const navigation = [
-  { name: "Overview", href: "/", icon: BarChart3 },
-  { name: "Inventory", href: "/inventory", icon: Package },
-]
+import { getMenuItemsForRole } from "@/lib/role-config"
 
 export function Sidebar() {
   const [isOpen, setIsOpen] = useState(false)
   const pathname = usePathname()
   const { isCollapsed, toggleSidebar } = useSidebar()
-  const { isGuest } = useAuth()
+  const { user } = useAuth()
 
-  // Navigation is explicitly static with removed unused models
-  const filteredNavigation = navigation
+  // Role-based menu filtering — only show items the user's role can access
+  const filteredNavigation = getMenuItemsForRole(user?.role)
 
   return (
     <>
@@ -81,7 +77,7 @@ export function Sidebar() {
             )}
           </div>
 
-          {/* Navigation */}
+          {/* Navigation — dynamically filtered by role */}
           <nav className={cn(
             "flex-1 py-6 space-y-2 transition-all duration-200",
             isCollapsed ? "px-2" : "px-4"
@@ -91,9 +87,9 @@ export function Sidebar() {
               return (
 
                 <Link
-                  key={item.name}
+                  key={item.label}
                   href={item.href}
-                  title={isCollapsed ? item.name : undefined}
+                  title={isCollapsed ? item.label : undefined}
                   className={cn(
                     "flex items-center text-sm font-medium rounded-lg transition-all duration-200",
                     isCollapsed ? "px-2 py-3 justify-center" : "px-4 py-3",
@@ -104,7 +100,7 @@ export function Sidebar() {
                   onClick={() => setIsOpen(false)}
                 >
                   <item.icon className={cn("h-5 w-5", !isCollapsed && "mr-3")} />
-                  {!isCollapsed && <span>{item.name}</span>}
+                  {!isCollapsed && <span>{item.label}</span>}
                 </Link>
               )
             })}

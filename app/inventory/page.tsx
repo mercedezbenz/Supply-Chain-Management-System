@@ -5,7 +5,7 @@ import { Suspense } from "react"
 
 export default function InventoryPage() {
   return (
-    <ProtectedRoute>
+    <ProtectedRoute allowedRoles={["admin", "staff", "purchasing", "owner", "encoder"]}>
       <MainLayout>
         <Suspense fallback={<div>Loading Dashboard...</div>}>
           <InventoryDashboard />

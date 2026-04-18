@@ -110,7 +110,7 @@ export function InventoryDashboard() {
   const [items, setItems] = useState<InventoryItem[]>([])
   const [transactions, setTransactions] = useState<InventoryTransaction[]>([])
   const [categories, setCategories] = useState<Category[]>([])
-  const { isGuest } = useAuth()
+  const { isReadOnly, canEditInventory } = useAuth()
 
   // ——— Filter state ————————————————————————————————————————————————————————
   const [selectedCategory, setSelectedCategory] = useState<string>("all")
@@ -178,7 +178,7 @@ export function InventoryDashboard() {
     minLength: 5,
     maxKeystrokeDelay: 80,
     bufferTimeout: 400,
-    enabled: !anyDialogOpen && !isGuest,
+    enabled: !anyDialogOpen && canEditInventory,
   })
 
   // When Category changes, reset Type
@@ -672,7 +672,7 @@ export function InventoryDashboard() {
             <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-balance">Inventory Monitoring</h1>
             <p className="text-xs sm:text-sm text-muted-foreground">Monitor stock movement, expiration, and barcode management</p>
           </div>
-          {!isGuest && (
+          {canEditInventory && (
             <div className="grid grid-cols-4 sm:flex sm:items-center gap-1.5 sm:gap-2 shrink-0">
               <Button onClick={() => setAddItemDialogOpen(true)} className="gap-1 sm:gap-2 h-9 sm:h-10 text-[11px] sm:text-sm px-2 sm:px-4 rounded-lg">
                 <Plus className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
@@ -699,6 +699,12 @@ export function InventoryDashboard() {
                 <RotateCcw className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
                 <span className="truncate">Return</span>
               </Button>
+            </div>
+          )}
+          {isReadOnly && (
+            <div className="flex items-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl border border-blue-200/60 dark:border-blue-800/40 bg-blue-50/80 dark:bg-blue-950/20 shrink-0">
+              <svg className="h-4 w-4 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+              <span className="text-[11px] sm:text-xs font-semibold text-blue-700 dark:text-blue-300">View Only Access</span>
             </div>
           )}
         </div>
@@ -1054,6 +1060,7 @@ export function InventoryDashboard() {
               rowsPerPage={rowsPerPage}
               searchQuery={debouncedSearch}
               highlightFilter={searchParams.get("filter") || undefined}
+              readOnly={!canEditInventory}
             />
           </CardContent>
         </Card>

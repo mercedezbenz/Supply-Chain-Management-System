@@ -31,7 +31,7 @@ export function DeliveryDashboard() {
   const isDriver = normalizedRole === "delivery"
   const isAdmin = normalizedRole === "admin"
   const isStaff = normalizedRole === "staff"
-  const isGuestUser = normalizedRole === "guest"
+
   const [documents, setDocuments] = useState<Document[]>([])
 
   // Three separate states for customer_transactions based on transactionType
@@ -106,7 +106,7 @@ export function DeliveryDashboard() {
 
   // Load customer_transactions with query-level filter
   useEffect(() => {
-    if (!isGuestUser && (!currentEmail || !currentUserRole)) return
+    if (!currentEmail || !currentUserRole) return
 
 
     const db = getFirebaseDb()
@@ -199,7 +199,7 @@ export function DeliveryDashboard() {
       unsubInProgress()
       unsubDelivered()
     }
-  }, [currentUserRole, isDriver, normalizedRole, currentEmail, isGuestUser])
+  }, [currentUserRole, isDriver, normalizedRole, currentEmail])
 
   // Load inventory items for category lookup
   useEffect(() => {
@@ -433,7 +433,7 @@ export function DeliveryDashboard() {
   const canManage = isAdmin || isStaff
 
   // Safe guard: wait for auth data before rendering (unless guest)
-  if (!loading && !isGuestUser && (!currentEmail || !currentUserRole)) {
+  if (!loading && (!currentEmail || !currentUserRole)) {
     // If we've timed out or reached a state where user exists but role/email are missing, show an error instead of hanging
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background p-6 text-white text-center">

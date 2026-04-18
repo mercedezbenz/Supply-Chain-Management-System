@@ -38,6 +38,8 @@ interface InventoryTableProps {
   searchQuery?: string
   /** The original parameter filter from URL, e.g. low-stock, out-of-stock, expiring */
   highlightFilter?: string
+  /** If true, hide edit/delete action buttons (view-only mode for owner role) */
+  readOnly?: boolean
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -207,7 +209,7 @@ function getPageNumbers(current: number, total: number): (number | 'ellipsis')[]
 }
 
 // ─── Transaction History List Component ───
-function TransactionHistoryList({ transactions, setCancellingItem }: { transactions: any[], setCancellingItem: (txn: any) => void }) {
+function TransactionHistoryList({ transactions, setCancellingItem, readOnly = false }: { transactions: any[], setCancellingItem: (txn: any) => void, readOnly?: boolean }) {
   const expandedTxns = useMemo(() => {
     return transactions.flatMap((txn: any) => {
       const parts = []
@@ -294,11 +296,13 @@ function TransactionHistoryList({ transactions, setCancellingItem }: { transacti
 
                   {/* Right Side: Remaining Stock & Actions */}
                   <div className="flex flex-col items-end gap-1 shrink-0">
+                      {!readOnly && (
                       <div className="flex gap-1 shrink-0 mb-1">
                           <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); setCancellingItem(part.txn) }}>
                             <Trash2 className="h-3 w-3 text-muted-foreground hover:text-red-600" />
                           </Button>
                       </div>
+                      )}
                       {part.rem !== null && part.rem !== "\u2014" ? (
                           <span className="text-xs font-semibold text-slate-700 bg-white shadow-sm px-2 py-0.5 rounded-md border border-slate-200">
                               Remaining: {formatNumber(Number(part.rem))} {part.unit}
@@ -332,6 +336,7 @@ export function InventoryTable({
   rowsPerPage: rowsPerPageProp = 10,
   searchQuery = "",
   highlightFilter,
+  readOnly = false,
 }: InventoryTableProps) {
   const { toast } = useToast()
   const [cancellingItem, setCancellingItem] = useState<InventoryTransaction | null>(null)
@@ -638,6 +643,8 @@ export function InventoryTable({
     { key: "goodReturn",        label: "Good Rtn",            align: "right"  as const, width: "min-w-[100px] w-[100px]" },
     { key: "badReturn",         label: "Bad Rtn",             align: "right"  as const, width: "min-w-[100px] w-[100px]" },
     { key: "remainingStock",    label: "Remaining",           align: "right"  as const, width: "min-w-[120px] w-[120px]" },
+    { key: "status",            label: "Status",              align: "center" as const, width: "min-w-[110px] w-[110px]", ownerOnly: true },
+    { key: "reorderNeeded",     label: "Reorder Needed",      align: "center" as const, width: "min-w-[130px] w-[130px]", ownerOnly: true },
     // ── Weight group: subtle left-border on first column ──
     { key: "productionWeight",  label: "Prod. Weight",        align: "right"  as const, width: "min-w-[110px] w-[110px]", weightGroup: true },
     { key: "packingWeight",     label: "Pack. Weight",        align: "right"  as const, width: "min-w-[110px] w-[110px]" },
@@ -646,7 +653,21 @@ export function InventoryTable({
     { key: "deliveryReceiptNo", label: "Delivery Rcpt. No.",  align: "left"   as const, width: "min-w-[160px]" },
     { key: "unit",              label: "Unit",                align: "center" as const, width: "min-w-[72px]  w-[72px]" },
     { key: "actions",           label: "Actions",             align: "center" as const, width: "min-w-[148px] w-[148px]" },
-  ]
+  ].filter(col => {
+    if (readOnly) {
+      return ["product", "expiryDate", "remainingStock", "status", "reorderNeeded"].includes(col.key)
+    }
+    return !(col as any).ownerOnly
+  }).map(col => {
+    if (readOnly) {
+      if (col.key === "product") return { ...col, width: "w-[50%]", align: "left" }
+      if (col.key === "expiryDate") return { ...col, width: "w-[15%]", align: "center" }
+      if (col.key === "remainingStock") return { ...col, width: "w-[10%]", align: "center" }
+      if (col.key === "status") return { ...col, width: "w-[12%]", align: "center" }
+      if (col.key === "reorderNeeded") return { ...col, width: "w-[13%]", align: "center" }
+    }
+    return col
+  })
 
 
 
@@ -667,14 +688,15 @@ export function InventoryTable({
             ref={scrollContainerRef}
             className="overflow-x-auto overflow-y-auto max-h-[65vh] inventory-scroll-container"
           >
-            <table className="w-full text-left" style={{ minWidth: "max-content" }}>
+            <table className={`w-full text-left ${readOnly ? "table-fixed" : ""}`} style={!readOnly ? { minWidth: "max-content" } : {}}>
               <thead className="sticky top-0 z-20 bg-gray-50/95 dark:bg-muted/60 border-b-2 border-border/50 backdrop-blur-sm">
                 <tr>
                   {SUMMARY_COLUMNS.map((col) => (
                     <th
                       key={col.key}
                       className={[
-                        "h-11 px-4 py-2.5 text-[11px] font-bold text-muted-foreground/80 uppercase tracking-wider whitespace-nowrap select-none",
+                        readOnly ? "px-2.5 py-1.5" : "h-11 px-4 py-2.5",
+                        "text-[11px] font-bold text-muted-foreground/80 uppercase tracking-wider whitespace-nowrap select-none",
                         col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left",
                         col.width || "",
                         (col as any).weightGroup ? "border-l-2 border-border/50" : "",
@@ -746,6 +768,7 @@ export function InventoryTable({
                         title={hasHistory ? "Click to view transaction history" : ""}
                       >
                         {/* Expand Icon */}
+                        {!readOnly && (
                         <td className="h-14 px-3 py-2 align-middle text-center w-10">
                           {hasHistory ? (
                             <div className={`inline-flex items-center justify-center w-6 h-6 rounded-md transition-all duration-200 ${
@@ -762,17 +785,20 @@ export function InventoryTable({
                             <div className="w-6 h-6" />
                           )}
                         </td>
+                        )}
 
                         {/* Date Added — center aligned, narrow */}
+                        {!readOnly && (
                         <td className="h-14 px-4 py-2 text-xs text-foreground/65 align-middle whitespace-nowrap text-center">
                           {formatTxnDate(group.dateAdded) !== "\u2014"
                             ? formatTxnDate(group.dateAdded)
                             : <span className="text-muted-foreground">—</span>
                           }
                         </td>
+                        )}
 
                         {/* Product Name — left aligned, wide */}
-                        <td className="h-14 px-4 py-2 font-medium text-sm text-foreground align-middle">
+                        <td className={`${readOnly ? "px-2.5 py-1.5" : "h-14 px-4 py-2"} font-medium text-sm text-foreground align-middle`}>
                           <div className="flex items-center gap-2 min-w-0">
                             <span className="text-base shrink-0" aria-hidden="true">
                               {(() => {
@@ -790,6 +816,7 @@ export function InventoryTable({
                         </td>
 
                         {/* Barcode — left aligned, wide, mono */}
+                        {!readOnly && (
                         <td className="h-14 px-4 py-2 align-middle">
                           <div className="font-mono text-[12px] text-foreground/80 truncate" title={group.barcode}>
                             {group.barcode
@@ -798,9 +825,10 @@ export function InventoryTable({
                             }
                           </div>
                         </td>
+                        )}
 
                         {/* Expiry Date — centered, narrow */}
-                        <td className="h-14 px-4 py-2 text-xs align-middle whitespace-nowrap text-center">
+                        <td className={`${readOnly ? "px-2.5 py-1.5" : "h-14 px-4 py-2"} text-xs align-middle whitespace-nowrap text-center`}>
                           {formatTxnDate(group.expiryDate) !== "\u2014" ? (
                             <span className="text-foreground/70">{formatTxnDate(group.expiryDate)}</span>
                           ) : (
@@ -809,6 +837,7 @@ export function InventoryTable({
                         </td>
 
                         {/* Incoming Stock — right aligned */}
+                        {!readOnly && (
                         <td className="h-14 px-4 py-2 align-middle text-right">
                           <span className={`text-sm font-semibold ${
                             group.totalIncoming > 0 ? "text-green-600 dark:text-green-400" : "text-muted-foreground font-normal"
@@ -819,8 +848,10 @@ export function InventoryTable({
                             </span>
                           </span>
                         </td>
+                        )}
 
                         {/* Outgoing Stock — right aligned */}
+                        {!readOnly && (
                         <td className="h-14 px-4 py-2 align-middle text-right">
                           <span className={`text-sm font-semibold ${
                             group.totalOutgoing > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground font-normal"
@@ -831,8 +862,10 @@ export function InventoryTable({
                             </span>
                           </span>
                         </td>
+                        )}
 
                         {/* Good Return — right aligned */}
+                        {!readOnly && (
                         <td className="h-14 px-4 py-2 align-middle text-right">
                           <span className={`text-sm font-semibold ${
                             group.totalGoodReturn > 0 ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground font-normal"
@@ -843,8 +876,10 @@ export function InventoryTable({
                             </span>
                           </span>
                         </td>
+                        )}
 
                         {/* Bad Return — right aligned */}
+                        {!readOnly && (
                         <td className="h-14 px-4 py-2 align-middle text-right">
                           <span className={`text-sm font-semibold ${
                             group.totalDamageReturn > 0 ? "text-slate-500 dark:text-slate-400" : "text-muted-foreground font-normal"
@@ -855,9 +890,10 @@ export function InventoryTable({
                             </span>
                           </span>
                         </td>
+                        )}
 
                         {/* Remaining Stock — right aligned, colored badge */}
-                        <td className="h-14 px-4 py-2 align-middle text-right">
+                        <td className={`${readOnly ? "px-2.5 py-1.5 text-center" : "h-14 px-4 py-2 text-right"} align-middle`}>
                           {(() => {
                             const stock = group.stockLeft;
                             const unit = group.unitType === "PACK" ? "pks" : "bx";
@@ -868,7 +904,7 @@ export function InventoryTable({
                               colorClass = "text-red-700 dark:text-red-400";
                               bgClass = "bg-red-50 dark:bg-red-950/20";
                               dotClass = "bg-red-500";
-                            } else if (stock < 10) {
+                            } else if (stock <= 5) {
                               colorClass = "text-amber-700 dark:text-amber-400";
                               bgClass = "bg-amber-50 dark:bg-amber-950/20";
                               dotClass = "bg-amber-500";
@@ -883,7 +919,35 @@ export function InventoryTable({
                           })()}
                         </td>
 
+                        {/* Status — ONLY shown when readOnly is true */}
+                        {readOnly && (
+                          <td className="px-2.5 py-1.5 align-middle text-center">
+                            {(() => {
+                              const stock = group.stockLeft;
+                              if (stock <= 0) {
+                                return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-md bg-red-100 text-red-700 text-xs font-bold border border-red-200 shadow-sm">❌ Out</span>
+                              } else if (stock <= 5) {
+                                return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-md bg-amber-100 text-amber-700 text-xs font-bold border border-amber-200 shadow-sm">⚠ Low</span>
+                              } else {
+                                return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-md bg-green-100 text-green-700 text-xs font-bold border border-green-200 shadow-sm">✅ OK</span>
+                              }
+                            })()}
+                          </td>
+                        )}
+
+                        {/* Reorder Needed — ONLY shown when readOnly is true */}
+                        {readOnly && (
+                          <td className="px-2.5 py-1.5 align-middle text-center">
+                            {group.stockLeft <= 5 ? (
+                              <span className="text-amber-600 font-bold text-xs tracking-wide">⚠ Yes</span>
+                            ) : (
+                              <span className="text-muted-foreground font-bold text-lg">—</span>
+                            )}
+                          </td>
+                        )}
+
                         {/* Production Weight — weight-group left border, right aligned */}
+                        {!readOnly && (
                         <td className="h-14 px-4 py-2 align-middle text-right border-l-2 border-border/40">
                           {group.production_weight != null ? (
                             <span className="text-sm font-medium text-foreground/80">
@@ -894,8 +958,10 @@ export function InventoryTable({
                             <span className="text-muted-foreground text-xs">N/A</span>
                           )}
                         </td>
+                        )}
 
                         {/* Packing Weight — right aligned */}
+                        {!readOnly && (
                         <td className="h-14 px-4 py-2 align-middle text-right">
                           {group.packing_weight != null ? (
                             <span className="text-sm font-medium text-foreground/80">
@@ -906,8 +972,10 @@ export function InventoryTable({
                             <span className="text-muted-foreground text-xs">N/A</span>
                           )}
                         </td>
+                        )}
 
                         {/* Weight Difference — right aligned, badge */}
+                        {!readOnly && (
                         <td className="h-14 px-4 py-2 align-middle text-right">
                           {group.weight_difference != null ? (
                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold ${
@@ -922,8 +990,10 @@ export function InventoryTable({
                             <span className="text-muted-foreground text-xs">N/A</span>
                           )}
                         </td>
+                        )}
 
                         {/* Sales Invoice No. — left aligned, flexible */}
+                        {!readOnly && (
                         <td className="h-14 px-4 py-2 align-middle">
                           {group.sales_invoice_no ? (
                             <span
@@ -936,8 +1006,10 @@ export function InventoryTable({
                             <span className="text-muted-foreground text-xs">—</span>
                           )}
                         </td>
+                        )}
 
                         {/* Delivery Receipt No. — left aligned, flexible */}
+                        {!readOnly && (
                         <td className="h-14 px-4 py-2 align-middle">
                           {group.delivery_receipt_no ? (
                             <span
@@ -950,15 +1022,19 @@ export function InventoryTable({
                             <span className="text-muted-foreground text-xs">—</span>
                           )}
                         </td>
+                        )}
 
                         {/* Unit — center aligned, narrow */}
+                        {!readOnly && (
                         <td className="h-14 px-4 py-2 align-middle text-center whitespace-nowrap">
                           <span className="text-[11px] font-medium text-foreground/60 uppercase tracking-wide">
                             {group.unitType === "PACK" ? "Pack" : "Box"}
                           </span>
                         </td>
+                        )}
 
                         {/* Actions — sticky right, equal-gap buttons */}
+                        {!readOnly && (
                         <td className="h-14 px-4 py-2 align-middle text-center whitespace-nowrap sticky right-0 shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.06)] bg-inherit">
                           <div
                             className="flex items-center justify-center gap-2"
@@ -996,6 +1072,7 @@ export function InventoryTable({
                             )}
                           </div>
                         </td>
+                        )}
                       </tr>
 
                       {/* ═══ EXPANDED TRANSACTION HISTORY (TABLE FORMAT) ═══ */}
@@ -1017,7 +1094,8 @@ export function InventoryTable({
                               {/* Sub-table: Stacked transaction cards/rows */}
                               <TransactionHistoryList 
                                 transactions={historyTransactions} 
-                                setCancellingItem={setCancellingItem} 
+                                setCancellingItem={setCancellingItem}
+                                readOnly={readOnly}
                               />
                             </div>
                           </td>
@@ -1120,9 +1198,11 @@ export function InventoryTable({
                       </div>
 
                       {/* Barcode — small mono text */}
+                      {!readOnly && (
                       <p className="text-[10px] sm:text-[11px] text-muted-foreground font-mono mt-1 ml-7 tracking-wide">
                         {highlightMatch(group.barcode, searchQuery)}
                       </p>
+                      )}
                     </div>
 
                     {/* Right: Expand toggle */}
@@ -1143,8 +1223,9 @@ export function InventoryTable({
 
                 {/* ═══ STATS GRID — Incoming / Outgoing / Remaining ═══ */}
                 <div className="px-3 pb-2.5">
-                  <div className="grid grid-cols-3 gap-1.5">
+                  <div className={`grid gap-1.5 ${readOnly ? 'grid-cols-1' : 'grid-cols-3'}`}>
                     {/* Incoming — Green */}
+                    {!readOnly && (
                     <div className="relative flex flex-col items-center justify-center rounded-lg border border-green-200/80 dark:border-green-800/40 bg-green-50/60 dark:bg-green-950/20 py-1.5 sm:py-2 px-1.5">
                       <span className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider text-green-600/80 dark:text-green-400/70 mb-0.5">In</span>
                       <span className="text-sm sm:text-base font-bold text-green-700 dark:text-green-400 leading-tight">
@@ -1152,8 +1233,10 @@ export function InventoryTable({
                       </span>
                       <span className="text-[8px] sm:text-[9px] text-green-600/60 dark:text-green-400/50 font-medium">{unitShort}</span>
                     </div>
+                    )}
 
                     {/* Outgoing — Red */}
+                    {!readOnly && (
                     <div className="relative flex flex-col items-center justify-center rounded-lg border border-red-200/80 dark:border-red-800/40 bg-red-50/60 dark:bg-red-950/20 py-1.5 sm:py-2 px-1.5">
                       <span className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider text-red-600/80 dark:text-red-400/70 mb-0.5">Out</span>
                       <span className="text-sm sm:text-base font-bold text-red-700 dark:text-red-400 leading-tight">
@@ -1161,6 +1244,7 @@ export function InventoryTable({
                       </span>
                       <span className="text-[8px] sm:text-[9px] text-red-600/60 dark:text-red-400/50 font-medium">{unitShort}</span>
                     </div>
+                    )}
 
                     {/* Remaining — Dynamic badge */}
                     <div className={`relative flex flex-col items-center justify-center rounded-lg border py-1.5 sm:py-2 px-1.5 ${stockBgClass}`}>
@@ -1199,7 +1283,7 @@ export function InventoryTable({
                   </div>
 
                   {/* ═══ WEIGHT TRACKING — Prod. / Pack. / Diff ═══ */}
-                  {(group.production_weight != null || group.packing_weight != null) && (
+                  {!readOnly && (group.production_weight != null || group.packing_weight != null) && (
                     <div className="grid grid-cols-3 gap-1.5 mt-1.5">
                       <div className="flex flex-col rounded-lg bg-slate-50/80 dark:bg-slate-800/30 border border-slate-200/60 dark:border-slate-700/40 px-2 py-1.5">
                         <span className="text-[8px] sm:text-[9px] uppercase tracking-wider text-muted-foreground font-semibold block leading-none mb-0.5">Prod. Wt</span>
@@ -1231,7 +1315,7 @@ export function InventoryTable({
                   )}
 
                   {/* ═══ DOCUMENT REFERENCES ═══ */}
-                  {(group.sales_invoice_no || group.delivery_receipt_no) && (
+                  {!readOnly && (group.sales_invoice_no || group.delivery_receipt_no) && (
                     <div className="grid grid-cols-2 gap-1.5 mt-1.5">
                       {group.sales_invoice_no && (
                         <div className="flex flex-col rounded-lg bg-violet-50/60 dark:bg-violet-900/10 border border-violet-200/60 dark:border-violet-800/30 px-2 py-1.5">
@@ -1253,40 +1337,40 @@ export function InventoryTable({
                   )}
                 </div>
 
-                {/* ═══ ACTIONS — Show Barcode + Print (touch-friendly) ═══ */}
-                {group.barcode && (
-                  <div className="px-3 pb-3 pt-0.5">
-                    <div className="flex items-center gap-1.5">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="flex-1 h-9 sm:h-10 rounded-lg gap-1.5 text-[11px] sm:text-sm font-semibold text-emerald-700 border-emerald-200/80 bg-emerald-50/40 hover:bg-emerald-100/60 hover:text-emerald-800 hover:border-emerald-300 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40 transition-all active:scale-[0.98]"
-                        onClick={(e) => { e.stopPropagation(); setBarcodeViewItem({ barcode: group.barcode, productName: group.productName, productionDate: formatTxnDate(group.productionDate) !== "\u2014" ? formatTxnDate(group.productionDate) : undefined, expiryDate: formatTxnDate(group.expiryDate) !== "\u2014" ? formatTxnDate(group.expiryDate) : undefined }) }}
-                        title="Show Barcode"
-                      >
-                        <Barcode className="h-3.5 w-3.5" />
-                        Barcode
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="flex-1 h-9 sm:h-10 rounded-lg gap-1.5 text-[11px] sm:text-sm font-semibold text-blue-700 border-blue-200/80 bg-blue-50/40 hover:bg-blue-100/60 hover:text-blue-800 hover:border-blue-300 dark:text-blue-400 dark:border-blue-800 dark:bg-blue-950/20 dark:hover:bg-blue-950/40 transition-all active:scale-[0.98]"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setBarcodeViewItem({ barcode: group.barcode, productName: group.productName, productionDate: formatTxnDate(group.productionDate) !== "\u2014" ? formatTxnDate(group.productionDate) : undefined, expiryDate: formatTxnDate(group.expiryDate) !== "\u2014" ? formatTxnDate(group.expiryDate) : undefined })
-                          setTimeout(() => {
-                            const printBtn = document.querySelector('[data-barcode-print]') as HTMLButtonElement
-                            if (printBtn) printBtn.click()
-                          }, 500)
-                        }}
-                        title="Print Barcode"
-                      >
-                        <Printer className="h-3.5 w-3.5" />
-                        Print
-                      </Button>
+                  {/* ═══ ACTIONS — Show Barcode + Print (touch-friendly) ═══ */}
+                  {!readOnly && group.barcode && (
+                    <div className="px-3 pb-3 pt-0.5">
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1 h-9 sm:h-10 rounded-lg gap-1.5 text-[11px] sm:text-sm font-semibold text-emerald-700 border-emerald-200/80 bg-emerald-50/40 hover:bg-emerald-100/60 hover:text-emerald-800 hover:border-emerald-300 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40 transition-all active:scale-[0.98]"
+                          onClick={(e) => { e.stopPropagation(); setBarcodeViewItem({ barcode: group.barcode, productName: group.productName, productionDate: formatTxnDate(group.productionDate) !== "\u2014" ? formatTxnDate(group.productionDate) : undefined, expiryDate: formatTxnDate(group.expiryDate) !== "\u2014" ? formatTxnDate(group.expiryDate) : undefined }) }}
+                          title="Show Barcode"
+                        >
+                          <Barcode className="h-3.5 w-3.5" />
+                          Barcode
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1 h-9 sm:h-10 rounded-lg gap-1.5 text-[11px] sm:text-sm font-semibold text-blue-700 border-blue-200/80 bg-blue-50/40 hover:bg-blue-100/60 hover:text-blue-800 hover:border-blue-300 dark:text-blue-400 dark:border-blue-800 dark:bg-blue-950/20 dark:hover:bg-blue-950/40 transition-all active:scale-[0.98]"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setBarcodeViewItem({ barcode: group.barcode, productName: group.productName, productionDate: formatTxnDate(group.productionDate) !== "\u2014" ? formatTxnDate(group.productionDate) : undefined, expiryDate: formatTxnDate(group.expiryDate) !== "\u2014" ? formatTxnDate(group.expiryDate) : undefined })
+                            setTimeout(() => {
+                              const printBtn = document.querySelector('[data-barcode-print]') as HTMLButtonElement
+                              if (printBtn) printBtn.click()
+                            }, 500)
+                          }}
+                          title="Print Barcode"
+                        >
+                          <Printer className="h-3.5 w-3.5" />
+                          Print
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
                 {/* ═══ EXPANDED: Transaction History ═══ */}
                 {isExpanded && hasHistory && (
@@ -1303,7 +1387,8 @@ export function InventoryTable({
                     <div className="bg-white/60 dark:bg-black/10">
                       <TransactionHistoryList 
                         transactions={historyTransactions} 
-                        setCancellingItem={setCancellingItem} 
+                        setCancellingItem={setCancellingItem}
+                        readOnly={readOnly}
                       />
                     </div>
                   </div>

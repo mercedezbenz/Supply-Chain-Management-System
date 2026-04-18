@@ -8,11 +8,17 @@ import { Toaster } from "@/components/ui/sonner"
 
 export function ConditionalLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  const isLoginRoute = pathname === "/login" || pathname?.startsWith("/login") || pathname?.startsWith("/auth")
+  const isLoginRoute      = pathname === "/login" || pathname?.startsWith("/login") || pathname?.startsWith("/auth")
+  const isPrintLabelRoute = pathname?.startsWith("/print-label")
 
   // For login/auth routes, return children ONLY - no wrappers at all
   // The login/layout.tsx will provide AuthProvider separately
   if (isLoginRoute) {
+    return <>{children}</>
+  }
+
+  // Print-label page: bare white page — no sidebar, no header, no theme flicker
+  if (isPrintLabelRoute) {
     return <>{children}</>
   }
 

@@ -103,7 +103,7 @@ export function Header() {
                 <DropdownMenuLabel className="font-normal">
                   <div className="flex flex-col space-y-1">
                     <p className="text-sm font-medium leading-none">
-                      {(user as any)?.name || (user as any)?.displayName || user?.role === "admin" ? "Admin User" : user?.role === "guest" ? "Guest User" : user?.role || "User"}
+                      {(user as any)?.name || (user as any)?.displayName || (user?.role === "admin" ? "Admin User" : user?.role === "sales" ? "Sales User" : user?.role === "purchasing" ? "Purchasing User" : user?.role === "owner" ? "Owner" : user?.role === "encoder" ? "Encoder" : user?.role || "User")}
                     </p>
                     <p className="text-xs leading-none text-muted-foreground">{user?.email || "No email"}</p>
                     {user?.role && (

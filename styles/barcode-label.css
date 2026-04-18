@@ -1,0 +1,97 @@
+/**
+ * styles/barcode-label.css
+ * ────────────────────────────────────────────────────────────────────────
+ * Shared styles for the barcode label component.
+ * Used by BOTH the modal preview and the /print-label page.
+ *
+ * Classes:
+ *   .barcode-label-wrap    — outer container (no fixed width on screen)
+ *   .barcode-label-img     — the rendered label image
+ *   .barcode-label-preview — screen-only wrapper that sizes the preview
+ *   .barcode-label-loading — loading state
+ *   .barcode-label-error   — error state
+ *
+ * The 48mm width is ONLY enforced inside @media print so the screen
+ * preview can be displayed at a larger, more readable size.
+ */
+
+/* ── Label wrapper (screen) ────────────────────────────────────────── */
+.barcode-label-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;            /* fills whatever container it's in */
+  max-width: 100%;
+  background: #ffffff;
+}
+
+/* ── Label image (screen) ──────────────────────────────────────────── */
+.barcode-label-img {
+  display: block;
+  /* The canvas is rendered at 3× resolution (~1152px wide).           */
+  /* We let it scale down to fit the container, producing a sharp,     */
+  /* crisp image thanks to the high pixel density. No pixelated hint   */
+  /* needed — smooth downscaling from 3× looks better than nearest-    */
+  /* neighbor on a low-res source.                                     */
+  width: 100%;
+  max-width: 500px;         /* comfortable preview size in the modal   */
+  height: auto;
+  background: #ffffff;
+}
+
+/* ── Preview container (screen only) ───────────────────────────────── */
+/* Wraps the BarcodeLabel inside the modal — just centers the image    */
+.barcode-label-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Loading / Error states ─────────────────────────────────────────── */
+.barcode-label-loading {
+  color: #6b7280;
+  font-size: 13px;
+  padding: 30px 0;
+  text-align: center;
+  width: 100%;
+}
+
+.barcode-label-error {
+  color: #dc2626;
+  font-size: 13px;
+  padding: 30px 0;
+  text-align: center;
+  width: 100%;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PRINT MODE — lock the label to exactly 48mm
+   ═══════════════════════════════════════════════════════════════════════ */
+@media print {
+  /* Hide the preview wrapper sizing — not relevant for print */
+  .barcode-label-preview {
+    width: 48mm !important;
+    max-width: 48mm !important;
+  }
+
+  .barcode-label-wrap {
+    width: 48mm !important;
+    max-width: 48mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+  }
+
+  .barcode-label-img {
+    width: 48mm !important;
+    max-width: 48mm !important;
+    display: block !important;
+  }
+
+  .barcode-label-loading,
+  .barcode-label-error {
+    display: none !important;
+  }
+}

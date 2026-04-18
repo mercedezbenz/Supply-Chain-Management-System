@@ -2,28 +2,60 @@
 
 import type React from "react"
 import { useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, usePathname } from "next/navigation"
 
 import { useAuth } from "@/hooks/use-auth"
+import { canAccessRoute } from "@/lib/role-config"
 import { AuthLoadingSkeleton } from "@/components/skeletons/dashboard-skeleton"
 import { LoggingOutOverlay } from "@/components/auth/logging-out-overlay"
 
 interface ProtectedRouteProps {
   children: React.ReactNode
-  adminOnly?: boolean
+  /** Optional: restrict to specific roles (overrides role-config) */
+  allowedRoles?: string[]
 }
 
-export function ProtectedRoute({ children, adminOnly = false }: ProtectedRouteProps) {
-  const { user, loading, isLoggingOut, isAdmin, isGuest, isStaff } = useAuth()
+/**
+ * ProtectedRoute — Role-based route guard.
+ *
+ * Instead of showing "Access Denied" or "No Access" pages,
+ * users are **silently redirected** to the dashboard ("/")
+ * if they try to access a route their role doesn't allow.
+ */
+export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
+  const { user, loading, isLoggingOut } = useAuth()
   const router = useRouter()
+  const pathname = usePathname()
 
   useEffect(() => {
     // ONLY redirect to /login if NOT authenticated (and not during logout)
     if (!loading && !user && !isLoggingOut) {
       console.log("[ProtectedRoute] No user found, redirecting to /login")
       router.push("/login")
+      return
     }
-  }, [user, loading, isLoggingOut, router])
+
+    // Role-based access check — redirect to dashboard if not allowed
+    if (!loading && user && pathname) {
+      const role = user.role
+
+      // If explicit allowedRoles prop is provided, use that
+      if (allowedRoles && allowedRoles.length > 0) {
+        if (!allowedRoles.includes(role)) {
+          console.log(`[ProtectedRoute] Role "${role}" not in allowedRoles [${allowedRoles}], redirecting to /`)
+          router.replace("/")
+          return
+        }
+      }
+
+      // Otherwise, use the centralized role-config
+      if (!canAccessRoute(role, pathname)) {
+        console.log(`[ProtectedRoute] Role "${role}" cannot access "${pathname}", redirecting to /`)
+        router.replace("/")
+        return
+      }
+    }
+  }, [user, loading, isLoggingOut, router, pathname, allowedRoles])
 
   // Show clean logout overlay — no dashboard flicker
   if (isLoggingOut) {
@@ -35,43 +67,19 @@ export function ProtectedRoute({ children, adminOnly = false }: ProtectedRoutePr
     return <AuthLoadingSkeleton />
   }
 
-  // Not authenticated
+  // Not authenticated — show skeleton while redirect happens
   if (!user) {
     return <AuthLoadingSkeleton />
   }
 
-  // Admin-only page and user is guest or staff (if they are not admin)
-  if (adminOnly && !isAdmin) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-background p-6 text-center">
-        <h1 className="text-2xl font-bold mb-2">Admin Only Page</h1>
-        <p className="text-muted-foreground mb-4">This section is restricted to administrators.</p>
-        <button 
-          onClick={() => window.location.href = "/"}
-          className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
-        >
-          Back to Dashboard
-        </button>
-      </div>
-    )
+  // Check role access before rendering (prevents flash of restricted content)
+  if (allowedRoles && allowedRoles.length > 0 && !allowedRoles.includes(user.role)) {
+    return <AuthLoadingSkeleton />
   }
 
-  // Check for any authorized role (admin, staff, guest)
-  if (!isAdmin && !isGuest && !isStaff) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-background p-6 text-center">
-        <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
-        <p className="text-muted-foreground mb-4">You do not have permission to access this section.</p>
-        <button 
-           onClick={() => window.location.href = "/login"}
-           className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
-        >
-          Return to Login
-        </button>
-      </div>
-    )
+  if (pathname && !canAccessRoute(user.role, pathname)) {
+    return <AuthLoadingSkeleton />
   }
 
   return <>{children}</>
 }
-

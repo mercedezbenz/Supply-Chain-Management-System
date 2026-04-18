@@ -5,7 +5,7 @@ import { createContext, useContext, useEffect, useState, useCallback } from "rea
 // Removed mock-auth and mock-firestore imports - always using live Firebase
 import { getFirebaseAuth, getFirebaseDb } from "@/lib/firebase-live"
 import { onAuthStateChanged as fbOnAuthStateChanged, signInWithEmailAndPassword as fbSignIn, signOut as fbSignOut, sendPasswordResetEmail as fbSendReset } from "firebase/auth"
-import { doc as fbDoc, getDoc as fbGetDoc, setDoc as fbSetDoc } from "firebase/firestore"
+import { doc as fbDoc, getDoc as fbGetDoc, setDoc as fbSetDoc, updateDoc as fbUpdateDoc } from "firebase/firestore"
 import type { User } from "@/lib/types"
 
 interface AuthContextType {
@@ -14,14 +14,19 @@ interface AuthContextType {
   loading: boolean
   isLoggingOut: boolean
   signIn: (email: string, password: string) => Promise<void>
-  loginAsGuest: () => void
   logout: () => Promise<void>
   resetPassword: (email: string) => Promise<void>
   createDefaultUser: () => Promise<void>
   isAdmin: boolean
   isStaff: boolean
-  isGuest: boolean
+
+  isSales: boolean
+  isPurchasing: boolean
+  isOwner: boolean
+  isEncoder: boolean
+  isReadOnly: boolean
   canManageInventory: boolean
+  canEditInventory: boolean
   firebaseError: string | null
 }
 
@@ -30,15 +35,10 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 const DEFAULT_ADMIN_EMAIL = "admin@decktago.com"
 const DEFAULT_ADMIN_PASSWORD = "admin123"
 
-// *** Module-level variables — survive AuthProvider remounts during route changes ***
-let _isGuestMode = false
-let _guestUser: User | null = null
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  // Initialize user from module-level guest user if guest mode is active (survives remounts)
-  const [user, setUser] = useState<User | null>(_isGuestMode ? _guestUser : null)
+  const [user, setUser] = useState<User | null>(null)
   const [firebaseUser, setFirebaseUser] = useState<any | null>(null)
-  const [loading, setLoading] = useState(_isGuestMode ? false : true)
+  const [loading, setLoading] = useState(true)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
   const [firebaseError, setFirebaseError] = useState<string | null>(null)
 
@@ -91,16 +91,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
             setFirebaseUser(authUser)
           } else {
-            // *** CRITICAL: Do NOT clear user state if guest mode is active ***
-            if (_isGuestMode && _guestUser) {
-              console.log("[Auth] onAuthStateChanged: no Firebase user, but GUEST MODE is active — restoring guest user")
-              setUser(_guestUser)
-              setFirebaseUser(null)
-            } else {
-              console.log("[Auth] onAuthStateChanged: no Firebase user, clearing state")
-              setUser(null)
-              setFirebaseUser(null)
-            }
+            console.log("[Auth] onAuthStateChanged: no Firebase user, clearing state")
+            setUser(null)
+            setFirebaseUser(null)
           }
         } catch (error) {
           console.error("[Auth] Error in auth state change:", error)
@@ -152,12 +145,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         const userData = docSnap.data() as any
         
-        if (userData.role !== "admin" && userData.role !== "staff") {
+        // Auto-patch missing fields (e.g. documents created without status)
+        if (!userData.status || !userData.role) {
+          const patchData: any = { updatedAt: new Date().toISOString() }
+          if (!userData.status) patchData.status = "active"
+          if (!userData.role) patchData.role = "staff"
+          await fbUpdateDoc(docRef, patchData)
+          console.log("[Auth] Auto-patched missing fields for:", authUser.email, patchData)
+          // Re-read after patch
+          userData.status = userData.status || patchData.status
+          userData.role = userData.role || patchData.role
+        }
+        
+        if (userData.role !== "admin" && userData.role !== "staff" && userData.role !== "sales" && userData.role !== "purchasing" && userData.role !== "owner" && userData.role !== "encoder") {
           await fbSignOut(getFirebaseAuth())
-          throw new Error("Access denied. Admin or staff access required.")
+          throw new Error("Access denied. Valid role required.")
         }
 
-        if (!userData.status || userData.status !== "active") {
+        if (userData.status !== "active") {
           await fbSignOut(getFirebaseAuth())
           throw new Error(`Account status is "${userData.status}". Please contact an administrator.`)
         }
@@ -201,44 +206,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  const loginAsGuest = useCallback(() => {
-    console.log("[Auth] ======= GUEST LOGIN START =======")
-    
-    const guestUser: User = {
-      uid: "guest-local",
-      email: "guest@decktago.com",
-      role: "guest" as const,
-      status: "active" as const,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    }
-    
-    // Set MODULE-LEVEL variables FIRST — these survive component remounts
-    _isGuestMode = true
-    _guestUser = guestUser
-    
-    // Then set React state
-    setUser(guestUser)
-    setFirebaseUser(null)
-    setLoading(false)
-    
-    console.log("[Auth] Guest user set:", guestUser)
-    console.log("[Auth] _isGuestMode:", _isGuestMode)
-    console.log("[Auth] ======= GUEST LOGIN END =======")
-  }, [])
+
 
   const logout = async () => {
     try {
-      console.log("[Auth] Logging out, _isGuestMode:", _isGuestMode)
+      console.log("[Auth] Logging out...")
       
       // ✅ Set logging-out state IMMEDIATELY — blocks dashboard rendering
       setIsLoggingOut(true)
       
-      // Clear module-level guest mode flag
-      _isGuestMode = false
-      _guestUser = null
-      
-      // Only sign out from Firebase if we have a real Firebase user (not guest)
+      // Sign out from Firebase
       if (firebaseUser) {
         await fbSignOut(getFirebaseAuth())
       }
@@ -253,8 +230,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (error) {
       console.error("[Auth] Logout error:", error)
       // Still clear state and redirect even if signOut fails
-      _isGuestMode = false
-      _guestUser = null
       if (typeof window !== "undefined") {
         localStorage.removeItem("auth")
         localStorage.removeItem("firestore")
@@ -265,8 +240,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const isAdmin = user?.role === "admin" && user?.status === "active"
   const isStaff = user?.role === "staff" && user?.status === "active"
-  const isGuest = user?.role === "guest" && user?.status === "active"
-  const canManageInventory = (user?.role === "admin" || user?.role === "staff") && user?.status === "active"
+
+  const isSales = user?.role === "sales" && user?.status === "active"
+  const isPurchasing = user?.role === "purchasing" && user?.status === "active"
+  const isOwner = user?.role === "owner" && user?.status === "active"
+  const isEncoder = user?.role === "encoder" && user?.status === "active"
+  // isReadOnly: owner sees everything but cannot perform any write actions
+  const isReadOnly = user?.role === "owner" && user?.status === "active"
+  const canManageInventory = (user?.role === "admin" || user?.role === "staff" || user?.role === "purchasing" || user?.role === "encoder") && user?.status === "active"
+  // canEditInventory: true for roles that can add/edit/delete items. Owner = view-only.
+  const canEditInventory = (user?.role === "admin" || user?.role === "staff" || user?.role === "encoder") && user?.status === "active"
 
   const value = {
     user,
@@ -274,14 +257,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loading,
     isLoggingOut,
     signIn,
-    loginAsGuest,
     logout,
     resetPassword,
     createDefaultUser,
     isAdmin,
     isStaff,
-    isGuest,
+
+    isSales,
+    isPurchasing,
+    isOwner,
+    isEncoder,
+    isReadOnly,
     canManageInventory,
+    canEditInventory,
     firebaseError,
   }
 

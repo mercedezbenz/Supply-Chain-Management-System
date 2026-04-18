@@ -4,12 +4,13 @@ import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { MainLayout } from "@/components/layout/main-layout";
 import { DashboardOverview } from "@/components/dashboard/dashboard-overview";
+import { SalesDashboard } from "@/components/dashboard/sales-dashboard";
 import { useAuth } from "@/hooks/use-auth";
 import { AuthLoadingSkeleton } from "@/components/skeletons/dashboard-skeleton";
 import { LoggingOutOverlay } from "@/components/auth/logging-out-overlay";
 
 export default function HomePage() {
-  const { user, loading, isLoggingOut, isAdmin, isGuest, isStaff } = useAuth()
+  const { user, loading, isLoggingOut } = useAuth()
   const router = useRouter()
 
   // Redirect if NOT authenticated at all (but not during logout)
@@ -35,27 +36,25 @@ export default function HomePage() {
     return <AuthLoadingSkeleton />
   }
 
-  // If user is authenticated but has no permission (though current roles cover all)
-  if (!isAdmin && !isGuest && !isStaff) {
-     return (
-       <div className="min-h-screen flex flex-col items-center justify-center bg-background p-6 text-center">
-         <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
-         <p className="text-muted-foreground mb-4">You do not have permission to access the dashboard. Please contact an administrator.</p>
-         <button 
-           onClick={() => window.location.href = "/login"}
-           className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
-         >
-           Return to Login
-         </button>
-       </div>
-     )
+  // ─── Role-Based Dashboard Switching ───
+  // Each role sees the dashboard relevant to them.
+  // No "Access Denied" screens — just the right content.
+
+  const role = user.role
+
+  // Sales users see the Sales Dashboard
+  if (role === "sales") {
+    return (
+      <MainLayout>
+        <SalesDashboard />
+      </MainLayout>
+    )
   }
 
-  // Only show dashboard if authenticated (admin, staff, or guest)
+  // All other roles (admin, staff, purchasing, guest) see the inventory dashboard
   return (
     <MainLayout>
       <DashboardOverview />
     </MainLayout>
   );
 }
-

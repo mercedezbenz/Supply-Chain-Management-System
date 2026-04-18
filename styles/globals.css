@@ -184,10 +184,15 @@
 }
 
 /* ─── Print Styles: Only show barcode area ─────────────────────────────── */
+/*
+ * SCOPED: These rules only apply when #barcode-print-area exists in the DOM
+ * (i.e., the inline barcode modal print). The /print-label page has its own
+ * self-contained print CSS and does NOT use #barcode-print-area.
+ */
 @media print {
 
-  /* Hide everything */
-  body * {
+  /* Only hide elements when printing from the barcode modal (not /print-label) */
+  body:has(#barcode-print-area) * {
     visibility: hidden !important;
   }
 
@@ -213,9 +218,9 @@
     z-index: 99999 !important;
   }
 
-  /* Clean up page margins */
+  /* Clean up page margins for modal print */
   @page {
-    margin: 0.5in;
+    margin: 0;
     size: auto;
   }
 
