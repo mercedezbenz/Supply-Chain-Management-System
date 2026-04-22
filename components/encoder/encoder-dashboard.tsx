@@ -57,7 +57,7 @@ export function EncoderDashboard() {
       
       // Update order status
       if (order.orderId) {
-        await updateOrderStatus(order.orderId, "in_transit")
+        await updateOrderStatus(order.orderId, "out_for_delivery")
       }
       
       // Update encoder task status

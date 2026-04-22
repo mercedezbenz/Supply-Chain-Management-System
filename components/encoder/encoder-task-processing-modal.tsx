@@ -358,7 +358,8 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
         })
 
         // Fix applied here
-        await updateOrderStatus(task.orderId, "out_for_delivery")
+        console.log("STATUS UPDATE → IN TRANSIT after scan complete")
+        await updateOrderStatus(task.orderId, "in_transit")
 
         toast.success("🎉 All batches verified! Task moved to For Delivery.")
         onClose()

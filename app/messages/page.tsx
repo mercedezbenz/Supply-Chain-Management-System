@@ -80,6 +80,7 @@ export default function MessagesPage() {
             uid: userId,
 
             archived: chatData.archived || false,
+            hiddenForSales: chatData.hiddenForSales || false,
 
             // ✅ PURE FROM USERS
             fullName: userData?.fullName || 'Unknown',
@@ -293,35 +294,37 @@ export default function MessagesPage() {
     {/* ❌ DELETE */}
     <button
       onClick={async () => {
-        const db = getFirebaseDb()
-        if (!db) return
+  const db = getFirebaseDb()
+  if (!db) return
 
-        if (confirm("Delete this chat?")) {
+  if (confirm("Delete this chat?")) {
 
-          // 🔴 DELETE ALL MESSAGES
-          const msgsSnap = await getDocs(
-            collection(db, 'chats', chat.id, 'messages')
-          )
+    // 🔴 DELETE ALL MESSAGES
+    const msgsSnap = await getDocs(
+      collection(db, 'chats', chat.id, 'messages')
+    )
 
-          for (const m of msgsSnap.docs) {
-            await deleteDoc(m.ref)
-          }
+    for (const m of msgsSnap.docs) {
+      await deleteDoc(m.ref)
+    }
 
-          // 🔴 HIDE FROM SALES
-          await updateDoc(doc(db, 'chats', chat.id), {
-            hiddenForSales: true,
-            lastMessage: '',
-            updatedAt: new Date()
-          })
+    // 🔴 HIDE FROM SALES
+    await updateDoc(doc(db, 'chats', chat.id), {
+      hiddenForSales: true,
+      lastMessage: '',
+      updatedAt: new Date()
+    })
 
-          if (selectedChat?.id === chat.id) {
-            setSelectedChat(null)
-            setMessages([])
-          }
-        }
+    // 🔴 RESET UI
+    if (selectedChat?.id === chat.id) {
+      setSelectedChat(null)
+      setMessages([])
+    }
+  }
 
-        setMenuOpenId(null)
-      }}
+  setMenuOpenId(null)
+}}
+      
       className="flex items-center gap-3 w-full text-left px-4 py-2 text-sm 
                  hover:bg-red-100 dark:hover:bg-red-900 text-red-600"
     >
