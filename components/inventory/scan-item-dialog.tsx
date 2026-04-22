@@ -661,27 +661,7 @@ export function ScanItemDialog({
                     <p className="text-sm font-semibold text-emerald-700">Barcode Matched</p>
                     <p className="text-xs text-emerald-600/70 font-mono">{lastScannedBarcode}</p>
                   </div>
-                  {/* FIFO status indicator — only show when item has stock */}
-                  {fifoInfo && stockLeft > 0 && (
-                    <div className={cn(
-                      "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border shrink-0",
-                      fifoInfo.isFifoCompliant
-                        ? "bg-emerald-100 border-emerald-200"
-                        : "bg-amber-100 border-amber-200"
-                    )}>
-                      {fifoInfo.isFifoCompliant ? (
-                        <>
-                          <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-                          <span className="text-[10px] font-bold text-emerald-700">FIFO OK</span>
-                        </>
-                      ) : (
-                        <>
-                          <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
-                          <span className="text-[10px] font-bold text-amber-700">Older Stock Available</span>
-                        </>
-                      )}
-                    </div>
-                  )}
+                  {/* FIFO status indicator removed for Product Checker mode */}
                 </div>
 
                 {/* Product Info Card */}
@@ -886,19 +866,7 @@ export function ScanItemDialog({
                   </div>
                 )}
 
-                {/* FIFO suggestion banner — only shown when item HAS stock but older stock exists */}
-                {fifoInfo && stockLeft > 0 && !fifoInfo.isFifoCompliant && (
-                  <div className="flex items-start gap-2.5 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 animate-in fade-in-0 duration-200">
-                    <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
-                    <div>
-                      <p className="text-sm font-semibold text-amber-700">Older stocks available</p>
-                      <p className="text-xs text-amber-600/80 mt-0.5">
-                        There are {fifoInfo.availableBatches.length - 1} older batch(es) for
-                        "{getProductName(foundItem)}". FIFO recommends dispatching the oldest first.
-                      </p>
-                    </div>
-                  </div>
-                )}
+                {/* FIFO suggestion banner removed for Product Checker mode */}
 
                 {/* ── OUT OF STOCK: Warning + View Older Stock ─────────────── */}
                 {stockLeft <= 0 && (
@@ -918,49 +886,17 @@ export function ScanItemDialog({
                       </div>
                     </div>
 
-                    {/* "View Older Stock" button — shown only when other stock exists */}
-                    {hasOlderStockAvailable && (
-                      <div className="px-4 pb-3">
-                        <Button
-                          type="button"
-                          onClick={handleViewOlderStock}
-                          className="w-full h-10 gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-xl shadow-md shadow-blue-200 transition-all hover:scale-[1.01]"
-                        >
-                          <Layers className="h-4 w-4" />
-                          View Older Stock
-                          <ChevronRight className="h-4 w-4 ml-auto" />
-                        </Button>
-                      </div>
-                    )}
+                    {/* "View Older Stock" button removed for Product Checker mode */}
                   </div>
                 )}
 
-                {/* ── Action Buttons ── Product Out (primary) + Return (secondary) ── */}
-                <div className="grid grid-cols-2 gap-3 pt-1">
-                  <Button
-                    type="button"
-                    onClick={handleProductOut}
-                    disabled={stockLeft <= 0}
-                    className={cn(
-                      "h-12 gap-2 font-semibold text-sm rounded-xl",
-                      stockLeft <= 0
-                        ? "bg-slate-200 text-slate-400 cursor-not-allowed hover:bg-slate-200"
-                        : fifoInfo && !fifoInfo.isFifoCompliant
-                          ? "bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-200"
-                          : "bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-200"
-                    )}
-                  >
-                    <Truck className="h-5 w-5" />
-                    Product Out
-                    {fifoInfo && !fifoInfo.isFifoCompliant && stockLeft > 0 && (
-                      <AlertTriangle className="h-3.5 w-3.5 ml-0.5" />
-                    )}
-                  </Button>
+                {/* ── Action Buttons ── Return Item only ── */}
+                <div className="pt-1">
                   <Button
                     type="button"
                     variant="outline"
                     onClick={handleReturnItem}
-                    className="h-12 gap-2 font-semibold text-sm rounded-xl border-2 border-slate-300 text-slate-700 hover:bg-slate-50 hover:border-slate-400"
+                    className="w-full h-12 gap-2 font-semibold text-sm rounded-xl border-2 border-slate-300 text-slate-700 hover:bg-slate-50 hover:border-slate-400"
                   >
                     <RotateCcw className="h-5 w-5" />
                     Return Item

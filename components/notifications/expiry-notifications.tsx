@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
-import { Bell, AlertTriangle, Clock, TrendingDown, Filter } from "lucide-react"
+import { Bell, AlertTriangle, Clock, TrendingDown, Filter, Check } from "lucide-react"
 import { InventoryService } from "@/services/firebase-service"
 import type { InventoryItem } from "@/lib/types"
 
@@ -33,6 +33,45 @@ export function ExpiryNotifications() {
   const [lowStockNotifications, setLowStockNotifications] = useState<LowStockNotification[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<NotificationFilter>("all")
+  
+  const [readIds, setReadIds] = useState<string[]>([])
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("readExpiryNotifications")
+      if (stored) {
+        setReadIds(JSON.parse(stored))
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }, [])
+
+  const markAsRead = (id: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation()
+      e.preventDefault()
+    }
+    if (!readIds.includes(id)) {
+      const newReadIds = [...readIds, id]
+      setReadIds(newReadIds)
+      localStorage.setItem("readExpiryNotifications", JSON.stringify(newReadIds))
+    }
+  }
+
+  const markAllAsRead = (e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation()
+      e.preventDefault()
+    }
+    const currentIds = [
+      ...lowStockNotifications.map(n => `low-stock-${n.item.id}`),
+      ...expiryNotifications.map(n => `expiry-${n.status}-${n.item.id}`)
+    ]
+    const combined = Array.from(new Set([...readIds, ...currentIds]))
+    setReadIds(combined)
+    localStorage.setItem("readExpiryNotifications", JSON.stringify(combined))
+  }
 
   useEffect(() => {
     console.log("[Notifications] Subscribing to inventory items...")
@@ -343,6 +382,17 @@ export function ExpiryNotifications() {
   const totalNotifications = expiryNotifications.length + lowStockNotifications.length
   const filteredData = getFilteredNotifications()
 
+  const unreadCount = useMemo(() => {
+    let unread = 0;
+    lowStockNotifications.forEach(n => {
+      if (!readIds.includes(`low-stock-${n.item.id}`)) unread++;
+    });
+    expiryNotifications.forEach(n => {
+      if (!readIds.includes(`expiry-${n.status}-${n.item.id}`)) unread++;
+    });
+    return unread;
+  }, [lowStockNotifications, expiryNotifications, readIds])
+
   return (
     <div className="relative">
       <DropdownMenu>
@@ -352,24 +402,31 @@ export function ExpiryNotifications() {
             className="relative inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground h-8 w-8 p-0"
           >
             <Bell className="h-5 w-5" />
-            {totalNotifications > 0 && (
+            {unreadCount > 0 && (
               <Badge
                 variant="destructive"
-                className="absolute -top-1 -right-1 h-5 w-5 rounded-full p-0 flex items-center justify-center text-xs pointer-events-none"
+                className="absolute -top-1 -right-1 h-4 min-w-[16px] rounded-full p-0 flex items-center justify-center text-[10px] pointer-events-none border-2 border-background px-1"
               >
-                {totalNotifications > 99 ? "99+" : totalNotifications}
+                {unreadCount > 99 ? "99+" : unreadCount}
               </Badge>
             )}
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-80">
-          <DropdownMenuLabel className="flex items-center justify-between">
-            <span>Notifications</span>
-            {totalNotifications > 0 && (
-              <Badge variant="outline" className="ml-2">
-                {filter === "all" ? totalNotifications : filteredData.totalCount}
-              </Badge>
-            )}
+        <DropdownMenuContent align="end" className="w-80 border border-gray-200 dark:border-border shadow-xl rounded-xl">
+          <DropdownMenuLabel className="flex items-center justify-between px-3 py-2">
+            <span className="font-semibold">Notifications</span>
+            <div className="flex items-center gap-2">
+              {unreadCount > 0 && (
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={markAllAsRead}
+                  className="h-6 text-[11px] px-2 text-gray-500 hover:text-blue-600 font-medium"
+                >
+                  <Check className="h-3 w-3 mr-1" /> Mark all read
+                </Button>
+              )}
+            </div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <div className="p-2">
@@ -431,14 +488,25 @@ export function ExpiryNotifications() {
                     const categoryDisplay = notification.item.subcategory
                       ? `${notification.item.category} - ${notification.item.subcategory}`
                       : notification.item.category
+                    const idStr = `low-stock-${notification.item.id}`
+                    const isRead = readIds.includes(idStr)
 
                     return (
-                      <DropdownMenuItem key={`low-stock-${notification.item.id}`} className="flex items-start gap-3 p-3 cursor-pointer">
+                      <DropdownMenuItem 
+                        key={idStr} 
+                        className={`flex items-start gap-3 p-3 cursor-pointer rounded-lg m-1 transition-all ${isRead ? 'bg-transparent' : 'bg-blue-50/60 dark:bg-gray-800'}`}
+                        onClick={() => markAsRead(idStr)}
+                      >
                         <div className="flex-shrink-0 mt-0.5">
                           <TrendingDown className="h-4 w-4 text-red-500" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="font-medium text-sm truncate">{categoryDisplay}</div>
+                          <div className={`text-sm truncate flex items-center justify-between`}>
+                            <span className={`${isRead ? 'font-medium text-gray-500 dark:text-gray-400' : 'font-bold text-gray-900 dark:text-gray-100'}`}>
+                               {categoryDisplay}
+                            </span>
+                            {!isRead && <span className="h-1.5 w-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.8)] animate-pulse flex-shrink-0" />}
+                          </div>
                           <div className="text-xs text-muted-foreground truncate">
                             Barcode: {notification.item.barcode}
                           </div>
@@ -466,12 +534,23 @@ export function ExpiryNotifications() {
                     const categoryDisplay = notification.item.subcategory
                       ? `${notification.item.category} - ${notification.item.subcategory}`
                       : notification.item.category
+                    const idStr = `expiry-${notification.status}-${notification.item.id}`
+                    const isRead = readIds.includes(idStr)
 
                     return (
-                      <DropdownMenuItem key={`expired-${notification.item.id}`} className="flex items-start gap-3 p-3 cursor-pointer">
+                      <DropdownMenuItem 
+                         key={idStr} 
+                         className={`flex items-start gap-3 p-3 cursor-pointer rounded-lg m-1 transition-all ${isRead ? 'bg-transparent' : 'bg-blue-50/60 dark:bg-gray-800'}`}
+                         onClick={() => markAsRead(idStr)}
+                      >
                         <div className="flex-shrink-0 mt-0.5">{getStatusIcon(notification.status)}</div>
                         <div className="flex-1 min-w-0">
-                          <div className="font-medium text-sm truncate">{categoryDisplay}</div>
+                          <div className={`text-sm truncate flex items-center justify-between`}>
+                            <span className={`${isRead ? 'font-medium text-gray-500 dark:text-gray-400' : 'font-bold text-gray-900 dark:text-gray-100'}`}>
+                               {categoryDisplay}
+                            </span>
+                            {!isRead && <span className="h-1.5 w-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.8)] animate-pulse flex-shrink-0" />}
+                          </div>
                           <div className="text-xs text-muted-foreground truncate">
                             Barcode: {notification.item.barcode}
                           </div>
@@ -499,12 +578,23 @@ export function ExpiryNotifications() {
                     const categoryDisplay = notification.item.subcategory
                       ? `${notification.item.category} - ${notification.item.subcategory}`
                       : notification.item.category
+                    const idStr = `expiry-${notification.status}-${notification.item.id}`
+                    const isRead = readIds.includes(idStr)
 
                     return (
-                      <DropdownMenuItem key={`expiring-${notification.item.id}`} className="flex items-start gap-3 p-3 cursor-pointer">
+                      <DropdownMenuItem 
+                         key={idStr} 
+                         className={`flex items-start gap-3 p-3 cursor-pointer rounded-lg m-1 transition-all ${isRead ? 'bg-transparent' : 'bg-blue-50/60 dark:bg-gray-800'}`}
+                         onClick={() => markAsRead(idStr)}
+                      >
                         <div className="flex-shrink-0 mt-0.5">{getStatusIcon(notification.status)}</div>
                         <div className="flex-1 min-w-0">
-                          <div className="font-medium text-sm truncate">{categoryDisplay}</div>
+                          <div className={`text-sm truncate flex items-center justify-between`}>
+                            <span className={`${isRead ? 'font-medium text-gray-500 dark:text-gray-400' : 'font-bold text-gray-900 dark:text-gray-100'}`}>
+                               {categoryDisplay}
+                            </span>
+                            {!isRead && <span className="h-1.5 w-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.8)] animate-pulse flex-shrink-0" />}
+                          </div>
                           <div className="text-xs text-muted-foreground truncate">
                             Barcode: {notification.item.barcode}
                           </div>

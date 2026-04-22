@@ -24,6 +24,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { LogOut, Moon, Sun, Menu } from "lucide-react"
 import { useAuth } from "@/hooks/use-auth"
 import { ExpiryNotifications } from "@/components/notifications/expiry-notifications"
+import { SalesNotifications } from "@/components/notifications/sales-notifications"
 import { useTheme } from "next-themes"
 import { useSidebar } from "./sidebar-context"
 
@@ -73,18 +74,15 @@ export function Header() {
 
           {/* Right side */}
           <div className="flex items-center space-x-2 sm:space-x-4">
-            <ExpiryNotifications />
+            {/* Notifications based on role */}
+            {["admin", "sales", "encoder"].includes(user?.role || "") && (
+              <SalesNotifications userRole={user?.role} />
+            )}
+            {["admin", "inventory", "purchasing", "owner"].includes(user?.role || "") && (
+              <ExpiryNotifications />
+            )}
 
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-              className="h-8 w-8"
-            >
-              <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-              <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-              <span className="sr-only">Toggle theme</span>
-            </Button>
+
 
             {/* User menu */}
             <div className="relative">
@@ -99,25 +97,61 @@ export function Header() {
                     </Avatar>
                   </button>
                 </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel className="font-normal">
-                  <div className="flex flex-col space-y-1">
-                    <p className="text-sm font-medium leading-none">
+              <DropdownMenuContent 
+                align="end" 
+                className="w-[280px] p-4 rounded-xl shadow-lg border border-gray-100 dark:border-border bg-white dark:bg-gray-900 animate-in fade-in slide-in-from-top-2 duration-200 ease-in-out"
+              >
+                <div className="flex items-center gap-3 mb-4">
+                  <Avatar className="h-10 w-10 border border-gray-100 dark:border-gray-800">
+                    <AvatarFallback className="bg-primary/5 text-primary text-sm font-bold">
+                       {user?.email ? getUserInitials(user.email) : "AD"}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex flex-col min-w-0">
+                    <p className="text-sm font-bold text-gray-900 dark:text-gray-100 leading-none truncate mb-1">
                       {(user as any)?.name || (user as any)?.displayName || (user?.role === "admin" ? "Admin User" : user?.role === "sales" ? "Sales User" : user?.role === "purchasing" ? "Purchasing User" : user?.role === "owner" ? "Owner" : user?.role === "encoder" ? "Encoder" : user?.role || "User")}
                     </p>
-                    <p className="text-xs leading-none text-muted-foreground">{user?.email || "No email"}</p>
+                    <p className="text-xs text-muted-foreground leading-none truncate mb-2">
+                       {user?.email || "No email"}
+                    </p>
                     {user?.role && (
-                      <p className="text-xs leading-none text-muted-foreground capitalize">Role: {user.role}</p>
+                      <span className="inline-flex items-center justify-center px-2 py-0.5 rounded bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400 text-[10px] font-semibold tracking-wide uppercase w-fit">
+                        {user.role}
+                      </span>
                     )}
                   </div>
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator />
+                </div>
+                
+                <DropdownMenuSeparator className="bg-gray-100 dark:bg-gray-800 my-2"/>
+                
+                <DropdownMenuItem 
+                  onClick={(e) => {
+                     e.preventDefault()
+                     setTheme(theme === "light" ? "dark" : "light")
+                  }} 
+                  className="flex items-center justify-between p-2 rounded-lg cursor-pointer hover:bg-gray-50 focus:bg-gray-50 dark:hover:bg-gray-800 dark:focus:bg-gray-800 transition-colors my-1"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center justify-center h-8 w-8 rounded-full bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
+                       {theme === "dark" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+                    </div>
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Appearance</span>
+                  </div>
+                  
+                  {/* Toggle Switch UI */}
+                  <div className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${theme === 'dark' ? 'bg-blue-600' : 'bg-gray-200 dark:bg-gray-700'}`}>
+                    <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${theme === 'dark' ? 'translate-x-4' : 'translate-x-0'}`} />
+                  </div>
+                </DropdownMenuItem>
+
+                <DropdownMenuSeparator className="bg-gray-100 dark:bg-gray-800 my-2"/>
+                
                 <DropdownMenuItem 
                   onClick={() => setShowLogoutConfirm(true)} 
-                  className="cursor-pointer text-destructive focus:text-destructive"
+                  className="w-full flex items-center gap-3 p-2.5 cursor-pointer rounded-lg font-medium text-gray-600 dark:text-gray-300 hover:bg-red-50 hover:text-red-600 focus:bg-red-50 focus:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400 dark:focus:bg-red-900/30 dark:focus:text-red-400 transition-colors"
                 >
-                  <LogOut className="mr-2 h-4 w-4" />
-                  <span>Log out</span>
+                  <LogOut className="h-4 w-4" />
+                  <span className="text-sm">Log out</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

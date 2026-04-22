@@ -26,6 +26,7 @@ import { useOrderDetails } from "@/hooks/useOrderDetails"
 import { ReceiptView } from "./receipt-view"
 import { AuthLoadingSkeleton } from "@/components/skeletons/dashboard-skeleton"
 import { useAuth } from "@/hooks/use-auth"
+import { updateOrderStatus } from "@/lib/order-utils"
 
 // ─── Helpers ───
 const parseDate = (d: any): Date | null => {
@@ -56,16 +57,31 @@ const formatCurrency = (amount: number): string =>
 const StatusBadge = ({ status }: { status: string }) => {
   let cls = "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold tracking-wide uppercase "
   let icon = null
+  let statusLabel = status
 
   switch (status) {
     case "pending":
       cls += "bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-800"
       icon = <Clock className="h-3.5 w-3.5" />
       break
+    case "in_production":
     case "ready_for_processing":
+    case "PROCESSING":
       cls += "bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/30 dark:text-blue-400 dark:border-blue-800"
       icon = <Clock className="h-3.5 w-3.5" />
+      statusLabel = "In Production"
       break
+    case "in_transit":
+      cls += "bg-indigo-50 text-indigo-700 border border-indigo-200 dark:bg-indigo-950/30 dark:text-indigo-400 dark:border-indigo-800"
+      icon = <Package className="h-3.5 w-3.5" />
+      statusLabel = "In Transit"
+      break
+    case "out_for_delivery":
+      cls += "bg-violet-50 text-violet-700 border border-violet-200 dark:bg-violet-950/30 dark:text-violet-400 dark:border-violet-800"
+      icon = <Package className="h-3.5 w-3.5" />
+      statusLabel = "Out for Delivery"
+      break
+    case "delivered":
     case "completed":
       cls += "bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-400 dark:border-emerald-800"
       icon = <CheckCircle2 className="h-3.5 w-3.5" />
@@ -76,9 +92,10 @@ const StatusBadge = ({ status }: { status: string }) => {
       break
     default:
       cls += "bg-gray-50 text-gray-600 border border-gray-200"
+      statusLabel = status.replace(/_/g, ' ')
   }
 
-  return <span className={cls}>{icon}{status}</span>
+  return <span className={cls}>{icon}{statusLabel}</span>
 }
 
 interface OrderDetailsProps {
@@ -92,7 +109,7 @@ export function OrderDetails({ orderId }: OrderDetailsProps) {
   const isSales = user?.role?.toLowerCase() === "sales"
   const receiptRef = useRef<HTMLDivElement>(null)
 
-  const [confirmAction, setConfirmAction] = useState<"pending" | "ready_for_processing" | "completed" | "cancelled" | null>(null)
+  const [confirmAction, setConfirmAction] = useState<"pending" | "PROCESSING" | "completed" | "cancelled" | null>(null)
   const [updating, setUpdating] = useState(false)
   const [showReceipt, setShowReceipt] = useState(false)
   
@@ -104,6 +121,7 @@ export function OrderDetails({ orderId }: OrderDetailsProps) {
     if (order) {
       setInvoiceNo(order.salesInvoiceNo || "")
       setReceiptNo(order.deliveryReceiptNo || "")
+      console.log("READ STATUS →", order.status)
     }
   }, [order])
 
@@ -121,116 +139,115 @@ export function OrderDetails({ orderId }: OrderDetailsProps) {
     }
   }
 
-  const handleConfirmInvoice = async () => {
-    if (!auth.currentUser) {
-      toast.error("User not authenticated")
-      return
-    }
-
+  // Primary workflow action
+  const handleConfirmAndSend = async () => {
+    if (!order) return;
     if (!invoiceNo.trim() || !receiptNo.trim()) {
-      toast.error("Sales Invoice No. and Delivery Receipt No. are required to confirm the invoice.")
-      return
+      toast.error("Both fields are required before confirming");
+      return;
     }
-
+    
     setUpdating(true)
     try {
+      console.log("🔥 BUTTON CLICKED:", orderId);
+      
       const db = getFirebaseDb()
-      await updateDoc(doc(db, "orders", orderId), {
-        isInvoiceConfirmed: true,
+      
+      const updateData: any = { 
         salesInvoiceNo: invoiceNo,
         deliveryReceiptNo: receiptNo,
-        updatedAt: serverTimestamp()
-      })
-      toast.success("Invoice confirmed successfully!")
+        isInvoiceConfirmed: true,
+        updatedAt: serverTimestamp(),
+        processedAt: serverTimestamp()
+      }
+      
+      // STEP 1: Update order details (without touching status directly)
+      await updateDoc(doc(db, "orders", orderId), updateData)
+      await updateOrderStatus(orderId, "in_production")
+      console.log("✅ Order updated");
+      
+      // STEP 2: Prevent duplicate encoder tasks
+      const encoderTasksRef = collection(db, "encoder_tasks");
+      const q = query(
+        encoderTasksRef, 
+        where("orderId", "==", orderId)
+      );
+      const snapshot = await getDocs(q);
+
+      if (snapshot.empty) {
+        // Fallback sanity for Firestore items array
+        const safeItems = (order.items || []).map(item => {
+          const cleanItem: any = {};
+          for (const key in item) {
+            if ((item as any)[key] !== undefined) {
+              cleanItem[key] = (item as any)[key];
+            }
+          }
+          return cleanItem;
+        });
+
+        // STEP 3: Create encoder task
+        await addDoc(encoderTasksRef, {
+          orderId: orderId,
+          customerName: order.shippingAddress?.fullName || order.customerName || "N/A",
+          items: safeItems,
+          totalAmount: order.totalAmount || (order as any).total || 0,
+          salesInvoiceNo: invoiceNo,
+          deliveryReceiptNo: receiptNo,
+          
+          // ⚠️ IMPORTANT: mapped from order status
+          status: "PROCESSING",
+          encoderStatus: "pending",
+          
+          createdAt: serverTimestamp()
+        });
+
+        // Backend Notification System
+        await addDoc(collection(db, "notifications"), {
+          title: "Ready for Processing",
+          message: `Order #${orderId.slice(-6).toUpperCase()} is ready for processing.`,
+          targetRole: "encoder",
+          userId: null,
+          type: "order",
+          isRead: false,
+          orderId: orderId,
+          createdAt: serverTimestamp()
+        });
+
+        console.log("✅ Encoder task created");
+        toast.success("Order confirmed and sent to Encoder");
+      } else {
+        console.log("⚠️ Encoder task already exists");
+        toast.success("Order marked as ready (Encoder task already exists)");
+      }
     } catch (error: any) {
-      toast.error("Failed to confirm invoice: " + error.message)
+      console.error("❌ ERROR:", error);
+      toast.error("Failed to process request: " + error.message);
     } finally {
       setUpdating(false)
     }
   }
 
-  const handleStatusChange = async () => {
-    if (!auth.currentUser) {
-      toast.error("User not authenticated")
-      console.error("[OrderDetails] handleStatusChange — No authenticated user!")
-      return
-    }
-
-    if (!confirmAction || !order) return
-    
-    if (confirmAction.toLowerCase() === "ready_for_processing" && !order.isInvoiceConfirmed) {
-      toast.error("You must confirm the invoice first.")
-      setConfirmAction(null)
-      return
-    }
-    
-    setUpdating(true)
+  // Fallback for cancellation/reopening (Left in for state safety)
+  const handleOtherStatusChange = async () => {
+    if (!confirmAction) return;
+    setUpdating(true);
     try {
-      const db = getFirebaseDb()
-      const targetStatus = confirmAction.toLowerCase() === "ready_for_processing" ? "ready_for_processing" : confirmAction
-
-      console.log(`[OrderDetails] ▶ Updating order "${orderId}" status to "${targetStatus}"`)
-
-      const updateData: any = { 
-        status: targetStatus,
-        updatedAt: serverTimestamp()
-      }
-      
-      await updateDoc(doc(db, "orders", orderId), updateData)
-      console.log(`[OrderDetails] ✅ Order "${orderId}" status updated to "${targetStatus}"`)
-      
-      // Create encoder task if marked for processing
-      if (targetStatus === "ready_for_processing") {
-        console.log("[OrderDetails] ▶ Order marked as ready_for_processing — creating encoder task...")
-        const tasksRef = collection(db, "encoder_tasks");
-        
-        // Check for existing task (may fail if user lacks read permission)
-        let shouldCreate = true;
-        try {
-          const q = query(tasksRef, where("orderId", "==", orderId));
-          const existingTasks = await getDocs(q);
-          shouldCreate = existingTasks.empty;
-          if (!shouldCreate) {
-            console.log(`[OrderDetails] ⚠️ Encoder task already exists for order "${orderId}", skipping creation`);
-          }
-        } catch (readErr: any) {
-          console.warn("[OrderDetails] Could not check for existing tasks (permission issue), will create anyway:", readErr.message);
-          shouldCreate = true;
-        }
-
-        if (shouldCreate) {
-          const encoderTaskData = {
-            orderId: orderId,
-            customerName: order.customerName || "",
-            customerEmail: order.customerEmail || "",
-            items: order.items || [],
-            totalAmount: order.totalAmount || 0,
-            salesInvoiceNo: invoiceNo,
-            deliveryReceiptNo: receiptNo,
-            status: "pending",
-            createdAt: serverTimestamp()
-          };
-          console.log("[OrderDetails] ▶ Creating encoder_tasks document with data:", JSON.stringify({
-            ...encoderTaskData,
-            createdAt: "(serverTimestamp)",
-            items: `${(order.items || []).length} item(s)`
-          }));
-          
-          const docRef = await addDoc(tasksRef, encoderTaskData);
-          console.log(`[OrderDetails] ✅ Encoder task created successfully! Document ID: ${docRef.id}`);
-          toast.success("Order marked as ready and sent to Encoder");
-        } else {
-          toast.success("Order marked as ready (Encoder task already exists)");
-        }
+      const db = getFirebaseDb();
+      if (confirmAction === "cancelled" || confirmAction === "pending") {
+         await updateDoc(doc(db, "orders", orderId), {
+           status: confirmAction,
+           updatedAt: serverTimestamp()
+         });
       } else {
-        toast.success(`Order marked as ${targetStatus}`)
+         await updateOrderStatus(orderId, confirmAction);
       }
+      toast.success(`Order marked as ${confirmAction}`);
     } catch (error: any) {
-      console.error("[OrderDetails] ❌ Failed to update status / create encoder task:", error)
-      toast.error("Failed to update status: " + error.message)
+      toast.error("Failed: " + error.message);
     } finally {
-      setUpdating(false)
-      setConfirmAction(null)
+      setUpdating(false);
+      setConfirmAction(null);
     }
   }
 
@@ -262,334 +279,281 @@ export function OrderDetails({ orderId }: OrderDetailsProps) {
 
   const subtotal = (order.items || []).reduce(
     (sum, item) => sum + (item.quantity || 0) * (item.price || 0),
-    0,
-  )
+    0
+  );
+
+  console.log("Subtotal:", subtotal);
 
   return (
     <>
-      {/* Print styles — hide everything except receipt when printing */}
-      <style jsx global>{`
-        @media print {
-          body * { visibility: hidden !important; }
-          .print-receipt-area, .print-receipt-area * { visibility: visible !important; }
-          .print-receipt-area {
-            position: absolute;
-            left: 0; top: 0;
-            width: 100%;
-          }
-          .no-print { display: none !important; }
-        }
-      `}</style>
-
-      <div className="space-y-6 pb-8 no-print">
-        {/* Back button + Header */}
+      <div className="space-y-6 pb-12 animate-in fade-in duration-500">
+        {/* Header Ribbon */}
         <div className="flex items-center gap-3">
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             onClick={() => router.push("/orders")}
-            className="h-9 px-3 rounded-lg border-gray-200 dark:border-border hover:bg-gray-50 dark:hover:bg-secondary/50"
+            className="h-9 px-3 rounded-lg hover:bg-gray-100 dark:hover:bg-secondary/80 text-gray-600 dark:text-gray-300 transition-colors"
           >
             <ArrowLeft className="h-4 w-4 mr-1.5" />
-            Back
+            Back to Orders
           </Button>
           <div className="flex-1">
-            <h1 className="text-[24px] font-bold text-gray-900 dark:text-foreground leading-tight">
-              Order Details
+            <h1 className="text-[28px] font-bold text-gray-900 dark:text-foreground tracking-tight leading-tight">
+              Order #{order.id}
             </h1>
-            <p className="text-gray-400 text-[12px] font-mono mt-0.5">#{order.id}</p>
           </div>
-          <StatusBadge status={order.status} />
         </div>
 
-        {/* Main Content Grid */}
-        <div className="grid gap-5 lg:grid-cols-5">
-          {/* LEFT: Order Info (3 cols) */}
-          <div className="lg:col-span-3 space-y-5">
-            {/* Customer Info Card */}
-            <Card className="rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
-              <CardHeader className="px-6 pt-6 pb-3">
-                <CardTitle className="text-base font-bold text-gray-900 dark:text-foreground flex items-center gap-2">
+        {/* 2-Column Layout */}
+        <div className="flex flex-col xl:flex-row gap-6 items-start">
+          
+          {/* LEFT: Order Info (Customer, Items) */}
+          <div className="flex-1 w-full space-y-6">
+            
+            {/* Customer Information Card */}
+            <Card className="rounded-2xl border border-gray-100 dark:border-border shadow-sm bg-white dark:bg-card">
+              <CardHeader className="px-6 pt-6 pb-4 border-b border-gray-50 dark:border-border/50">
+                <CardTitle className="text-base font-bold flex items-center gap-2">
                   <div className="h-8 w-8 rounded-lg bg-sky-50 dark:bg-sky-950/30 flex items-center justify-center">
                     <User className="h-4 w-4 text-sky-500" />
                   </div>
-                  Customer Information
+                  Customer Details
                 </CardTitle>
               </CardHeader>
-              <CardContent className="px-6 pb-6">
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  <div className="space-y-1">
-                    <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Name</p>
-                    <p className="text-sm font-medium text-gray-800 dark:text-foreground">{order.customerName}</p>
+              <CardContent className="p-6">
+                <div className="grid gap-6 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Full Name</p>
+                    <p className="text-[15px] font-medium text-gray-900 dark:text-foreground">{order.shippingAddress?.fullName || order.customerName}</p>
                   </div>
-                  <div className="space-y-1">
-                    <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1">
-                      <Mail className="h-3 w-3" /> Email
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                      <Mail className="h-3 w-3" /> Email Address
                     </p>
-                    <p className="text-sm text-gray-600 dark:text-foreground/80">{order.customerEmail || "Not provided"}</p>
+                    <p className="text-[15px] text-gray-600 dark:text-foreground/80">{order.shippingAddress?.email || order.customerEmail || "N/A"}</p>
                   </div>
-                  <div className="space-y-1">
-                    <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1">
-                      <MapPin className="h-3 w-3" /> Address
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                      <MapPin className="h-3 w-3" /> Delivery Address
                     </p>
-                    <p className="text-sm text-gray-600 dark:text-foreground/80">{order.customerAddress || "Not provided"}</p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1">
-                      <Phone className="h-3 w-3" /> Phone
+                    <p className="text-[15px] text-gray-600 dark:text-foreground/80 leading-relaxed">
+                      {order.shippingAddress?.address || order.customerAddress || "N/A"}
+                      {order.shippingAddress?.city ? `, ${order.shippingAddress.city}` : ""}
                     </p>
-                    <p className="text-sm text-gray-600 dark:text-foreground/80">{order.customerPhone || "Not provided"}</p>
                   </div>
+                  {order.customerPhone && (
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                        <Phone className="h-3 w-3" /> Phone Number
+                      </p>
+                      <p className="text-[15px] text-gray-600 dark:text-foreground/80">{order.customerPhone}</p>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
 
-            {/* Items Card */}
-            <Card className="rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
-              <CardHeader className="px-6 pt-6 pb-3">
-                <CardTitle className="text-base font-bold text-gray-900 dark:text-foreground flex items-center gap-2">
-                  <div className="h-8 w-8 rounded-lg bg-purple-50 dark:bg-purple-950/30 flex items-center justify-center">
-                    <Package className="h-4 w-4 text-purple-500" />
+            {/* Order Items Card */}
+            <Card className="rounded-2xl border border-gray-100 dark:border-border shadow-sm bg-white dark:bg-card overflow-hidden">
+              <CardHeader className="px-6 pt-6 pb-4 border-b border-gray-50 dark:border-border/50 bg-gray-50/50 dark:bg-secondary/20">
+                <CardTitle className="text-base font-bold flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="h-8 w-8 rounded-lg bg-indigo-50 dark:bg-indigo-950/30 flex items-center justify-center">
+                      <Package className="h-4 w-4 text-indigo-500" />
+                    </div>
+                    Order Items
                   </div>
-                  Order Items
-                  <span className="ml-auto text-xs font-normal text-gray-400">
-                    {order.items?.length || 0} item{(order.items?.length || 0) === 1 ? "" : "s"}
+                  <span className="text-xs font-semibold px-3 py-1 bg-gray-100 dark:bg-secondary text-gray-600 dark:text-gray-300 rounded-full">
+                    {order.items?.length || 0} Products
                   </span>
                 </CardTitle>
               </CardHeader>
-              <CardContent className="px-6 pb-6">
+              <CardContent className="p-0">
                 {order.items && order.items.length > 0 ? (
-                  <>
-                    {/* Header */}
-                    <div className="grid grid-cols-[2fr_0.8fr_1fr_1fr] gap-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wider pb-3 border-b border-gray-100 dark:border-border">
+                  <div className="w-full">
+                    {/* Header Row */}
+                    <div className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-4 px-6 py-3 bg-gray-50/80 dark:bg-secondary/30 text-[11px] font-bold text-gray-400 uppercase tracking-widest border-b border-gray-100 dark:border-border">
                       <div>Product</div>
-                      <div className="text-center">Qty</div>
-                      <div className="text-right">Price</div>
+                      <div className="text-center">Quantity</div>
+                      <div className="text-right">Unit Price</div>
                       <div className="text-right">Subtotal</div>
                     </div>
-
-                    {/* Rows */}
+                    {/* Items */}
                     <div className="divide-y divide-gray-50 dark:divide-border/50">
                       {order.items.map((item, idx) => (
-                        <div key={idx} className="grid grid-cols-[2fr_0.8fr_1fr_1fr] gap-3 py-3 items-center">
-                          <p className="text-sm font-medium text-gray-800 dark:text-foreground">{item.name || "Unnamed"}</p>
-                          <p className="text-sm text-gray-500 text-center">{item.quantity}</p>
-                          <p className="text-sm text-gray-500 text-right">{formatCurrency(item.price || 0)}</p>
-                          <p className="text-sm font-semibold text-gray-800 dark:text-foreground text-right">
+                        <div key={idx} className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-4 px-6 py-4 items-center hover:bg-gray-50/50 dark:hover:bg-secondary/20 transition-colors">
+                          <p className="text-[14px] font-semibold text-gray-900 dark:text-foreground">{item.name || "Unnamed Item"}</p>
+                          <div className="flex justify-center">
+                            <span className="text-[13px] font-medium bg-gray-100 dark:bg-background px-2.5 py-0.5 rounded text-gray-700 dark:text-gray-300">
+                              {item.quantity}x
+                            </span>
+                          </div>
+                          <p className="text-[14px] text-gray-500 dark:text-gray-400 text-right">{formatCurrency(item.price || 0)}</p>
+                          <p className="text-[14px] font-bold text-gray-900 dark:text-foreground text-right">
                             {formatCurrency((item.quantity || 0) * (item.price || 0))}
                           </p>
                         </div>
                       ))}
                     </div>
-
-                    {/* Totals */}
-                    <div className="border-t-2 border-gray-100 dark:border-border mt-2 pt-3 space-y-2">
-                      <div className="flex justify-between text-sm text-gray-500">
-                        <span>Subtotal</span>
-                        <span>{formatCurrency(subtotal)}</span>
-                      </div>
-                      <div className="flex justify-between text-lg font-bold text-gray-900 dark:text-foreground">
-                        <span>Total</span>
-                        <span className="text-purple-600 dark:text-purple-400">{formatCurrency(order.totalAmount)}</span>
-                      </div>
-                    </div>
-                  </>
+                  </div>
                 ) : (
-                  <p className="text-sm text-gray-400 py-6 text-center">No items in this order</p>
+                  <div className="p-12 text-center text-gray-400">
+                    <FileText className="h-8 w-8 mx-auto mb-3 opacity-20" />
+                    <p className="text-sm font-medium">No items found in this order</p>
+                  </div>
                 )}
               </CardContent>
             </Card>
 
-            {/* Action Buttons */}
-            <div className="flex flex-wrap gap-3">
-              {isSales && !isReadOnly && order.status === "pending" && (
-                <>
-                  {!order.isInvoiceConfirmed ? (
-                    <Button
-                      onClick={handleConfirmInvoice}
-                      disabled={updating}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-sm"
-                    >
-                      <FileText className="h-4 w-4 mr-2" />
-                      Confirm Invoice
-                    </Button>
-                  ) : (
-                    <Button
-                      onClick={() => setConfirmAction("ready_for_processing")}
-                      className="bg-blue-500 hover:bg-blue-600 text-white rounded-lg shadow-sm"
-                    >
-                      <CheckCircle2 className="h-4 w-4 mr-2" />
-                      Mark as Ready for Processing
-                    </Button>
-                  )}
+            {/* Minor Actions (Cancel / Revert) - Placed below items to keep main CTA completely focused */}
+            <div className="flex justify-start gap-3">
+               {isSales && !isReadOnly && order.status === "pending" && (
                   <Button
                     variant="outline"
                     onClick={() => setConfirmAction("cancelled")}
-                    className="border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30 rounded-lg"
+                    className="border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30 rounded-xl px-5"
                   >
-                    <XCircle className="h-4 w-4 mr-2" />
                     Cancel Order
                   </Button>
-                </>
-              )}
-              {isSales && !isReadOnly && order.status === "cancelled" && (
-                <Button
-                  onClick={() => setConfirmAction("pending")}
-                  variant="outline"
-                  className="border-amber-200 text-amber-600 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-400 rounded-lg"
-                >
-                  <Clock className="h-4 w-4 mr-2" />
-                  Re-open as Pending
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                onClick={handlePrint}
-                className="rounded-lg border-gray-200 dark:border-border"
-              >
-                <Printer className="h-4 w-4 mr-2" />
-                Print Receipt
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => setShowReceipt(!showReceipt)}
-                className="rounded-lg border-gray-200 dark:border-border"
-              >
-                <Receipt className="h-4 w-4 mr-2" />
-                {showReceipt ? "Hide" : "View"} Receipt
-              </Button>
+               )}
+               {isSales && !isReadOnly && order.status === "cancelled" && (
+                  <Button
+                    onClick={() => setConfirmAction("pending")}
+                    variant="outline"
+                    className="border-amber-200 text-amber-600 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-400 rounded-xl px-5"
+                  >
+                    <Clock className="h-4 w-4 mr-2" />
+                    Revert to Pending
+                  </Button>
+               )}
             </div>
+
           </div>
 
-          {/* RIGHT: Order Meta + Receipt Preview (2 cols) */}
-          <div className="lg:col-span-2 space-y-5">
-            {/* Order Meta Card */}
-            <Card className="rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
-              <CardHeader className="px-6 pt-6 pb-3">
-                <CardTitle className="text-base font-bold text-gray-900 dark:text-foreground">Order Summary</CardTitle>
-              </CardHeader>
-              <CardContent className="px-6 pb-6 space-y-4">
-                <div className="flex justify-between items-center">
-                  <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</span>
-                  <StatusBadge status={order.status} />
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Date</span>
-                  <span className="text-sm text-gray-700 dark:text-foreground">{formatDate(order.createdAt)}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Time</span>
-                  <span className="text-sm text-gray-700 dark:text-foreground">{formatTime(order.createdAt)}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Items</span>
-                  <span className="text-sm text-gray-700 dark:text-foreground">{order.items?.length || 0}</span>
-                </div>
-                <div className="border-t border-gray-100 dark:border-border pt-3">
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm font-bold text-gray-900 dark:text-foreground">Total Amount</span>
-                    <span className="text-xl font-bold text-purple-600 dark:text-purple-400">{formatCurrency(order.totalAmount)}</span>
-                  </div>
-                </div>
+          {/* RIGHT: Action & Summary Panel (Sticky) */}
+          <div className="w-full xl:w-[420px] shrink-0 space-y-6 xl:sticky xl:top-6">
+            
+            {/* Status Card */}
+            <Card className="rounded-2xl border border-gray-100 dark:border-border shadow-sm bg-white dark:bg-card">
+              <CardContent className="p-6 flex items-center justify-between">
+                <span className="text-[13px] font-bold text-gray-400 uppercase tracking-widest">Current Status</span>
+                <StatusBadge status={order.status} />
               </CardContent>
             </Card>
 
-            {/* Fulfillment Fields Card */}
-            <Card className="rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
-              <CardHeader className="px-6 pt-6 pb-3">
-                <CardTitle className="text-base font-bold text-gray-900 dark:text-foreground flex items-center gap-2">
-                  <div className="h-8 w-8 rounded-lg bg-indigo-50 dark:bg-indigo-950/30 flex items-center justify-center">
-                    <FileText className="h-4 w-4 text-indigo-500" />
-                  </div>
-                  Fulfillment Details
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="px-6 pb-6 space-y-4">
+            {/* Sales Documents Input */}
+            <Card className="rounded-2xl border-2 border-blue-50 dark:border-blue-900/30 shadow-sm bg-white dark:bg-card overflow-hidden">
+              <div className="bg-blue-50/50 dark:bg-blue-950/20 px-6 py-4 border-b border-blue-50 dark:border-blue-900/30">
+                 <h3 className="text-sm font-bold text-blue-900 dark:text-blue-400 flex items-center gap-2">
+                   <FileText className="h-4 w-4" /> Required Documentation
+                 </h3>
+                 <p className="text-xs text-blue-600/70 dark:text-blue-400/70 mt-1 font-medium">Both fields are required before confirming</p>
+              </div>
+              <CardContent className="p-6 space-y-5">
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Sales Invoice No.</label>
+                  <label className="text-[11px] font-bold text-gray-500 uppercase tracking-widest">Sales Invoice No.</label>
                   <Input 
-                    placeholder="Enter Sales Invoice No." 
+                    placeholder="e.g. INV-2023-001" 
                     value={invoiceNo}
                     onChange={(e) => setInvoiceNo(e.target.value)}
                     onBlur={(e) => handleFieldBlur("salesInvoiceNo", e.target.value)}
-                    readOnly={isReadOnly || !isSales || order.isInvoiceConfirmed}
-                    className="h-10"
+                    readOnly={isReadOnly || !isSales || order.status !== "pending"}
+                    className="h-11 rounded-xl bg-gray-50/50 dark:bg-secondary focus-visible:ring-blue-500 border-gray-200 dark:border-border font-medium"
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Delivery Receipt No.</label>
+                  <label className="text-[11px] font-bold text-gray-500 uppercase tracking-widest">Delivery Receipt No.</label>
                   <Input 
-                    placeholder="Enter Delivery Receipt No." 
+                    placeholder="e.g. DR-2023-094" 
                     value={receiptNo}
                     onChange={(e) => setReceiptNo(e.target.value)}
                     onBlur={(e) => handleFieldBlur("deliveryReceiptNo", e.target.value)}
-                    readOnly={isReadOnly || !isSales || order.isInvoiceConfirmed}
-                    className="h-10"
+                    readOnly={isReadOnly || !isSales || order.status !== "pending"}
+                    className="h-11 rounded-xl bg-gray-50/50 dark:bg-secondary focus-visible:ring-blue-500 border-gray-200 dark:border-border font-medium"
                   />
                 </div>
               </CardContent>
             </Card>
 
-            {/* Receipt Preview */}
-            {showReceipt && (
-              <div className="animate-in slide-in-from-top-2 duration-300">
-                <div className="print-receipt-area">
-                  <ReceiptView ref={receiptRef} order={order} />
+            {/* Order Summary & Primary Action */}
+            <Card className="rounded-2xl border border-gray-100 dark:border-border shadow-lg shadow-sky-500/5 bg-white dark:bg-card overflow-hidden">
+              <CardHeader className="px-6 pt-6 pb-4">
+                <CardTitle className="text-base font-bold">Order Summary</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="px-6 pb-6 space-y-4">
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-gray-500 dark:text-gray-400">Date Placed</span>
+                    <span className="font-medium text-gray-900 dark:text-foreground">{formatDate(order.createdAt)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-gray-500 dark:text-gray-400">Time Placed</span>
+                    <span className="font-medium text-gray-900 dark:text-foreground">{formatTime(order.createdAt)}</span>
+                  </div>
+                  
+                  <div className="pt-4 mt-2 border-t border-gray-100 dark:border-border flex justify-between items-center">
+                    <span className="text-[15px] font-bold text-gray-900 dark:text-foreground">Total Amount</span>
+                    <span className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-sky-500 dark:from-blue-400 dark:to-sky-300">
+                      {formatCurrency(order.totalAmount || (order as any).total || 0)}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            )}
+
+                {isSales && !isReadOnly && order.status === "pending" && (
+                  <div className="p-4 bg-gray-50 dark:bg-secondary/30 border-t border-gray-100 dark:border-border">
+                    <Button
+                      onClick={handleConfirmAndSend}
+                      disabled={updating || !invoiceNo.trim() || !receiptNo.trim()}
+                      className={`w-full h-12 text-[15px] font-bold rounded-xl shadow-md transition-all duration-300 ${
+                        (!invoiceNo.trim() || !receiptNo.trim() || updating) 
+                        ? "bg-gray-200 text-gray-400 dark:bg-secondary dark:text-muted-foreground shadow-none" 
+                        : "bg-gradient-to-r from-blue-600 to-sky-500 hover:from-blue-700 hover:to-sky-600 text-white shadow-blue-500/20 hover:shadow-blue-500/40"
+                      }`}
+                    >
+                      {updating ? "Processing..." : "Confirm & Send to Encoder"}
+                    </Button>
+                  </div>
+                )}
+                
+                {/* Visual marker if already processed */}
+                {order.status !== "pending" && order.status !== "cancelled" && (
+                  <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border-t border-blue-100 dark:border-blue-900/30 text-center">
+                    <p className="text-sm font-bold text-blue-700 dark:text-blue-400 flex items-center justify-center gap-2">
+                       <CheckCircle2 className="h-4 w-4" /> This order has been processed
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
           </div>
         </div>
       </div>
 
-      {/* Printable receipt (hidden, used by window.print) */}
-      <div className="print-receipt-area hidden print:block">
-        <ReceiptView order={order} />
-      </div>
-
-      {/* Confirm Status Change Dialog */}
+      {/* Confirmation Dialog for Fallback actions (Cancel/Revert) */}
       <AlertDialog open={!!confirmAction} onOpenChange={() => setConfirmAction(null)}>
-        <AlertDialogContent className="sm:max-w-[420px]">
+        <AlertDialogContent className="sm:max-w-[400px] rounded-2xl">
           <AlertDialogHeader>
-            <div className="flex items-center gap-3">
-              <div className={`flex h-10 w-10 items-center justify-center rounded-full ${
-                confirmAction === "completed" ? "bg-emerald-100 dark:bg-emerald-950/40" :
-                confirmAction === "ready_for_processing" ? "bg-blue-100 dark:bg-blue-950/40" :
-                confirmAction === "cancelled" ? "bg-red-100 dark:bg-red-950/40" :
-                "bg-amber-100 dark:bg-amber-950/40"
-              }`}>
-                {confirmAction === "completed" && <CheckCircle2 className="h-5 w-5 text-emerald-600" />}
-                {confirmAction === "ready_for_processing" && <CheckCircle2 className="h-5 w-5 text-blue-600" />}
-                {confirmAction === "cancelled" && <XCircle className="h-5 w-5 text-red-600" />}
-                {confirmAction === "pending" && <Clock className="h-5 w-5 text-amber-600" />}
-              </div>
-              <AlertDialogTitle>
-                {confirmAction === "completed" && "Mark as Completed?"}
-                {confirmAction === "ready_for_processing" && "Ready for Processing?"}
-                {confirmAction === "cancelled" && "Cancel this Order?"}
-                {confirmAction === "pending" && "Re-open this Order?"}
-              </AlertDialogTitle>
-            </div>
-            <AlertDialogDescription className="pt-2 text-sm">
-              {confirmAction === "completed" && "This will mark the order as completed. The customer will be notified."}
-              {confirmAction === "ready_for_processing" && "This will send the task to the Encoder to process the stock deduction."}
-              {confirmAction === "cancelled" && "This will cancel the order. This action can be undone by re-opening."}
-              {confirmAction === "pending" && "This will set the order back to pending status."}
+            <AlertDialogTitle className="text-xl font-bold">
+              {confirmAction === "cancelled" && "Cancel Order"}
+              {confirmAction === "pending" && "Revert to Pending"}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="pt-2 text-[15px] leading-relaxed text-gray-500">
+              {confirmAction === "cancelled" && "Are you sure you want to cancel this order? This action can be undone."}
+              {confirmAction === "pending" && "This will reopen the order as pending and remove any finalized states."}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="rounded-lg" disabled={updating}>Cancel</AlertDialogCancel>
+          <AlertDialogFooter className="mt-6">
+            <AlertDialogCancel className="rounded-xl font-semibold border-gray-200 h-11 px-6">Go Back</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleStatusChange}
+              onClick={handleOtherStatusChange}
               disabled={updating}
-              className={`rounded-lg ${
-                confirmAction === "completed" ? "bg-emerald-600 hover:bg-emerald-700" :
-                confirmAction === "ready_for_processing" ? "bg-blue-600 hover:bg-blue-700" :
-                confirmAction === "cancelled" ? "bg-red-600 hover:bg-red-700" :
-                "bg-amber-600 hover:bg-amber-700"
-              } text-white`}
+              className={`rounded-xl font-bold h-11 px-6 ${
+                confirmAction === "cancelled" ? "bg-red-600 hover:bg-red-700 text-white" : "bg-amber-600 hover:bg-amber-700 text-white"
+              }`}
             >
-              {updating ? "Updating..." : "Confirm"}
+              {updating ? "Updating..." : "Yes, Confirm"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

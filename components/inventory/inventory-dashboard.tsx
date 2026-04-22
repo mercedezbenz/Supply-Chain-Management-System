@@ -38,6 +38,7 @@ const STOCK_STATUS_OPTIONS = [
   { value: "in-stock", label: "In Stock" },
   { value: "low-stock", label: "Low Stock" },
   { value: "out-of-stock", label: "Out of Stock" },
+  { value: "archived", label: "Archived" },
 ]
 
 // ——— Expiration filter options ———————————————————————————————————————————
@@ -449,12 +450,19 @@ export function InventoryDashboard() {
         if (!matchesSearch) return false
       }
 
-      // Stock Status filter
-      if (stockStatusFilter !== "all") {
-        const status = getItemStatus(item)
-        if (stockStatusFilter === "in-stock" && status !== "in-stock") return false
-        if (stockStatusFilter === "low-stock" && status !== "low-stock") return false
-        if (stockStatusFilter === "out-of-stock" && status !== "out-of-stock") return false
+      // Archive / Status filter
+      const isArchived = Boolean((item as any).isDeleted)
+      if (stockStatusFilter === "archived") {
+        if (!isArchived) return false
+      } else {
+        if (isArchived) return false // Hide archived items unless specifically requested
+        
+        if (stockStatusFilter !== "all") {
+          const status = getItemStatus(item)
+          if (stockStatusFilter === "in-stock" && status !== "in-stock") return false
+          if (stockStatusFilter === "low-stock" && status !== "low-stock") return false
+          if (stockStatusFilter === "out-of-stock" && status !== "out-of-stock") return false
+        }
       }
 
       // Expiration filter
@@ -506,6 +514,18 @@ export function InventoryDashboard() {
           (txn.reference_no || "").toLowerCase().includes(q)
         if (!matches) return false
       }
+      
+      // Archive filter
+      // Get the inventory item by barcode to check if it's archived
+      const inventoryItem = items.find(i => i.barcode === txn.barcode)
+      const isArchived = Boolean(inventoryItem && (inventoryItem as any).isDeleted)
+      
+      if (stockStatusFilter === "archived") {
+        if (!isArchived) return false
+      } else {
+        if (isArchived) return false
+      }
+
       // Recently Added filter
       if (recentlyCutoff) {
         const createdAt = txn.created_at instanceof Date ? txn.created_at : new Date(txn.created_at || 0)
@@ -673,7 +693,7 @@ export function InventoryDashboard() {
             <p className="text-xs sm:text-sm text-muted-foreground">Monitor stock movement, expiration, and barcode management</p>
           </div>
           {canEditInventory && (
-            <div className="grid grid-cols-4 sm:flex sm:items-center gap-1.5 sm:gap-2 shrink-0">
+            <div className="grid grid-cols-3 sm:flex sm:items-center gap-1.5 sm:gap-2 shrink-0">
               <Button onClick={() => setAddItemDialogOpen(true)} className="gap-1 sm:gap-2 h-9 sm:h-10 text-[11px] sm:text-sm px-2 sm:px-4 rounded-lg">
                 <Plus className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
                 <span className="truncate">Add Item</span>
@@ -684,13 +704,6 @@ export function InventoryDashboard() {
               >
                 <ScanLine className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
                 <span className="truncate">Scan</span>
-              </Button>
-              <Button
-                onClick={() => setOutgoingDialogOpen(true)}
-                className="gap-1 sm:gap-2 h-9 sm:h-10 text-[11px] sm:text-sm px-2 sm:px-4 bg-orange-500 hover:bg-orange-600 text-white rounded-lg"
-              >
-                <PackageMinus className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
-                <span className="truncate">Out</span>
               </Button>
               <Button
                 onClick={() => setReturnDialogOpen(true)}

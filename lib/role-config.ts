@@ -37,7 +37,7 @@ export const MENU_ITEMS: MenuItem[] = [
     label: "Orders",
     href: "/orders",
     icon: ShoppingCart,
-    roles: ["sales", "owner"],
+    roles: ["sales"],
   },
   {
     label: "Encoder Tasks",
@@ -58,7 +58,7 @@ export const ROUTE_ACCESS: Record<string, AppRole[]> = {
   "/stock-logs": ["admin", "staff", "purchasing"],
   "/deliveries": ["admin", "staff"],
   "/users":      ["admin"],
-  "/orders":     ["sales", "owner"],
+  "/orders":     ["sales"],
   "/encoder":    ["admin", "encoder"],
 }
 

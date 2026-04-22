@@ -8,6 +8,7 @@ import {
   onSnapshot,
   query,
   where,
+  orderBy
 } from "firebase/firestore"
 import { onAuthStateChanged } from "firebase/auth"
 
@@ -18,13 +19,17 @@ export interface EncoderTask {
   customerEmail: string
   items: any[]
   totalAmount: number
-  salesInvoiceNo: string
-  deliveryReceiptNo: string
-  status: "pending" | "processing" | "done"
+  salesInvoiceNumber?: string
+  salesInvoiceNo?: string
+  deliveryReceiptNumber?: string
+  deliveryReceiptNo?: string
+  status: string
+  encoderStatus?: "pending" | "verification" | "completed"
+  selectedStocks?: any[]
   createdAt: any
 }
 
-export function useEncoderTasks(status?: "pending" | "processing" | "done") {
+export function useEncoderTasks(status?: string | string[]) {
   const [tasks, setTasks] = useState<EncoderTask[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -70,44 +75,74 @@ export function useEncoderTasks(status?: "pending" | "processing" | "done") {
 
           const tasksRef = collection(db, "encoder_tasks")
 
-          let q = tasksRef as any
+          let qWithOrder = tasksRef as any
+          let qFallback = tasksRef as any
+
           if (status) {
-            console.log(`[useEncoderTasks] Filtering by status: "${status}"`)
-            q = query(tasksRef, where("status", "==", status))
+            console.log(`[useEncoderTasks] Setting up query for status: "${status}"`)
+            if (Array.isArray(status)) {
+              qWithOrder = query(tasksRef, where("status", "in", status), orderBy("createdAt", "desc"))
+              qFallback = query(tasksRef, where("status", "in", status))
+            } else {
+              qWithOrder = query(tasksRef, where("status", "==", status), orderBy("createdAt", "desc"))
+              qFallback = query(tasksRef, where("status", "==", status))
+            }
+          } else {
+            qWithOrder = query(tasksRef, orderBy("createdAt", "desc"))
+            qFallback = tasksRef
           }
 
-          unsubscribeSnapshot = onSnapshot(
-            q,
-            (snapshot: any) => {
-              const data: EncoderTask[] = snapshot.docs.map((doc: any) => ({
-                id: doc.id,
-                ...doc.data()
-              } as EncoderTask))
+          // Function to set up the onSnapshot listener
+          const setupListener = (useFallback = false) => {
+            const activeQuery = useFallback ? qFallback : qWithOrder;
+            
+            return onSnapshot(
+              activeQuery,
+              (snapshot: any) => {
+                console.log("Snapshot size:", snapshot.size)
+                
+                const data: EncoderTask[] = snapshot.docs.map((doc: any) => {
+                  const docData = doc.data()
+                  console.log("Doc data:", docData)
+                  return {
+                    id: doc.id,
+                    ...docData
+                  } as EncoderTask
+                })
 
-              // Sort client-side to avoid composite index requirements
-              data.sort((a, b) => {
-                const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0
-                const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0
-                return timeB - timeA
-              })
+                // If using fallback, we must sort client-side because the query didn't sort
+                if (useFallback) {
+                  data.sort((a, b) => {
+                    const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0
+                    const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0
+                    return timeB - timeA
+                  })
+                }
 
-              console.log(`[useEncoderTasks] ✅ Snapshot received — ${data.length} task(s):`, data.map(t => ({
-                id: t.id,
-                orderId: t.orderId,
-                customer: t.customerName,
-                status: t.status,
-              })))
-              setTasks(data)
-              setLoading(false)
-            },
-            (error: any) => {
-              console.error("[useEncoderTasks] ❌ Snapshot error:", error)
-              console.error("[useEncoderTasks] Error code:", error?.code)
-              console.error("[useEncoderTasks] Error message:", error?.message)
-              setTasks([])
-              setLoading(false)
-            }
-          )
+                setTasks(data)
+                setLoading(false)
+              },
+              (error: any) => {
+                // If it's an index error, automatically fallback
+                if (!useFallback && (error.code === "failed-precondition" || error?.message?.includes("index"))) {
+                  console.warn("⚠️ Firestore Composite Index Missing!")
+                  console.warn("Error message (CLICK URL TO CREATE INDEX):", error.message)
+                  console.log("🔄 Falling back to query without orderBy...")
+                  
+                  // Setup fallback and overwrite unsubscribe handler
+                  unsubscribeSnapshot = setupListener(true)
+                } else {
+                  console.error("[useEncoderTasks] ❌ Snapshot error:", error)
+                  setTasks([])
+                  setLoading(false)
+                }
+              }
+            )
+          }
+
+          // Initialize with the standard (orderBy) query
+          unsubscribeSnapshot = setupListener(false)
+
         } catch (err) {
           console.error("[useEncoderTasks] Failed to set up Firestore listener:", err)
           setTasks([])

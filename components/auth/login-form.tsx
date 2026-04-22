@@ -2,7 +2,7 @@
 
 import type React from "react";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
 import { Loader2, AlertTriangle, Clock, Eye, EyeOff, Mail, Lock } from "lucide-react";
@@ -27,12 +27,6 @@ export function LoginForm() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Keep firebaseError wired into our generic error alert
-  useEffect(() => {
-    if (firebaseError) {
-      setError(firebaseError);
-    }
-  }, [firebaseError]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -50,7 +44,7 @@ export function LoginForm() {
     return () => clearInterval(interval);
   }, [rateLimitCountdown]);
 
-  const handleFirebaseError = (error: any) => {
+  const handleFirebaseError = useCallback((error: any) => {
     const errorCode = error.code || error.message;
 
     if (errorCode.includes("too-many-requests")) {
@@ -59,19 +53,25 @@ export function LoginForm() {
       setError(
         "Too many failed attempts. Please wait 5 minutes before trying again, or try from a different device/network."
       );
-    } else if (
-      errorCode.includes("wrong-password") ||
-      errorCode.includes("invalid-credential")
-    ) {
-      setError(
-        "Invalid email or password. Default credentials: admin@decktago.com / admin123"
-      );
+    } else if (errorCode.includes("wrong-password")) {
+      setError("Wrong password. Please try again.");
+    } else if (errorCode.includes("user-not-found")) {
+      setError("Wrong email. User not found.");
+    } else if (errorCode.includes("invalid-credential")) {
+      setError("Invalid email or password. Please try again.");
     } else if (errorCode.includes("invalid-email")) {
       setError("Please enter a valid email address.");
     } else {
-      setError(error.message || "Failed to sign in");
+      setError("Failed to sign in. Please check your credentials.");
     }
-  };
+  }, []);
+
+  // Keep firebaseError wired into our generic error alert
+  useEffect(() => {
+    if (firebaseError) {
+      handleFirebaseError({ message: firebaseError, code: firebaseError });
+    }
+  }, [firebaseError, handleFirebaseError]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

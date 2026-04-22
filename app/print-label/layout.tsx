@@ -9,8 +9,8 @@
  */
 
 export const metadata = {
-  title: "Print Label — 48mm Thermal",
-  description: "Barcode label print page for 48mm thermal printers",
+  title: "Print Label",
+  description: "Compact 48mm thermal printing interface",
 }
 
 export default function PrintLabelLayout({

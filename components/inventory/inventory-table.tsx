@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { InventoryItem, InventoryTransaction, Category } from "@/lib/types"
 import { formatTimestamp, formatExpirationDate } from "@/lib/utils"
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, ChevronUp, Pencil, Trash2, Loader2, Barcode, MessageSquareWarning, Package, History, Printer, SearchX } from "lucide-react"
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, ChevronUp, Pencil, Trash2, Loader2, Barcode, MessageSquareWarning, Package, History, Printer, SearchX, Archive } from "lucide-react"
 import { getItemStatus } from "./inventory-dashboard"
 import { buildProductDisplayName } from "@/lib/product-data"
 import { useToast } from "@/hooks/use-toast"
@@ -214,16 +214,16 @@ function TransactionHistoryList({ transactions, setCancellingItem, readOnly = fa
     return transactions.flatMap((txn: any) => {
       const parts = []
       const mt = getMovementType(txn).toLowerCase()
-      const isOutgoing = mt.includes("outgoing")
+      const isOutgoing = mt.includes("outgoing") || txn.type === "OUT"
       const isReturn = mt.includes("return")
-      const isIncoming = mt.includes("supplier") || mt.includes("production") || mt.includes("packing") || ((txn.source || "").toLowerCase() === "incoming") || mt.includes("incoming")
+      const isIncoming = mt.includes("supplier") || mt.includes("production") || mt.includes("packing") || ((txn.source || "").toLowerCase() === "incoming") || mt.includes("incoming") || txn.type === "IN"
       const dateStr = formatTxnDate(txn.transaction_date || txn.created_at || new Date())
       const unit = deriveUnitType(txn) === "PACK" ? "packs" : "boxes"
       const rem = txn.stock_left ?? "\u2014"
 
 
       if (isOutgoing) {
-          parts.push({ txn, id: `${txn.id}-out`, type: 'OUT', qty: txn.outgoing_packs ?? txn.outgoing_qty ?? 0, rem, date: dateStr, unit })
+          parts.push({ txn, id: `${txn.id}-out`, type: 'OUT', qty: txn.outgoing_qty ?? txn.outgoing_packs ?? txn.quantity ?? 0, rem, date: dateStr, unit })
       } else if (isReturn) {
           if ((txn.good_return ?? 0) > 0) {
               parts.push({ txn, id: `${txn.id}-good`, type: 'GOOD_RETURN', qty: txn.good_return, rem, date: dateStr, unit })
@@ -232,7 +232,7 @@ function TransactionHistoryList({ transactions, setCancellingItem, readOnly = fa
               parts.push({ txn, id: `${txn.id}-bad`, type: 'BAD_RETURN', qty: txn.damage_return, reason: txn.bad_return_details?.reason || "Damaged", rem: null, date: dateStr, unit })
           }
       } else if (isIncoming) {
-          parts.push({ txn, id: `${txn.id}-in`, type: 'IN', qty: txn.incoming_packs ?? txn.incoming_qty ?? 0, rem, date: dateStr, unit })
+          parts.push({ txn, id: `${txn.id}-in`, type: 'IN', qty: txn.incoming_qty ?? txn.incoming_packs ?? txn.quantity ?? 0, rem, date: dateStr, unit })
       } else {
           parts.push({ txn, id: `${txn.id}-other`, type: 'OTHER', qty: 0, rem, date: dateStr, unit })
       }
@@ -341,6 +341,8 @@ export function InventoryTable({
   const { toast } = useToast()
   const [cancellingItem, setCancellingItem] = useState<InventoryTransaction | null>(null)
   const [cancelLoading, setCancelLoading] = useState(false)
+  const [archivingItem, setArchivingItem] = useState<{ id: string; barcode: string; productName: string } | null>(null)
+  const [archiveLoading, setArchiveLoading] = useState(false)
   const [expandedBarcodes, setExpandedBarcodes] = useState<Set<string>>(new Set())
   const [currentPage, setCurrentPage] = useState(1)
   const [barcodeViewItem, setBarcodeViewItem] = useState<{ barcode: string; productName: string; productionDate?: string; expiryDate?: string } | null>(null)
@@ -649,10 +651,8 @@ export function InventoryTable({
     { key: "productionWeight",  label: "Prod. Weight",        align: "right"  as const, width: "min-w-[110px] w-[110px]", weightGroup: true },
     { key: "packingWeight",     label: "Pack. Weight",        align: "right"  as const, width: "min-w-[110px] w-[110px]" },
     { key: "weightDifference",  label: "Wt. Diff.",           align: "right"  as const, width: "min-w-[100px] w-[100px]" },
-    { key: "salesInvoiceNo",    label: "Sales Inv. No.",      align: "left"   as const, width: "min-w-[140px]" },
-    { key: "deliveryReceiptNo", label: "Delivery Rcpt. No.",  align: "left"   as const, width: "min-w-[160px]" },
     { key: "unit",              label: "Unit",                align: "center" as const, width: "min-w-[72px]  w-[72px]" },
-    { key: "actions",           label: "Actions",             align: "center" as const, width: "min-w-[148px] w-[148px]" },
+    { key: "actions",           label: "Actions",             align: "center" as const, width: "min-w-[218px] w-[218px]" },
   ].filter(col => {
     if (readOnly) {
       return ["product", "expiryDate", "remainingStock", "status", "reorderNeeded"].includes(col.key)
@@ -700,7 +700,7 @@ export function InventoryTable({
                         col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left",
                         col.width || "",
                         (col as any).weightGroup ? "border-l-2 border-border/50" : "",
-                        col.key === "actions" ? "sticky right-0 bg-gray-50/95 dark:bg-muted/60 shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.06)]" : "",
+                        col.key === "actions" ? "" : "",
                       ].filter(Boolean).join(" ")}
                     >
                       {col.label}
@@ -992,37 +992,7 @@ export function InventoryTable({
                         </td>
                         )}
 
-                        {/* Sales Invoice No. — left aligned, flexible */}
-                        {!readOnly && (
-                        <td className="h-14 px-4 py-2 align-middle">
-                          {group.sales_invoice_no ? (
-                            <span
-                              className="font-mono text-[11px] text-foreground/80 block truncate"
-                              title={group.sales_invoice_no}
-                            >
-                              {group.sales_invoice_no}
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground text-xs">—</span>
-                          )}
-                        </td>
-                        )}
 
-                        {/* Delivery Receipt No. — left aligned, flexible */}
-                        {!readOnly && (
-                        <td className="h-14 px-4 py-2 align-middle">
-                          {group.delivery_receipt_no ? (
-                            <span
-                              className="font-mono text-[11px] text-foreground/80 block truncate"
-                              title={group.delivery_receipt_no}
-                            >
-                              {group.delivery_receipt_no}
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground text-xs">—</span>
-                          )}
-                        </td>
-                        )}
 
                         {/* Unit — center aligned, narrow */}
                         {!readOnly && (
@@ -1035,7 +1005,7 @@ export function InventoryTable({
 
                         {/* Actions — sticky right, equal-gap buttons */}
                         {!readOnly && (
-                        <td className="h-14 px-4 py-2 align-middle text-center whitespace-nowrap sticky right-0 shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.06)] bg-inherit">
+                        <td className="h-14 px-4 py-2 align-middle text-center whitespace-nowrap bg-inherit">
                           <div
                             className="flex items-center justify-center gap-2"
                             onClick={(e) => e.stopPropagation()}
@@ -1067,6 +1037,23 @@ export function InventoryTable({
                                 >
                                   <Printer className="h-3.5 w-3.5 shrink-0" />
                                   Print
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 px-2.5 gap-1.5 text-xs font-medium text-amber-700 border-amber-200 hover:text-amber-800 hover:bg-amber-50 hover:border-amber-300 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-950/30 transition-colors shrink-0"
+                                  onClick={() => {
+                                    const item = items.find(i => i.barcode === group.barcode);
+                                    if (item) {
+                                      setArchivingItem({ id: item.id, barcode: group.barcode, productName: group.productName });
+                                    } else {
+                                      toast({ title: "Error", description: "Item not found in inventory.", variant: "destructive" });
+                                    }
+                                  }}
+                                  title="Archive Item"
+                                >
+                                  <Archive className="h-3.5 w-3.5 shrink-0" />
+                                  Archive
                                 </Button>
                               </>
                             )}
@@ -1314,27 +1301,7 @@ export function InventoryTable({
                     </div>
                   )}
 
-                  {/* ═══ DOCUMENT REFERENCES ═══ */}
-                  {!readOnly && (group.sales_invoice_no || group.delivery_receipt_no) && (
-                    <div className="grid grid-cols-2 gap-1.5 mt-1.5">
-                      {group.sales_invoice_no && (
-                        <div className="flex flex-col rounded-lg bg-violet-50/60 dark:bg-violet-900/10 border border-violet-200/60 dark:border-violet-800/30 px-2 py-1.5">
-                          <span className="text-[8px] sm:text-[9px] uppercase tracking-wider text-violet-500 font-semibold block leading-none mb-0.5">Sales Inv.</span>
-                          <span className="text-[10px] sm:text-xs font-semibold text-foreground/80 font-mono truncate" title={group.sales_invoice_no}>
-                            {group.sales_invoice_no}
-                          </span>
-                        </div>
-                      )}
-                      {group.delivery_receipt_no && (
-                        <div className="flex flex-col rounded-lg bg-violet-50/60 dark:bg-violet-900/10 border border-violet-200/60 dark:border-violet-800/30 px-2 py-1.5">
-                          <span className="text-[8px] sm:text-[9px] uppercase tracking-wider text-violet-500 font-semibold block leading-none mb-0.5">Deliv. Rcpt.</span>
-                          <span className="text-[10px] sm:text-xs font-semibold text-foreground/80 font-mono truncate" title={group.delivery_receipt_no}>
-                            {group.delivery_receipt_no}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  )}
+
                 </div>
 
                   {/* ═══ ACTIONS — Show Barcode + Print (touch-friendly) ═══ */}
@@ -1367,6 +1334,24 @@ export function InventoryTable({
                         >
                           <Printer className="h-3.5 w-3.5" />
                           Print
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1 h-9 sm:h-10 rounded-lg gap-1.5 text-[11px] sm:text-sm font-semibold text-amber-700 border-amber-200/80 bg-amber-50/40 hover:bg-amber-100/60 hover:text-amber-800 hover:border-amber-300 dark:text-amber-400 dark:border-amber-800 dark:bg-amber-950/20 dark:hover:bg-amber-950/40 transition-all active:scale-[0.98]"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const item = items.find(i => i.barcode === group.barcode);
+                            if (item) {
+                              setArchivingItem({ id: item.id, barcode: group.barcode, productName: group.productName });
+                            } else {
+                              toast({ title: "Error", description: "Item not found in inventory.", variant: "destructive" });
+                            }
+                          }}
+                          title="Archive Item"
+                        >
+                          <Archive className="h-3.5 w-3.5" />
+                          Archive
                         </Button>
                       </div>
                     </div>
@@ -1539,6 +1524,54 @@ export function InventoryTable({
             <div className="flex gap-2">
               <span className="text-muted-foreground text-xs font-semibold uppercase w-16 shrink-0">Type</span>
               <span className="font-medium text-foreground">{getMovementType(cancellingItem)}</span>
+            </div>
+          </div>
+        )}
+      </ConfirmationDialog>
+
+      <ConfirmationDialog
+        open={!!archivingItem}
+        onOpenChange={(open) => { if (!open) setArchivingItem(null) }}
+        title="Archive Item"
+        description="Are you sure you want to archive this item? It will be hidden from the main list but its history will remain intact. You can view archived items using the Status filter."
+        confirmLabel="Yes, Archive Item"
+        cancelLabel="Cancel"
+        variant="danger"
+        loading={archiveLoading}
+        onConfirm={async () => {
+          if (!archivingItem) return
+          setArchiveLoading(true)
+          try {
+            await FirebaseService.updateDocument("inventory", archivingItem.id, {
+              isDeleted: true,
+              deletedAt: new Date()
+            })
+            toast({
+              title: "✅ Item Archived",
+              description: `"${archivingItem.productName}" has been archived.`,
+            })
+            setArchivingItem(null)
+          } catch (error: any) {
+            console.error("[InventoryTable] Archive item error:", error)
+            toast({
+              title: "❌ Failed to Archive",
+              description: error?.message || "Something went wrong. Please try again.",
+              variant: "destructive",
+            })
+          } finally {
+            setArchiveLoading(false)
+          }
+        }}
+      >
+        {archivingItem && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50/60 dark:bg-amber-950/20 dark:border-amber-800 p-3 text-sm space-y-1.5 mt-2">
+            <div className="flex gap-2">
+              <span className="text-muted-foreground text-xs font-semibold uppercase w-16 shrink-0">Product</span>
+              <span className="font-medium text-foreground">{archivingItem.productName || '—'}</span>
+            </div>
+            <div className="flex gap-2">
+              <span className="text-muted-foreground text-xs font-semibold uppercase w-16 shrink-0">Barcode</span>
+              <span className="font-mono text-xs text-foreground">{archivingItem.barcode || '—'}</span>
             </div>
           </div>
         )}

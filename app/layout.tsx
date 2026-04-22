@@ -1,10 +1,11 @@
 import type React from "react"
-import type { Metadata } from "next"
+import type { Metadata, Viewport } from "next"
 import { Inter, Roboto_Mono } from "next/font/google"
 import { ConditionalLayout } from "@/components/layout/conditional-layout"
 import { ConditionalHtmlClass } from "@/components/layout/conditional-html-class"
 import "./globals.css"
 
+// Fonts
 const geistSans = Inter({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -15,20 +16,26 @@ const geistMono = Roboto_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
 })
-
+// ✅ GLOBAL METADATA (fix tab title + favicon)
 export const metadata: Metadata = {
-  title: "DecktaGO — Main Dashboard",
-  description: "Monitor inventory flow and stock status in real time",
-  generator: "v0.app",
+  title: "DecktaGo",
+  description: "DecktaGo Inventory System",
+  icons: {
+    icon: [{ url: "/logo.png" }],
+    apple: [{ url: "/logo.png" }],
+  },
 }
 
-// Anti-flicker script: runs before React hydrates to set the correct theme class
-// on <html> immediately. Prevents the flash of dark/light before next-themes loads.
+// ✅ VIEWPORT
+export const viewport: Viewport = {
+  themeColor: "#2563eb",
+}
+
+// ✅ Anti-flicker theme script
 const themeInitScript = `
 (function() {
   try {
     var theme = localStorage.getItem('theme');
-    // Default to light if no theme stored or if stored value isn't valid
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
       document.documentElement.style.colorScheme = 'dark';
@@ -40,16 +47,22 @@ const themeInitScript = `
 })();
 `
 
+// ✅ ROOT LAYOUT (ONLY ONE!)
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode
-}>) {
+}) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`} suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`${geistSans.variable} ${geistMono.variable}`}
+      suppressHydrationWarning
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
+
       <body className="font-sans antialiased">
         <ConditionalHtmlClass />
         <ConditionalLayout>{children}</ConditionalLayout>

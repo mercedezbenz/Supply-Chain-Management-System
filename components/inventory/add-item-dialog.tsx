@@ -1,9 +1,10 @@
 "use client"
-
+import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
+import { db } from "@/lib/firebase-live";
 import type React from "react"
 import { useState, useRef, useEffect, useCallback } from "react"
 import { format } from "date-fns"
-import { CalendarIcon, Barcode, RefreshCw, CheckCircle2, Loader2, Printer, Plus } from "lucide-react"
+import { CalendarIcon, Barcode, RefreshCw, CheckCircle2, Loader2, Printer, Plus, Check, ChevronsUpDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -24,6 +25,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/hooks/use-auth"
@@ -128,9 +142,6 @@ const EMPTY_FORM = {
   // Weight tracking
   productionWeight: "",
   packingWeight: "",
-  // Transaction references
-  salesInvoiceNo: "",
-  deliveryReceiptNo: "",
 }
 
 // Special sentinel value for "+ Add Item" option
@@ -155,6 +166,42 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
   // "+ Add Item" inline form
   const [showAddProduct, setShowAddProduct] = useState(false)
   const [newProductName, setNewProductName] = useState("")
+  // Dropdown search state
+  const [searchQuery, setSearchQuery] = useState("")
+
+  // Image upload state (By-product only)
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [imagePreview, setImagePreview] = useState<string | null>(null)
+
+  // ── Cloudinary upload helper ──────────────────────────────────────────────
+  const uploadToCloudinary = async (file: File): Promise<string> => {
+    const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME!
+    const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!
+
+    if (!cloudName || !uploadPreset) {
+      throw new Error("Cloudinary configuration is missing. Set NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME and NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET in .env.local")
+    }
+
+    console.log("Uploading file:", file.name, file.type, file.size, "bytes")
+
+    const payload = new FormData()
+    payload.append("file", file)
+    payload.append("upload_preset", uploadPreset)
+
+    const res = await fetch(
+      `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+      { method: "POST", body: payload }
+    )
+
+    const data = await res.json()
+    console.log("Cloudinary FULL RESPONSE:", data)
+
+    if (!res.ok) {
+      throw new Error(data?.error?.message || "Upload failed")
+    }
+
+    return data.secure_url as string
+  }
 
   const resetAll = useCallback(() => {
     setFormData(EMPTY_FORM)
@@ -164,6 +211,8 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
     setBarcodeReady(false)
     setShowAddProduct(false)
     setNewProductName("")
+    setImageFile(null)
+    setImagePreview(null)
   }, [])
 
   // ── Auto-fill from scanned item ─────────────────────────────────────────
@@ -613,6 +662,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
     }
 
     setLoading(true)
+    console.log("imageFile before upload:", imageFile)
     try {
       const incoming = Number.parseInt(formData.incomingStock) || 0
       const stockLeft = incoming
@@ -622,10 +672,14 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
       const packW = formData.packingWeight ? parseFloat(formData.packingWeight) : null
       const weightDiff = prodW !== null && packW !== null ? Math.abs(prodW - packW) : null
 
+      // Standardize productKey for BOTH categories
+      const productKey = `${(autoProductName || formData.category).toLowerCase().trim()}-${formData.productType.toLowerCase().trim()}`
+        .replace(/\s+/g, "-")
+
       const itemData: any = {
         barcode: formData.barcode.trim(),
         barcode_base: formData.barcodeBase || formData.barcode.trim(),
-        product_id: productId,
+        product_id: productKey,
         name: autoProductName || formData.category,
         category: formData.category,
         productType: formData.productType,
@@ -647,9 +701,6 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         production_weight: prodW,
         packing_weight: packW,
         weight_difference: weightDiff,
-        // Transaction references
-        sales_invoice_no: formData.salesInvoiceNo.trim() || null,
-        delivery_receipt_no: formData.deliveryReceiptNo.trim() || null,
         qualityStatus: "GOOD" as const,
         transactionDocuments: {
           transaction_type: "incoming",
@@ -661,6 +712,46 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
       }
 
       await InventoryService.addItem(itemData)
+
+      // Upsert product master data for products that support image upload
+      if (itemData.category === "By-product" || itemData.category === "Finished Product") {
+        const ref = doc(db, "products", productKey);
+        const snap = await getDoc(ref);
+        const existingData = snap.data();
+
+        // Upload image to Cloudinary (if provided)
+        let imageUrl: string | null = null
+        if (imageFile) {
+          try {
+            imageUrl = await uploadToCloudinary(imageFile)
+          } catch (uploadErr: any) {
+            console.error("Cloudinary upload failed:", uploadErr)
+            toast.error("Image Upload Failed", {
+              description: uploadErr.message || "Could not upload image. Product will be saved without an image.",
+            })
+          }
+        }
+
+        console.log("Final imageUrl:", imageUrl)
+
+        if (!imageUrl && imageFile) {
+           console.warn("Image upload failed or skipped")
+        }
+
+        console.log("Category:", itemData.category)
+        console.log("ProductKey:", productKey)
+        console.log("ImageFile:", imageFile)
+        console.log("ImageURL:", imageUrl)
+
+        // 4. Fix overwrite issue using merge: true
+        await setDoc(ref, {
+  name: itemData.name,
+  type: itemData.productType,
+  category: itemData.category, // ✅ ADD THIS
+  imageUrl: imageUrl ?? existingData?.imageUrl ?? null,
+}, { merge: true });
+      }
+      
 
       // APPEND-ONLY LEDGER: Always create a NEW transaction row for every incoming event
       await TransactionService.addTransaction({
@@ -682,7 +773,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         stock_left: stockLeft,
         production_date: formData.productionDate || null,
         expiry_date: formData.expirationDate || null,
-        reference_no: formData.salesInvoiceNo.trim() || formData.deliveryReceiptNo.trim() || "",
+        reference_no: "",
         source: "incoming",
         process_date: null,
         created_at: new Date(),
@@ -690,9 +781,6 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         production_weight: prodW,
         packing_weight: packW,
         weight_difference: weightDiff,
-        // Transaction references
-        sales_invoice_no: formData.salesInvoiceNo.trim() || null,
-        delivery_receipt_no: formData.deliveryReceiptNo.trim() || null,
       } as any)
 
       toast.success("Success", {
@@ -862,28 +950,52 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                       <>
                         <Select
                           value={formData.productName}
-                          onValueChange={handleProductNameChange}
+                          onValueChange={(val) => {
+                            handleProductNameChange(val)
+                            setSearchQuery("") // Clear search on select
+                          }}
                         >
                           <SelectTrigger className={cn("h-9", errors.productName ? "border-destructive" : "")}>
                             <SelectValue placeholder="Select product name" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectGroup>
-                              <SelectLabel className="text-xs text-slate-400">
-                                {formData.category} — {formData.productType}
-                              </SelectLabel>
-                              {availableProducts.map((p) => (
-                                <SelectItem key={p.name} value={p.name}>{p.name}</SelectItem>
-                              ))}
-                            </SelectGroup>
-                            <SelectGroup>
-                              <SelectItem value={ADD_NEW_PRODUCT_SENTINEL}>
-                                <span className="flex items-center gap-1.5 text-blue-600 font-medium">
-                                  <Plus className="h-3.5 w-3.5" />
-                                  Add Item
-                                </span>
-                              </SelectItem>
-                            </SelectGroup>
+                            <div className="p-2 border-b border-slate-100 dark:border-slate-800">
+                              <Input
+                                placeholder="Search products..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                onKeyDown={(e) => e.stopPropagation()} // Prevent Radix from stealing typing events
+                                className="h-8 max-w-full text-sm"
+                                autoFocus
+                              />
+                            </div>
+                            <div className="max-h-[220px] overflow-y-auto">
+                              <SelectGroup>
+                                <SelectLabel className="text-xs text-slate-400">
+                                  {formData.category} — {formData.productType}
+                                </SelectLabel>
+                                {availableProducts
+                                  .filter((p) => p.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                                  .map((p) => (
+                                    <SelectItem key={p.name} value={p.name}>
+                                      {p.name}
+                                    </SelectItem>
+                                  ))}
+                                {availableProducts.filter((p) => p.name.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 && (
+                                  <div className="px-2 py-4 text-center text-sm text-slate-500">
+                                    No matches found
+                                  </div>
+                                )}
+                              </SelectGroup>
+                              <SelectGroup>
+                                <SelectItem value={ADD_NEW_PRODUCT_SENTINEL}>
+                                  <span className="flex items-center gap-1.5 text-blue-600 font-medium">
+                                    <Plus className="h-3.5 w-3.5" />
+                                    Add Item
+                                  </span>
+                                </SelectItem>
+                              </SelectGroup>
+                            </div>
                           </SelectContent>
                         </Select>
                         {errors.productName && <p className="text-xs text-destructive">{errors.productName}</p>}
@@ -940,6 +1052,55 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                     <p className="text-xs text-amber-700">
                       <span className="font-semibold">Raw Material</span> — represents whole/boxed meat (unprocessed). No product name selection needed.
                     </p>
+                  </div>
+                )}
+
+                {/* Image Upload — By-product and Finished Product */}
+                {(formData.category === "By-product" || formData.category === "Finished Product") && (
+                  <div className="grid gap-1.5">
+                    <Label className="text-sm font-medium text-slate-700">
+                      Product Image <span className="text-slate-400 font-normal">(optional)</span>
+                    </Label>
+                    <Input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (!file) return
+                        console.log("Selected file:", file)
+                        if (file.size > 2 * 1024 * 1024) {
+                          toast.error("File too large", {
+                            description: "Image must be under 2 MB.",
+                          })
+                          e.target.value = ""
+                          return
+                        }
+                        setImageFile(file)
+                        setImagePreview(URL.createObjectURL(file))
+                      }}
+                      className="h-9 file:mr-3 file:h-7 file:rounded-md file:border-0 file:bg-indigo-50 file:px-3 file:text-xs file:font-medium file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
+                    />
+                    {imagePreview && (
+                      <div className="relative mt-1 w-24 h-24 rounded-lg border border-slate-200 overflow-hidden bg-white">
+                        <img
+                          src={imagePreview}
+                          alt="Preview"
+                          className="w-full h-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setImageFile(null)
+                            setImagePreview(null)
+                          }}
+                          className="absolute top-0.5 right-0.5 h-5 w-5 rounded-full bg-black/60 text-white text-xs flex items-center justify-center hover:bg-black/80 transition-colors"
+                          aria-label="Remove image"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
+                    <p className="text-[10px] text-slate-400">Max 2 MB · JPG, PNG, WebP</p>
                   </div>
                 )}
               </div>
@@ -1162,49 +1323,6 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                       )}
                     />
                     {errors.expirationDate && <p className="text-xs text-destructive">{errors.expirationDate}</p>}
-                  </div>
-                </div>
-              </div>
-
-              {/* ── 4. TRANSACTION REFERENCES ────────────────────────────── */}
-              <div className="rounded-xl border border-violet-100 bg-violet-50/30 p-5 grid gap-4">
-                <p className="text-xs font-semibold uppercase tracking-widest text-violet-500">
-                  Transaction References
-                  <span className="ml-2 font-normal normal-case text-violet-400">(optional)</span>
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {/* Sales Invoice No. */}
-                  <div className="grid gap-1.5">
-                    <Label className="text-sm font-medium text-slate-700">
-                      Sales Invoice No.
-                    </Label>
-                    <Input
-                      id="salesInvoiceNo"
-                      type="text"
-                      value={formData.salesInvoiceNo}
-                      onChange={(e) =>
-                        setFormData((prev) => ({ ...prev, salesInvoiceNo: e.target.value }))
-                      }
-                      placeholder="e.g. SI-2024-0001"
-                      className="h-9"
-                    />
-                  </div>
-
-                  {/* Delivery Receipt No. */}
-                  <div className="grid gap-1.5">
-                    <Label className="text-sm font-medium text-slate-700">
-                      Delivery Receipt No.
-                    </Label>
-                    <Input
-                      id="deliveryReceiptNo"
-                      type="text"
-                      value={formData.deliveryReceiptNo}
-                      onChange={(e) =>
-                        setFormData((prev) => ({ ...prev, deliveryReceiptNo: e.target.value }))
-                      }
-                      placeholder="e.g. DR-2024-0001"
-                      className="h-9"
-                    />
                   </div>
                 </div>
               </div>
