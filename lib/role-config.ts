@@ -1,5 +1,5 @@
 import { BarChart3, Package, FileText, ShoppingCart, KeyRound } from "lucide-react"
-
+import { MessageCircle } from "lucide-react"
 /**
  * Centralized role-based access configuration.
  *
@@ -32,7 +32,6 @@ export const MENU_ITEMS: MenuItem[] = [
     icon: Package,
     roles: ["admin", "staff", "purchasing", "owner", "encoder"],
   },
-
   {
     label: "Orders",
     href: "/orders",
@@ -44,6 +43,14 @@ export const MENU_ITEMS: MenuItem[] = [
     href: "/encoder",
     icon: KeyRound,
     roles: ["admin", "encoder"],
+  },
+
+  // ✅ NEW
+  {
+    label: "Messages",
+    href: "/messages",
+    icon: MessageCircle,
+    roles: ["sales"],
   },
 ]
 
@@ -60,6 +67,9 @@ export const ROUTE_ACCESS: Record<string, AppRole[]> = {
   "/users":      ["admin"],
   "/orders":     ["sales", "owner"],
   "/encoder":    ["admin", "encoder"],
+
+  // ✅ NEW
+  "/messages":   ["sales"],
 }
 
 /**
