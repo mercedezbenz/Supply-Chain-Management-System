@@ -9,13 +9,16 @@ import {
   where as fbWhere,
   doc as fbDoc,
   getDoc as fbGetDoc,
+  getDocs as fbGetDocs,
 } from "firebase/firestore"
 
 export interface OrderItem {
   id?: string
+  productId?: string
   name: string
   quantity: number
   unit?: string
+  imageUrl?: string
 }
 
 export interface ShippingAddress {
@@ -150,24 +153,43 @@ export function useOrders(filterStatus?: "pending" | "ready_for_processing" | "p
             mapDocToOrder(doc.id, doc.data())
           )
 
-          // Step 1: Fetch phone numbers from users collection if missing
+          // Batch fetch products to get image URLs
+          const productMap: Record<string, string> = {}
+          try {
+            const productsSnapshot = await fbGetDocs(fbCollection(db, "products"))
+            productsSnapshot.forEach(doc => {
+              productMap[doc.id] = doc.data().imageUrl || ""
+            })
+          } catch (err) {
+            console.error("[useOrders] Error fetching products for images:", err)
+          }
+
+          // Step 1: Fetch phone numbers from users collection if missing and attach images
           const resolvedData = await Promise.all(data.map(async (order) => {
+            // Attach images to items
+            const itemsWithImages = order.items.map(item => ({
+              ...item,
+              imageUrl: productMap[item.id || item.productId || ""] || ""
+            }))
+            
+            const processedOrder = { ...order, items: itemsWithImages }
+
             // Only fetch if phone is "N/A" and userId exists
-            if ((order.customerPhone === "N/A" || !order.customerPhone) && order.userId) {
+            if ((processedOrder.customerPhone === "N/A" || !processedOrder.customerPhone) && processedOrder.userId) {
               try {
-                const userDoc = await fbGetDoc(fbDoc(db, "users", order.userId))
+                const userDoc = await fbGetDoc(fbDoc(db, "users", processedOrder.userId))
                 if (userDoc.exists()) {
                   const userData = userDoc.data()
                   return {
-                    ...order,
+                    ...processedOrder,
                     customerPhone: userData.phoneNumber || ""
                   }
                 }
               } catch (err) {
-                console.error(`[useOrders] Error fetching user phone for ${order.userId}:`, err)
+                console.error(`[useOrders] Error fetching user phone for ${processedOrder.userId}:`, err)
               }
             }
-            return order
+            return processedOrder
           }))
 
           // Sort client-side: newest first by createdAt
