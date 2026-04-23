@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
   Search, ChevronLeft, ChevronRight, Eye, ShoppingCart,
-  Filter, Package, Clock, CheckCircle2, XCircle, TrendingUp, BanknoteIcon,
+  Filter, Package, Clock, CheckCircle2, XCircle, TrendingUp,
 } from "lucide-react"
 import { useOrders, type Order } from "@/hooks/useOrders"
 
@@ -33,12 +33,9 @@ const formatTime = (d: any): string => {
   return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
 }
 
-const formatCurrency = (amount: number): string =>
-  `₱${amount.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-
 // ─── Status Badge ───
 const StatusBadge = ({ status }: { status: string }) => {
-  let cls = "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-wide uppercase "
+  let cls = "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-wide "
   let icon = null
 
   switch (status) {
@@ -46,6 +43,7 @@ const StatusBadge = ({ status }: { status: string }) => {
       cls += "bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-800"
       icon = <Clock className="h-3 w-3" />
       break
+    case "delivered":
     case "completed":
       cls += "bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-400 dark:border-emerald-800"
       icon = <CheckCircle2 className="h-3 w-3" />
@@ -58,7 +56,7 @@ const StatusBadge = ({ status }: { status: string }) => {
       cls += "bg-gray-50 text-gray-600 border border-gray-200"
   }
 
-  return <span className={cls}>{icon}{status}</span>
+  return <span className={cls}>{icon}{status.charAt(0).toUpperCase() + status.slice(1)}</span>
 }
 
 type StatusFilter = "all" | "pending" | "completed" | "cancelled"
@@ -76,23 +74,31 @@ export function OrdersTable() {
   const stats = useMemo(() => {
     const total = orders.length
     const pending = orders.filter(o => o.status === "pending").length
-    const completed = orders.filter(o => o.status === "completed").length
+    const completed = orders.filter(o => o.status === "completed" || o.status === "delivered").length
     const cancelled = orders.filter(o => o.status === "cancelled").length
-    const revenue = orders.filter(o => o.status === "completed").reduce((sum, o) => sum + (o.totalAmount || 0), 0)
-    return { total, pending, completed, cancelled, revenue }
+    return { total, pending, completed, cancelled }
   }, [orders])
 
   // ─── Filtered + Searched ───
   const filteredOrders = useMemo(() => {
-    let result = orders
+    // Normalize and resolve missing fields
+    const normalized = orders.map(o => ({
+      ...o,
+      customerPhone: o.customerPhone && o.customerPhone !== "N/A" ? o.customerPhone : "",
+    }))
+
+    let result = normalized
     if (statusFilter !== "all") {
-      result = result.filter(o => o.status === statusFilter)
+      result = result.filter(o => {
+        if (statusFilter === "completed") return o.status === "completed" || o.status === "delivered"
+        return o.status === statusFilter
+      })
     }
     if (search.trim()) {
       const q = search.toLowerCase()
       result = result.filter(o =>
         o.customerName.toLowerCase().includes(q) ||
-        o.customerEmail?.toLowerCase().includes(q) ||
+        o.customerPhone?.toLowerCase().includes(q) ||
         o.customerAddress?.toLowerCase().includes(q)
       )
     }
@@ -113,8 +119,8 @@ export function OrdersTable() {
     return (
       <div className="space-y-6 pb-8 animate-in fade-in duration-300">
         <div><div className="h-8 w-48 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mb-2" /><div className="h-4 w-64 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" /></div>
-        <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-          {[...Array(4)].map((_, i) => (<Card key={i} className="rounded-2xl"><CardHeader className="pb-2 pt-5 px-5"><div className="h-4 w-20 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" /></CardHeader><CardContent className="px-5 pb-5"><div className="h-8 w-16 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" /></CardContent></Card>))}
+        <div className="grid gap-4 grid-cols-2 lg:grid-cols-3">
+          {[...Array(3)].map((_, i) => (<Card key={i} className="rounded-2xl"><CardHeader className="pb-2 pt-5 px-5"><div className="h-4 w-20 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" /></CardHeader><CardContent className="px-5 pb-5"><div className="h-8 w-16 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" /></CardContent></Card>))}
         </div>
         <Card className="rounded-2xl"><CardContent className="p-6">{[...Array(5)].map((_, i) => (<div key={i} className="h-14 bg-gray-100 dark:bg-gray-800 rounded-lg animate-pulse mb-2" />))}</CardContent></Card>
       </div>
@@ -134,7 +140,7 @@ export function OrdersTable() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-3">
         {/* Total Orders */}
         <Card className="rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.08)] transition-all duration-300">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 px-5 pt-5">
@@ -171,19 +177,6 @@ export function OrdersTable() {
           </CardHeader>
           <CardContent className="px-5 pb-5">
             <div className="text-2xl font-bold text-emerald-500">{stats.completed}</div>
-          </CardContent>
-        </Card>
-
-        {/* Revenue */}
-        <Card className="rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.08)] transition-all duration-300">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 px-5 pt-5">
-            <CardTitle className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Revenue</CardTitle>
-            <div className="h-8 w-8 rounded-lg bg-purple-50 dark:bg-purple-950/30 flex items-center justify-center">
-              <BanknoteIcon className="h-4 w-4 text-purple-500" />
-            </div>
-          </CardHeader>
-          <CardContent className="px-5 pb-5">
-            <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">{formatCurrency(stats.revenue)}</div>
           </CardContent>
         </Card>
       </div>
@@ -242,120 +235,136 @@ export function OrdersTable() {
         <CardContent className="px-6 pb-5 pt-0">
           {/* Scrollable table wrapper for responsive display */}
           <div className="overflow-x-auto">
-            {/* Table Header */}
-            <div className="grid grid-cols-[1.5fr_1.2fr_1.5fr_1.5fr_1fr_0.8fr_1fr_0.6fr] gap-3 text-[11px] font-semibold text-gray-400 dark:text-muted-foreground uppercase tracking-wider pb-3 border-b border-gray-100 dark:border-border min-w-[900px]">
-              <div>Customer</div>
-              <div>Email</div>
-              <div>Address</div>
-              <div>Products</div>
-              <div className="text-center">Amount</div>
-              <div className="text-center">Status</div>
-              <div className="text-center">Date</div>
-              <div className="text-right">Action</div>
-            </div>
-
-            {/* Table Rows */}
-            <div className="divide-y divide-gray-50 dark:divide-border/50 min-w-[900px]">
-              {paginatedOrders.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-16">
-                  <div className="h-14 w-14 rounded-full bg-gray-50 dark:bg-secondary/50 flex items-center justify-center mb-3">
-                    <ShoppingCart className="h-6 w-6 text-gray-300" />
-                  </div>
-                  <p className="text-sm font-medium text-gray-500">
-                    {orders.length === 0 ? "No orders yet" : "No orders found"}
-                  </p>
-                  <p className="text-xs text-gray-300 mt-1">
-                    {search || statusFilter !== "all" ? "Try adjusting your filters" : "Orders will appear here once created"}
-                  </p>
-                </div>
-              ) : (
-                paginatedOrders.map((order) => {
-                  let borderColor = "border-l-gray-200"
-                  if (order.status === "pending") borderColor = "border-l-amber-400"
-                  else if (order.status === "completed") borderColor = "border-l-emerald-400"
-                  else if (order.status === "cancelled") borderColor = "border-l-red-400"
-
-                  return (
-                    <div
-                      key={order.id}
-                      className={`grid grid-cols-[1.5fr_1.2fr_1.5fr_1.5fr_1fr_0.8fr_1fr_0.6fr] gap-3 py-3.5 items-center transition-all duration-200 hover:bg-blue-50/40 dark:hover:bg-secondary/30 group border-l-[3px] ${borderColor} rounded-r-md -ml-px pl-3 cursor-pointer`}
-                      onClick={() => router.push(`/orders/details?id=${order.id}`)}
-                    >
-                      {/* Customer Name */}
-                      <div className="min-w-0">
-                        <p className="font-medium text-sm text-gray-800 dark:text-foreground truncate">{order.customerName}</p>
-                      </div>
-
-                      {/* Email */}
-                      <div className="min-w-0">
-                        <p className="text-[12px] text-gray-500 dark:text-foreground/70 truncate" title={order.customerEmail}>
-                          {order.customerEmail || "—"}
+            <table className="w-full table-fixed min-w-[1350px] border-separate border-spacing-x-4 border-spacing-y-0">
+              <thead>
+                <tr className="text-[11px] font-semibold text-gray-400 dark:text-muted-foreground uppercase tracking-wider bg-gray-50/50 dark:bg-secondary/10">
+                  <th className="px-4 py-4 text-left font-bold border-b border-gray-100 dark:border-border w-[180px]">Customer</th>
+                  <th className="px-4 py-4 text-left font-bold border-b border-gray-100 dark:border-border w-[140px]">Phone</th>
+                  <th className="px-4 py-4 text-left font-bold border-b border-gray-100 dark:border-border w-[260px]">Address</th>
+                  <th className="px-6 py-4 text-left font-bold border-b border-gray-100 dark:border-border w-[320px]">Products</th>
+                  <th className="px-4 py-4 text-center font-bold border-b border-gray-100 dark:border-border w-[100px]">Unit</th>
+                  <th className="px-4 py-4 text-center font-bold border-b border-gray-100 dark:border-border w-[120px]">Status</th>
+                  <th className="px-4 py-4 text-center font-bold border-b border-gray-100 dark:border-border w-[140px]">Date</th>
+                  <th className="px-4 py-4 text-right font-bold border-b border-gray-100 dark:border-border w-[100px] pr-6">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50 dark:divide-border/50">
+                {paginatedOrders.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-24 text-center">
+                      <div className="flex flex-col items-center justify-center">
+                        <div className="h-16 w-16 rounded-full bg-gray-50 dark:bg-secondary/50 flex items-center justify-center mb-4">
+                          <ShoppingCart className="h-7 w-7 text-gray-300" />
+                        </div>
+                        <p className="text-base font-semibold text-gray-500">
+                          {orders.length === 0 ? "No orders yet" : "No orders found"}
+                        </p>
+                        <p className="text-sm text-gray-400 mt-1">
+                          {search || statusFilter !== "all" ? "Try adjusting your filters" : "Orders will appear here once created"}
                         </p>
                       </div>
+                    </td>
+                  </tr>
+                ) : (
+                  paginatedOrders.map((order) => {
+                    let borderColor = "border-l-gray-200"
+                    if (order.status === "pending") borderColor = "border-l-amber-400"
+                    else if (order.status === "completed" || order.status === "delivered") borderColor = "border-l-emerald-400"
+                    else if (order.status === "cancelled") borderColor = "border-l-red-400"
 
-                      {/* Address */}
-                      <div className="min-w-0">
-                        <p className="text-[12px] text-gray-500 dark:text-foreground/70 truncate" title={order.customerAddress}>
-                          {order.customerAddress || "—"}
-                        </p>
-                      </div>
+                    return (
+                      <tr
+                        key={order.id}
+                        className="group transition-all duration-200 hover:bg-blue-50/40 dark:hover:bg-secondary/20 cursor-pointer"
+                        onClick={() => router.push(`/orders/details?id=${order.id}`)}
+                      >
+                        {/* Customer Info */}
+                        <td className={`px-4 py-4 align-top border-l-[4px] ${borderColor}`}>
+                          <p className="font-medium text-[14px] text-gray-900 dark:text-foreground truncate">{order.customerName}</p>
+                        </td>
 
-                      {/* Products */}
-                      <div className="min-w-0">
-                        {order.items && order.items.length > 0 ? (
-                          <div className="space-y-0.5">
-                            {order.items.slice(0, 3).map((item, idx) => (
-                              <p key={idx} className="text-[11px] text-gray-600 dark:text-foreground/70 truncate leading-tight">
-                                • {item.name || "Unnamed"} <span className="text-gray-400">(x{item.quantity})</span>
-                              </p>
-                            ))}
-                            {order.items.length > 3 && (
-                              <p className="text-[10px] text-gray-400 italic">
-                                +{order.items.length - 3} more
-                              </p>
-                            )}
+                        {/* Phone Number */}
+                        <td className="px-4 py-4 align-top">
+                          <p className="text-[13px] text-gray-500 dark:text-foreground/70 truncate">{order.customerPhone || "—"}</p>
+                        </td>
+
+                        {/* Address */}
+                        <td className="px-4 py-4 pr-6 align-top max-w-[260px]">
+                          <div className="flex gap-2 items-start text-[13px] text-gray-600 dark:text-gray-400 leading-snug line-clamp-2" title={order.customerAddress}>
+                            <span className="shrink-0 mt-0.5 text-xs opacity-70">📍</span>
+                            <span>{order.customerAddress || "—"}</span>
                           </div>
-                        ) : (
-                          <p className="text-[11px] text-gray-400">No items</p>
-                        )}
-                      </div>
+                        </td>
 
-                      {/* Amount */}
-                      <div className="text-center">
-                        <span className="text-sm font-bold text-gray-800 dark:text-foreground">{formatCurrency(order.totalAmount)}</span>
-                      </div>
+                        {/* Products */}
+                        <td className="px-6 py-4 pl-6 align-top max-w-[320px]">
+                          {order.items && order.items.length > 0 ? (
+                            <div className="space-y-1 text-[13px] text-gray-700 dark:text-foreground/80">
+                              {order.items.slice(0, 3).map((item, idx) => (
+                                <p key={idx} className="truncate leading-tight flex items-center gap-1 w-full">
+                                  • {item.name} ({item.quantity})
+                                </p>
+                              ))}
+                              {order.items.length > 3 && (
+                                <p className="text-[11px] text-blue-500 font-medium italic mt-0.5">
+                                  +{order.items.length - 3} more
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-[13px] text-gray-400 italic">No items</p>
+                          )}
+                        </td>
 
-                      {/* Status */}
-                      <div className="flex justify-center">
-                        <StatusBadge status={order.status} />
-                      </div>
+                        {/* Unit Column */}
+                        <td className="px-4 py-4 align-top text-center">
+                          {order.items && order.items.length > 0 ? (
+                            <div className="space-y-1">
+                              {order.items.slice(0, 3).map((item, idx) => (
+                                <p key={idx} className="text-[13px] text-gray-500 font-medium truncate">
+                                  {item.unit ? item.unit.charAt(0).toUpperCase() + item.unit.slice(1).toLowerCase() : "—"}
+                                </p>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-[13px] text-gray-400">—</p>
+                          )}
+                        </td>
 
-                      {/* Date */}
-                      <div className="text-center">
-                        <p className="text-[13px] text-gray-600 dark:text-foreground">{formatDate(order.createdAt)}</p>
-                        <p className="text-[11px] text-gray-400">{formatTime(order.createdAt)}</p>
-                      </div>
+                        {/* Status */}
+                        <td className="px-4 py-4 align-top text-center">
+                          <div className="flex justify-center">
+                            <StatusBadge status={order.status} />
+                          </div>
+                        </td>
 
-                      {/* Action */}
-                      <div className="flex justify-end">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            router.push(`/orders/details?id=${order.id}`)
-                          }}
-                          className="h-8 px-3 text-xs font-medium rounded-lg border-gray-200 dark:border-border hover:bg-sky-50 hover:border-sky-300 hover:text-sky-600 dark:hover:bg-sky-950/30 transition-all"
-                        >
-                          <Eye className="h-3.5 w-3.5 mr-1" />
-                          View
-                        </Button>
-                      </div>
-                    </div>
-                  )
-                })
-              )}
-            </div>
+                        {/* Date */}
+                        <td className="px-4 py-4 align-top text-center">
+                          <p className="text-[13px] font-medium text-gray-700 dark:text-foreground">{formatDate(order.createdAt)}</p>
+                          <p className="text-[11px] text-gray-400 mt-1">{formatTime(order.createdAt)}</p>
+                        </td>
+
+                        {/* Action */}
+                        <td className="px-4 py-4 align-top text-right pr-6">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              router.push(`/orders/details?id=${order.id}`)}
+                            }
+                            className="h-8 px-3 text-xs font-medium rounded-lg border-gray-200 dark:border-border hover:bg-sky-50 hover:border-sky-300 hover:text-sky-600 dark:hover:bg-sky-950/30 transition-all"
+                          >
+                            <Eye className="h-3.5 w-3.5 mr-1" />
+                            View
+                          </Button>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
 
           {/* Pagination */}

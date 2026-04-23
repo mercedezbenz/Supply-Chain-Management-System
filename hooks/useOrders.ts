@@ -7,18 +7,20 @@ import {
   onSnapshot as fbOnSnapshot,
   query as fbQuery,
   where as fbWhere,
+  doc as fbDoc,
+  getDoc as fbGetDoc,
 } from "firebase/firestore"
 
 export interface OrderItem {
   id?: string
   name: string
   quantity: number
-  price: number
+  unit?: string
 }
 
 export interface ShippingAddress {
   fullName: string
-  email: string
+  phoneNumber: string
   address: string
   city: string
 }
@@ -26,26 +28,16 @@ export interface ShippingAddress {
 export interface Order {
   id: string
   customerName: string
-  customerEmail: string
+  customerPhone: string
   customerAddress: string
-  customerPhone?: string
   shippingAddress: ShippingAddress
   items: OrderItem[]
-  totalAmount: number
   status: "pending" | "ready_for_processing" | "processing" | "ready_for_delivery" | "completed" | "cancelled"
   salesInvoiceNo?: string
   deliveryReceiptNo?: string
   isInvoiceConfirmed?: boolean
   createdAt: Date | any
-}
-
-/**
- * Calculate total from items array: sum of (price × quantity)
- */
-function calculateTotal(items: OrderItem[]): number {
-  return (items || []).reduce((sum, item) => {
-    return sum + ((item.price || 0) * (item.quantity || 0))
-  }, 0)
+  userId?: string
 }
 
 /**
@@ -66,33 +58,37 @@ function parseTimestamp(ts: any): Date {
  */
 function mapDocToOrder(docId: string, d: any): Order {
   const shipping: ShippingAddress = d.shippingAddress || {}
-  const items: OrderItem[] = d.items ?? []
-  const calculatedTotal = calculateTotal(items)
+  
+  // Update items to include unit
+  const items: OrderItem[] = (d.items ?? []).map((p: any) => ({
+    ...p,
+    name: p.name || "Unnamed",
+    quantity: p.quantity ?? p.qty ?? 0,
+    unit: p.unit || "unit"
+  }))
 
   return {
     id: docId,
     // Prefer shippingAddress fields, fall back to legacy flat fields
     customerName: shipping.fullName || d.customerName || "Unknown",
-    customerEmail: shipping.email || d.customerEmail || "",
+    customerPhone: shipping.phoneNumber || d.customerPhone || "N/A",
     customerAddress: shipping.address
       ? `${shipping.address}${shipping.city ? `, ${shipping.city}` : ""}`
       : d.customerAddress || "",
-    customerPhone: d.customerPhone ?? "",
     shippingAddress: {
       fullName: shipping.fullName || d.customerName || "Unknown",
-      email: shipping.email || d.customerEmail || "",
+      phoneNumber: shipping.phoneNumber || d.customerPhone || "N/A",
       address: shipping.address || d.customerAddress || "",
       city: shipping.city || "",
     },
     items,
-    // Use stored totalAmount if available, otherwise calculate from items
-    totalAmount: d.totalAmount ?? calculatedTotal,
     // Normalize status to lowercase for consistent filtering
     status: (d.status ? String(d.status).toLowerCase() : "pending") as Order["status"],
     salesInvoiceNo: d.salesInvoiceNo || "",
     deliveryReceiptNo: d.deliveryReceiptNo || "",
     isInvoiceConfirmed: d.isInvoiceConfirmed || false,
     createdAt: d.createdAt,
+    userId: d.userId || d.customerId || "",
   }
 }
 
@@ -140,7 +136,7 @@ export function useOrders(filterStatus?: "pending" | "ready_for_processing" | "p
 
       unsubscribe = fbOnSnapshot(
         q,
-        (snapshot: any) => {
+        async (snapshot: any) => {
           console.log(`[useOrders] ✅ Snapshot received — ${snapshot.docs.length} documents`)
 
           // Log raw data for debugging
@@ -154,25 +150,36 @@ export function useOrders(filterStatus?: "pending" | "ready_for_processing" | "p
             mapDocToOrder(doc.id, doc.data())
           )
 
+          // Step 1: Fetch phone numbers from users collection if missing
+          const resolvedData = await Promise.all(data.map(async (order) => {
+            // Only fetch if phone is "N/A" and userId exists
+            if ((order.customerPhone === "N/A" || !order.customerPhone) && order.userId) {
+              try {
+                const userDoc = await fbGetDoc(fbDoc(db, "users", order.userId))
+                if (userDoc.exists()) {
+                  const userData = userDoc.data()
+                  return {
+                    ...order,
+                    customerPhone: userData.phoneNumber || ""
+                  }
+                }
+              } catch (err) {
+                console.error(`[useOrders] Error fetching user phone for ${order.userId}:`, err)
+              }
+            }
+            return order
+          }))
+
           // Sort client-side: newest first by createdAt
-          data.sort((a, b) => {
+          resolvedData.sort((a, b) => {
             const dateA = parseTimestamp(a.createdAt)
             const dateB = parseTimestamp(b.createdAt)
             return dateB.getTime() - dateA.getTime()
           })
 
-          console.log(`[useOrders] Mapped ${data.length} orders:`,
-            data.map(o => ({
-              id: o.id,
-              name: o.customerName,
-              email: o.customerEmail,
-              items: o.items?.length,
-              total: o.totalAmount,
-              status: o.status,
-            }))
-          )
+          console.log(`[useOrders] Mapped ${resolvedData.length} orders with phone resolution`)
 
-          setOrders(data)
+          setOrders(resolvedData)
           setLoading(false)
         },
         (error: any) => {
@@ -198,4 +205,4 @@ export function useOrders(filterStatus?: "pending" | "ready_for_processing" | "p
   return { orders, loading }
 }
 
-export { mapDocToOrder, calculateTotal }
+export { mapDocToOrder }

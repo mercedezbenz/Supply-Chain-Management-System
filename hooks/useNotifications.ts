@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { collection, query, where, orderBy, onSnapshot, updateDoc, doc, Timestamp } from "firebase/firestore"
+import { collection, query, where, orderBy, onSnapshot, updateDoc, doc, limit } from "firebase/firestore"
 import { getFirebaseDb } from "@/lib/firebase-live"
 
 export interface Notification {
@@ -8,27 +8,9 @@ export interface Notification {
   message: string
   targetRole: string
   userId?: string | null
-  type: "ORDER" | "STOCK" | "SYSTEM" | "order"
+  type: "ORDER" | "STOCK" | "SYSTEM" | "order" | "new_order"
   isRead: boolean
   createdAt: any
-}
-
-/**
- * Inventory-related keywords used to reject notifications that leaked
- * into the sales/encoder bell (e.g. old docs without proper targetRole).
- */
-const INVENTORY_KEYWORDS = [
-  "low stock",
-  "out of stock",
-  "expir",         // matches "expired", "expiring", "expiry"
-  "stock alert",
-  "reorder",
-  "inventory",
-]
-
-function isInventoryNotification(n: Notification): boolean {
-  const text = `${n.title ?? ""} ${n.message ?? ""}`.toLowerCase()
-  return INVENTORY_KEYWORDS.some((kw) => text.includes(kw))
 }
 
 export function useNotifications(userRole?: string) {
@@ -42,54 +24,62 @@ export function useNotifications(userRole?: string) {
       return
     }
 
-    // STEP 6: Clear old state immediately on role change
-    setNotifications([])
-    setLoading(true)
+    console.log(`[useNotifications] 🔔 Subscribing for role: "${userRole}"`)
 
     const db = getFirebaseDb()
     const notificationsRef = collection(db, "notifications")
 
-    // STEP 2: FORCE ROLE-BASED QUERY — strict equality on targetRole
+    // Strictly fetch ONLY this role's notifications
+    // Note: If you get an error here about a missing index, click the link in the console to create it.
     const q = query(
       notificationsRef,
-      where("targetRole", "==", userRole),
-      orderBy("createdAt", "desc")
+      where("targetRole", "==", userRole.toLowerCase()),
+      orderBy("createdAt", "desc"),
+      limit(30)
     )
 
-    console.log("[useNotifications] Subscribing for role:", userRole)
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const allNotifs = snapshot.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...docSnap.data(),
+      })) as Notification[]
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const data = snapshot.docs.map((docSnap) => ({
-          id: docSnap.id,
-          ...docSnap.data()
-        })) as Notification[]
+      console.log(`[useNotifications] 📥 Received ${allNotifs.length} notifications for ${userRole}`)
 
-        // STEP 3: HARD FILTER (FAILSAFE) — double-check targetRole
-        let filtered = data.filter((n) => n.targetRole === userRole)
-
-        // STEP 5: CONTENT-BASED FILTER — strip inventory notifications
-        // from sales/encoder bells (they belong in ExpiryNotifications)
-        if (userRole === "sales" || userRole === "encoder") {
-          filtered = filtered.filter((n) => !isInventoryNotification(n))
+      // SECONDARY FAILSAFE FILTER: Hard-block any role leakage
+      const roleFiltered = allNotifs.filter((n) => {
+        const matchesRole = n.targetRole?.toLowerCase() === userRole.toLowerCase()
+        
+        // SALES-SPECIFIC FILTER: Only show "New Order" notifications
+        if (userRole.toLowerCase() === "sales") {
+          const titleLower = n.title?.toLowerCase() || ""
+          const typeLower = n.type?.toLowerCase() || ""
+          
+          // Must be a New Order notification
+          // Specifically exclude "Ready for Processing" which is an encoder task notification
+          return matchesRole && (
+            (typeLower === "new_order" || titleLower.includes("new order")) && 
+            !titleLower.includes("ready for processing")
+          )
         }
+        
+        return matchesRole
+      })
 
-        // STEP 4: DEBUG LOGS
-        console.log("ROLE:", userRole)
-        console.log("ALL NOTIFS:", data.length, data)
-        console.log("FILTERED:", filtered.length, filtered)
-
-        setNotifications(filtered)
-        setLoading(false)
-      },
-      (error) => {
-        console.error("[useNotifications] Error fetching notifications:", error)
-        // If the query fails (e.g. missing composite index), set empty
-        setNotifications([])
-        setLoading(false)
+      // LEAKAGE DETECTOR: Log if query returned incorrect roles
+      if (roleFiltered.length < allNotifs.length) {
+        const leaked = allNotifs.filter(n => n.targetRole?.toLowerCase() !== userRole.toLowerCase())
+        console.warn(`[useNotifications] 🚨 ROLE LEAKAGE DETECTED! Found ${allNotifs.length - roleFiltered.length} items for other roles:`, leaked.map(l => l.targetRole))
       }
-    )
+
+      setNotifications(roleFiltered)
+      setLoading(false)
+    }, (error) => {
+      console.error(`[useNotifications] ❌ Error fetching notifications:`, error)
+      // If index is missing or permissions fail, set empty to avoid crash
+      setNotifications([])
+      setLoading(false)
+    })
 
     return () => unsubscribe()
   }, [userRole])
@@ -108,7 +98,6 @@ export function useNotifications(userRole?: string) {
   const markAllAsRead = async () => {
     try {
       const db = getFirebaseDb()
-      // Only unread notifications intended for this user
       const unread = notifications.filter((n) => !n.isRead)
       const updates = unread.map((n) =>
         updateDoc(doc(db, "notifications", n.id), { isRead: true })

@@ -347,19 +347,11 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
           updatedAt: serverTimestamp()
         })
 
-        await addDoc(collection(db, "notifications"), {
-          title: "Ready for Delivery",
-          message: `Order #${task.orderId.slice(-6).toUpperCase()} has been fully verified and is ready for delivery.`,
-          targetRole: "sales",
-          type: "order",
-          isRead: false,
-          orderId: task.orderId,
-          createdAt: serverTimestamp()
-        })
-
-        // Fix applied here
+        // Fix applied here: Removed extraneous sales notification to ensure isolation.
+        // Sales only receives "New Order" notifications.
         console.log("STATUS UPDATE → IN TRANSIT after scan complete")
         await updateOrderStatus(task.orderId, "in_transit")
+
 
         toast.success("🎉 All batches verified! Task moved to For Delivery.")
         onClose()

@@ -50,9 +50,6 @@ const formatTime = (d: any): string => {
   return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
 }
 
-const formatCurrency = (amount: number): string =>
-  `₱${amount.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-
 // Status badge
 const StatusBadge = ({ status }: { status: string }) => {
   let cls = "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold tracking-wide uppercase "
@@ -191,7 +188,6 @@ export function OrderDetails({ orderId }: OrderDetailsProps) {
           orderId: orderId,
           customerName: order.shippingAddress?.fullName || order.customerName || "N/A",
           items: safeItems,
-          totalAmount: order.totalAmount || (order as any).total || 0,
           salesInvoiceNo: invoiceNo,
           deliveryReceiptNo: receiptNo,
           
@@ -277,13 +273,6 @@ export function OrderDetails({ orderId }: OrderDetailsProps) {
     )
   }
 
-  const subtotal = (order.items || []).reduce(
-    (sum, item) => sum + (item.quantity || 0) * (item.price || 0),
-    0
-  );
-
-  console.log("Subtotal:", subtotal);
-
   return (
     <>
       <div className="space-y-6 pb-12 animate-in fade-in duration-500">
@@ -329,9 +318,9 @@ export function OrderDetails({ orderId }: OrderDetailsProps) {
                   </div>
                   <div className="space-y-1.5">
                     <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
-                      <Mail className="h-3 w-3" /> Email Address
+                      <Phone className="h-3 w-3" /> Phone Number
                     </p>
-                    <p className="text-[15px] text-gray-600 dark:text-foreground/80">{order.shippingAddress?.email || order.customerEmail || "N/A"}</p>
+                    <p className="text-[15px] text-gray-600 dark:text-foreground/80">{order.customerPhone || "N/A"}</p>
                   </div>
                   <div className="space-y-1.5 sm:col-span-2">
                     <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
@@ -342,14 +331,6 @@ export function OrderDetails({ orderId }: OrderDetailsProps) {
                       {order.shippingAddress?.city ? `, ${order.shippingAddress.city}` : ""}
                     </p>
                   </div>
-                  {order.customerPhone && (
-                    <div className="space-y-1.5">
-                      <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
-                        <Phone className="h-3 w-3" /> Phone Number
-                      </p>
-                      <p className="text-[15px] text-gray-600 dark:text-foreground/80">{order.customerPhone}</p>
-                    </div>
-                  )}
                 </div>
               </CardContent>
             </Card>
@@ -373,26 +354,20 @@ export function OrderDetails({ orderId }: OrderDetailsProps) {
                 {order.items && order.items.length > 0 ? (
                   <div className="w-full">
                     {/* Header Row */}
-                    <div className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-4 px-6 py-3 bg-gray-50/80 dark:bg-secondary/30 text-[11px] font-bold text-gray-400 uppercase tracking-widest border-b border-gray-100 dark:border-border">
+                    <div className="grid grid-cols-[3fr_1fr] gap-4 px-6 py-3 bg-gray-50/80 dark:bg-secondary/30 text-[11px] font-bold text-gray-400 uppercase tracking-widest border-b border-gray-100 dark:border-border">
                       <div>Product</div>
                       <div className="text-center">Quantity</div>
-                      <div className="text-right">Unit Price</div>
-                      <div className="text-right">Subtotal</div>
                     </div>
                     {/* Items */}
                     <div className="divide-y divide-gray-50 dark:divide-border/50">
                       {order.items.map((item, idx) => (
-                        <div key={idx} className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-4 px-6 py-4 items-center hover:bg-gray-50/50 dark:hover:bg-secondary/20 transition-colors">
+                        <div key={idx} className="grid grid-cols-[3fr_1fr] gap-4 px-6 py-4 items-center hover:bg-gray-50/50 dark:hover:bg-secondary/20 transition-colors">
                           <p className="text-[14px] font-semibold text-gray-900 dark:text-foreground">{item.name || "Unnamed Item"}</p>
                           <div className="flex justify-center">
-                            <span className="text-[13px] font-medium bg-gray-100 dark:bg-background px-2.5 py-0.5 rounded text-gray-700 dark:text-gray-300">
-                              {item.quantity}x
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider bg-gray-100 text-gray-600 border border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700">
+                              {item.quantity} {item.unit || "unit"}
                             </span>
                           </div>
-                          <p className="text-[14px] text-gray-500 dark:text-gray-400 text-right">{formatCurrency(item.price || 0)}</p>
-                          <p className="text-[14px] font-bold text-gray-900 dark:text-foreground text-right">
-                            {formatCurrency((item.quantity || 0) * (item.price || 0))}
-                          </p>
                         </div>
                       ))}
                     </div>
@@ -483,20 +458,13 @@ export function OrderDetails({ orderId }: OrderDetailsProps) {
               </CardHeader>
               <CardContent className="p-0">
                 <div className="px-6 pb-6 space-y-4">
-                  <div className="flex justify-between items-center text-sm">
+                  <div className="flex justify-between items-center text-sm pt-4 mt-2 border-t border-gray-100 dark:border-border">
                     <span className="text-gray-500 dark:text-gray-400">Date Placed</span>
                     <span className="font-medium text-gray-900 dark:text-foreground">{formatDate(order.createdAt)}</span>
                   </div>
                   <div className="flex justify-between items-center text-sm">
                     <span className="text-gray-500 dark:text-gray-400">Time Placed</span>
                     <span className="font-medium text-gray-900 dark:text-foreground">{formatTime(order.createdAt)}</span>
-                  </div>
-                  
-                  <div className="pt-4 mt-2 border-t border-gray-100 dark:border-border flex justify-between items-center">
-                    <span className="text-[15px] font-bold text-gray-900 dark:text-foreground">Total Amount</span>
-                    <span className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-sky-500 dark:from-blue-400 dark:to-sky-300">
-                      {formatCurrency(order.totalAmount || (order as any).total || 0)}
-                    </span>
                   </div>
                 </div>
 

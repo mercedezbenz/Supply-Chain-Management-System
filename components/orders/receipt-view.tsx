@@ -25,9 +25,6 @@ const formatTime = (d: any): string => {
   return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
 }
 
-const formatCurrency = (amount: number): string =>
-  `₱${amount.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-
 interface ReceiptViewProps {
   order: Order
 }
@@ -38,12 +35,6 @@ interface ReceiptViewProps {
  */
 export const ReceiptView = forwardRef<HTMLDivElement, ReceiptViewProps>(
   ({ order }, ref) => {
-    const subtotal = (order.items || []).reduce(
-      (sum, item) => sum + (item.quantity || 0) * (item.price || 0),
-      0,
-    )
-    const total = order.totalAmount || subtotal
-
     return (
       <div ref={ref} className="receipt-view">
         {/* Inline styles for print */}
@@ -260,9 +251,8 @@ export const ReceiptView = forwardRef<HTMLDivElement, ReceiptViewProps>(
           <div className="receipt-section-title">Customer</div>
           <div className="receipt-customer">
             <div><strong>{order.customerName}</strong></div>
-            {order.customerEmail && <div>{order.customerEmail}</div>}
-            {order.customerAddress && <div>{order.customerAddress}</div>}
-            {order.customerPhone && <div>{order.customerPhone}</div>}
+            {order.customerPhone && <div>Phone: {order.customerPhone}</div>}
+            {order.customerAddress && <div>Address: {order.customerAddress}</div>}
           </div>
         </div>
 
@@ -277,10 +267,7 @@ export const ReceiptView = forwardRef<HTMLDivElement, ReceiptViewProps>(
                 <li key={idx} className="receipt-item">
                   <div>
                     <div className="receipt-item-name">{item.name || "Unnamed Item"}</div>
-                    <div className="receipt-item-qty">{item.quantity} × {formatCurrency(item.price || 0)}</div>
-                  </div>
-                  <div className="receipt-item-price">
-                    {formatCurrency((item.quantity || 0) * (item.price || 0))}
+                    <div className="receipt-item-qty">Quantity: {item.quantity} {item.unit || "unit"}</div>
                   </div>
                 </li>
               ))}
@@ -290,17 +277,6 @@ export const ReceiptView = forwardRef<HTMLDivElement, ReceiptViewProps>(
           )}
         </div>
 
-        {/* Totals */}
-        <div className="receipt-totals">
-          <div className="receipt-total-row">
-            <span>Subtotal</span>
-            <span>{formatCurrency(subtotal)}</span>
-          </div>
-          <div className="receipt-total-row grand">
-            <span>Total</span>
-            <span>{formatCurrency(total)}</span>
-          </div>
-        </div>
 
         {/* Status */}
         <div className="receipt-status">

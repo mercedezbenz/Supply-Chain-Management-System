@@ -104,14 +104,18 @@ export function BarcodeModal({
       let device = savedDevice
       if (!device) {
         // Find printer with correct UUID
-        device = await (navigator as any).bluetooth.requestDevice({
-          filters: [{ services: ["000018f0-0000-1000-8000-00805f9b34fb"] }],
-          optionalServices: ["000018f0-0000-1000-8000-00805f9b34fb"],
-        })
+        device = await navigator.bluetooth.requestDevice({
+  filters: [
+  { namePrefix: "PT" } // or exact name ng printer mo
+],
+optionalServices: ["000018f0-0000-1000-8000-00805f9b34fb"],
+})
         setSavedDevice(device)
       }
 
-      const server = await device.gatt?.connect()
+     let server = device.gatt?.connected
+  ? device.gatt
+  : await device.gatt?.connect()
       if (!server) throw new Error("No GATT server")
 
       const service = await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb')

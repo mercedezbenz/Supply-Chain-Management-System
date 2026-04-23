@@ -25,18 +25,19 @@ import { LogOut, Moon, Sun, Menu } from "lucide-react"
 import { useAuth } from "@/hooks/use-auth"
 import { ExpiryNotifications } from "@/components/notifications/expiry-notifications"
 import { SalesNotifications } from "@/components/notifications/sales-notifications"
+import { ChatNotifications } from "@/components/notifications/chat-notifications"
 import { useTheme } from "next-themes"
 import { useSidebar } from "./sidebar-context"
 
 export function Header() {
   const { user, logout } = useAuth()
+  console.log("[Header] Current User Role:", user?.role)
   const { setTheme, theme } = useTheme()
   const { toggleSidebar } = useSidebar()
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
 
   const handleLogout = async () => {
     try {
-      console.log("[Header] Logging out user...")
       await logout()
       // Logout function handles redirect internally
     } catch (error) {
@@ -75,12 +76,19 @@ export function Header() {
           {/* Right side */}
           <div className="flex items-center space-x-2 sm:space-x-4">
             {/* Notifications based on role */}
-            {["admin", "sales", "encoder"].includes(user?.role || "") && (
-              <SalesNotifications userRole={user?.role} />
+            {user?.role === "sales" && (
+              <>
+                <ChatNotifications userRole={user.role} />
+                <SalesNotifications userRole={user.role} />
+              </>
+            )}
+            {user?.role === "encoder" && (
+              <SalesNotifications userRole={user.role} />
             )}
             {["admin", "inventory", "purchasing", "owner"].includes(user?.role || "") && (
               <ExpiryNotifications />
             )}
+
 
 
 

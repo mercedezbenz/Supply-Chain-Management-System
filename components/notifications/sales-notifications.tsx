@@ -58,6 +58,7 @@ export function SalesNotifications({ userRole }: { userRole?: string }) {
   const { notifications, loading, markAsRead, markAllAsRead } = useNotifications(userRole)
   const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
+  const [activeFilter, setActiveFilter] = useState<"all" | "pending" | "completed" | "cancelled">("all")
 
   // 1. Normalize all notification types to lowercase
   const normalizedNotifications = useMemo(() => {
@@ -67,25 +68,29 @@ export function SalesNotifications({ userRole }: { userRole?: string }) {
     }));
   }, [notifications]);
 
-  // 2. Filter notifications: Admin and Encoder hide 'sales' (and related). 
-  // (Sales users will still see all their own notifications, as the filter does not apply to them)
+  // 2. Filter by status
   const filteredNotifications = useMemo(() => {
-    const fn = (userRole === "admin" || userRole === "encoder")
-      ? normalizedNotifications.filter((n: any) => {
-          const t = n.type;
-          
-          // Hide ANY sales-related notification (sales, sale, transaction, new_sale, order)
-          // We apply substring matches as an extra aggressive safety measure.
-          // In this system, 'Sales' and 'Orders' are handled interchangeably.
-          return !t.includes("sale") && !t.includes("transaction") && !t.includes("order");
-        })
-      : normalizedNotifications;
+    if (activeFilter === "all") return normalizedNotifications
+
+    return normalizedNotifications.filter(n => {
+      const title = n.title.toLowerCase()
+      const message = n.message.toLowerCase()
       
-    console.log("All notifications:", normalizedNotifications);
-    console.log("Filtered notifications:", fn);
-    
-    return fn;
-  }, [normalizedNotifications, userRole]);
+      if (activeFilter === "pending") {
+        if (userRole?.toLowerCase() === "sales") {
+          return title.includes("new order") || n.type === "new_order"
+        }
+        return title.includes("new order") || title.includes("pending") || title.includes("ready for processing")
+      }
+      if (activeFilter === "completed") {
+        return title.includes("completed") || title.includes("delivered") || title.includes("ready for delivery")
+      }
+      if (activeFilter === "cancelled") {
+        return title.includes("cancelled") || title.includes("failed") || title.includes("void")
+      }
+      return true
+    })
+  }, [normalizedNotifications, activeFilter])
 
   const unreadCount = filteredNotifications.filter(n => !n.isRead).length
 
@@ -220,7 +225,7 @@ export function SalesNotifications({ userRole }: { userRole?: string }) {
         <DropdownMenuContent align="end" className="w-[360px] rounded-2xl p-0 overflow-hidden border border-gray-200 dark:border-border shadow-xl">
           <div className="bg-gray-50/80 dark:bg-card px-4 py-3 border-b border-gray-100 dark:border-border flex items-center justify-between sticky top-0 z-10 backdrop-blur-sm">
             <span className="font-bold text-gray-900 dark:text-foreground flex items-center gap-2 text-sm text-[15px]">
-              {userRole?.toLowerCase() === "encoder" ? "Encoder Notifications" : "Sales Notifications"}
+              {userRole?.toLowerCase() === "encoder" ? "Encoder Notifications" : userRole?.toLowerCase() === "admin" ? "Admin Notifications" : "Sales Notifications"}
               {unreadCount > 0 && (
                 <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100 dark:bg-blue-900 dark:text-blue-200 border-0 h-5 px-1.5 text-[11px]">
                   {unreadCount} new
@@ -237,6 +242,28 @@ export function SalesNotifications({ userRole }: { userRole?: string }) {
                 <Check className="h-3 w-3 mr-1" /> Mark all read
               </Button>
             )}
+          </div>
+
+          {/* Filter Tabs */}
+          <div className="flex items-center gap-1 px-2 py-1.5 border-b border-gray-100 dark:border-border bg-white dark:bg-card/50">
+            {[
+              { id: "all", label: "All" },
+              { id: "pending", label: "Pending" },
+              { id: "completed", label: "Completed" },
+              { id: "cancelled", label: "Canceled" }
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveFilter(tab.id as any); }}
+                className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all ${
+                  activeFilter === tab.id 
+                    ? "bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 shadow-sm border border-blue-100 dark:border-blue-800" 
+                    : "text-gray-500 hover:bg-gray-100 dark:hover:bg-secondary/50 border border-transparent"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
           
           <div className="max-h-[420px] overflow-y-auto p-1.5 custom-scrollbar bg-gray-50/30 dark:bg-background/50">

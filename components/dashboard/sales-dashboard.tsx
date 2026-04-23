@@ -19,7 +19,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { DashboardOverviewSkeleton } from "@/components/skeletons/dashboard-skeleton"
 
 // ─── Mini sparkline bar chart for KPI cards (replicating existing TrendChart) ───
-const SalesTrendChart = ({ type }: { type: "orders" | "pending" | "completed" | "revenue" }) => {
+// ─── Mini sparkline bar chart for KPI cards (replicating existing TrendChart) ───
+const SalesTrendChart = ({ type }: { type: "orders" | "pending" | "completed" }) => {
   const palettes: Record<string, { height: number; color: string }[]> = {
     orders: [
       { height: 25, color: "#93C5FD" },
@@ -41,13 +42,6 @@ const SalesTrendChart = ({ type }: { type: "orders" | "pending" | "completed" | 
       { height: 65, color: "#10B981" },
       { height: 55, color: "#059669" },
       { height: 80, color: "#047857" },
-    ],
-    revenue: [
-      { height: 35, color: "#C4B5FD" },
-      { height: 55, color: "#A78BFA" },
-      { height: 40, color: "#8B5CF6" },
-      { height: 70, color: "#7C3AED" },
-      { height: 85, color: "#6D28D9" },
     ],
   }
 
@@ -80,6 +74,7 @@ const StatusBadge = ({ status }: { status: string }) => {
       label = "Pending"
       className += "bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-800"
       break
+    case "delivered":
     case "completed":
       label = "Completed"
       className += "bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-400 dark:border-emerald-800"
@@ -178,12 +173,9 @@ export function SalesDashboard() {
   const stats = useMemo(() => {
     const totalOrdersToday = todayOrders.length
     const pendingOrders = orders.filter((o) => o.status === "pending").length
-    const completedOrders = orders.filter((o) => o.status === "completed").length
-    const revenueToday = todayOrders
-      .filter((o) => o.status !== "cancelled")
-      .reduce((sum, o) => sum + (o.totalAmount || 0), 0)
+    const completedOrders = orders.filter((o) => o.status === "completed" || o.status === "delivered").length
 
-    return { totalOrdersToday, pendingOrders, completedOrders, revenueToday }
+    return { totalOrdersToday, pendingOrders, completedOrders }
   }, [orders, todayOrders])
 
   // ─── Computed: Recent 10 orders (newest first — already sorted by hook) ───
@@ -230,18 +222,8 @@ export function SalesDashboard() {
       })
     }
 
-    // Top revenue today
-    if (stats.revenueToday > 0) {
-      result.push({
-        icon: <div className="h-2.5 w-2.5 rounded-full bg-purple-500 shadow-sm shadow-purple-500/20" />,
-        message: `Top revenue today: ${formatCurrency(stats.revenueToday)}.`,
-        priority: 3,
-        category: "Info",
-      })
-    }
-
     // Completed orders today
-    const completedToday = todayOrders.filter((o) => o.status === "completed").length
+    const completedToday = todayOrders.filter((o) => o.status === "completed" || o.status === "delivered").length
     if (completedToday > 0) {
       result.push({
         icon: <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/20" />,
@@ -273,7 +255,7 @@ export function SalesDashboard() {
     }
 
     return result.sort((a, b) => a.priority - b.priority).slice(0, 8)
-  }, [orders, todayOrders, stats])
+  }, [orders, todayOrders])
 
   // ─── Notification banner state ───
   const [showPendingBanner, setShowPendingBanner] = useState(true)
@@ -328,12 +310,12 @@ export function SalesDashboard() {
           Sales Dashboard
         </h1>
         <p className="text-gray-400 dark:text-muted-foreground text-[13px] mt-1 tracking-wide">
-          Monitor customer orders and revenue in real time
+          Monitor customer orders in real time
         </p>
       </div>
 
       {/* ─── KPI Summary Cards ─── */}
-      <div className="grid gap-5 grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-5 grid-cols-2 lg:grid-cols-3">
         {/* Total Orders Today */}
         <Card className="rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.08)] transition-all duration-300 group">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 px-5 pt-5">
@@ -420,33 +402,6 @@ export function SalesDashboard() {
             </div>
           </CardContent>
         </Card>
-
-        {/* Revenue Today */}
-        <Card className="rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.08)] transition-all duration-300 group">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 px-5 pt-5">
-            <CardTitle className="text-sm font-semibold text-gray-500 dark:text-muted-foreground uppercase tracking-wide">
-              Revenue Today
-            </CardTitle>
-            <RevenueIcon />
-          </CardHeader>
-          <CardContent className="px-5 pb-5">
-            <div className="flex items-end justify-between">
-              <div>
-                <div className="text-3xl font-bold text-purple-600 dark:text-purple-400 leading-none mb-2">
-                  {stats.revenueToday > 0 ? formatCurrency(stats.revenueToday) : "₱0.00"}
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-50 dark:bg-purple-950/30">
-                    <BanknoteIcon className="h-3 w-3 text-purple-500" />
-                    <span className="text-xs font-semibold text-purple-600 dark:text-purple-400">today</span>
-                  </div>
-                  <span className="text-xs text-gray-400">gross</span>
-                </div>
-              </div>
-              <SalesTrendChart type="revenue" />
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       {/* ─── Recent Orders + Sales Insights (same grid as Donut + Insights) ─── */}
@@ -468,7 +423,7 @@ export function SalesDashboard() {
             {/* Summary Bar */}
             {(() => {
               const pendingCount = recentOrders.filter(o => o.status === "pending").length
-              const completedCount = recentOrders.filter(o => o.status === "completed").length
+              const completedCount = recentOrders.filter(o => o.status === "completed" || o.status === "delivered").length
               const cancelledCount = recentOrders.filter(o => o.status === "cancelled").length
 
               if (pendingCount > 0 || completedCount > 0 || cancelledCount > 0) {
@@ -499,9 +454,9 @@ export function SalesDashboard() {
             })()}
 
             {/* Table Header */}
-            <div className="grid grid-cols-[2fr_1.2fr_1fr_1fr] gap-3 text-[11px] font-semibold text-gray-400 dark:text-muted-foreground uppercase tracking-wider pb-3 border-b border-gray-100 dark:border-border">
+            <div className="grid grid-cols-[2fr_1.5fr_1fr_1fr] gap-3 text-[11px] font-semibold text-gray-400 dark:text-muted-foreground uppercase tracking-wider pb-3 border-b border-gray-100 dark:border-border">
               <div>Customer Name</div>
-              <div className="text-center">Total Amount</div>
+              <div className="text-center">Phone</div>
               <div className="text-center">Status</div>
               <div className="text-right">Time</div>
             </div>
@@ -529,7 +484,7 @@ export function SalesDashboard() {
                       // Determine left border color based on status
                       let borderColor = "border-l-gray-300"
                       if (order.status === "pending") borderColor = "border-l-amber-400"
-                      else if (order.status === "completed") borderColor = "border-l-emerald-400"
+                      else if (order.status === "completed" || order.status === "delivered") borderColor = "border-l-emerald-400"
                       else if (order.status === "cancelled") borderColor = "border-l-red-400"
 
                       // Highlight pending rows
@@ -538,7 +493,7 @@ export function SalesDashboard() {
                       return (
                         <div
                           key={`order-${order.id}-${index}`}
-                          className={`grid grid-cols-[2fr_1.2fr_1fr_1fr] gap-3 py-3 items-center transition-all duration-200 hover:bg-blue-50/40 dark:hover:bg-secondary/30 hover:shadow-[0_1px_4px_rgba(0,0,0,0.04)] group border-l-[3px] ${borderColor} rounded-r-md -ml-px pl-3 ${isPending ? "bg-amber-50/20 dark:bg-amber-950/10" : ""}`}
+                          className={`grid grid-cols-[2fr_1.5fr_1fr_1fr] gap-3 py-3 items-center transition-all duration-200 hover:bg-blue-50/40 dark:hover:bg-secondary/30 hover:shadow-[0_1px_4px_rgba(0,0,0,0.04)] group border-l-[3px] ${borderColor} rounded-r-md -ml-px pl-3 ${isPending ? "bg-amber-50/20 dark:bg-amber-950/10" : ""}`}
                         >
                           {/* Customer Name */}
                           <div className="min-w-0">
@@ -546,15 +501,15 @@ export function SalesDashboard() {
                               {order.customerName}
                             </p>
                             <p className="text-[11px] text-gray-400 dark:text-muted-foreground mt-0.5 truncate">
-                              {order.items?.length || 0} item{(order.items?.length || 0) === 1 ? "" : "s"}
+                              {order.items?.length || 0} item{(order.items?.length || 0) === 1 ? "" : "s"}: {
+                                order.items?.slice(0, 2).map(i => `${i.name} (${i.quantity} ${i.unit || "unit"})`).join(", ")
+                              }{order.items?.length > 2 ? "..." : ""}
                             </p>
                           </div>
 
-                          {/* Total Amount */}
-                          <div className="text-center">
-                            <span className="text-sm font-bold text-gray-800 dark:text-foreground">
-                              {formatCurrency(order.totalAmount)}
-                            </span>
+                          {/* Phone Number */}
+                          <div className="text-center text-sm text-gray-500 dark:text-foreground/70 truncate">
+                            {order.customerPhone || "N/A"}
                           </div>
 
                           {/* Status Badge */}

@@ -15,18 +15,21 @@ import {
   getDoc,
   updateDoc,
   deleteDoc,
+  increment,
 } from "firebase/firestore";
 
+import { useChatStore } from '@/store/chat-store';
+
 import { MainLayout } from '@/components/layout/main-layout';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { getFirebaseDb } from '@/lib/firebase-live';
 import { useAuth } from '@/hooks/use-auth';
 export default function MessagesPage() {
   const { user, loading } = useAuth();
   
 
-  const [chats, setChats] = useState<any[]>([]);
-  const [selectedChat, setSelectedChat] = useState<any>(null);
+  const { chats, activeChatId, setActiveChatId, markAsRead } = useChatStore();
+  const selectedChat = chats.find(c => c.id === activeChatId) || null;
   const [messages, setMessages] = useState<any[]>([]);
   const [text, setText] = useState('');
   const [search, setSearch] = useState('');
@@ -36,6 +39,16 @@ export default function MessagesPage() {
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false)
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
 
   // 🔍 SEARCH FILTER
   const filteredChats = chats
@@ -48,64 +61,7 @@ export default function MessagesPage() {
     return name.includes(keyword) || company.includes(keyword);
   });
 
-  // 📥 LOAD CHATS + USER DATA
-  useEffect(() => {
-    const db = getFirebaseDb();
-    if (!db) return;
 
-    const unsub = onSnapshot(collection(db, 'chats'), async (snap) => {
-      const results = await Promise.all(
-        snap.docs.map(async (chatDoc) => {
-          const chatData = chatDoc.data();
-          const userId = chatData.uid || chatData.userId;
-
-          let userData: any = null;
-
-          // 🔥 GET USER DATA (MAIN SOURCE)
-          if (userId) {
-            const userSnap = await getDoc(doc(db, 'users', userId));
-            if (userSnap.exists()) {
-              userData = userSnap.data();
-            }
-          }
-
-          // 🔥 GET LAST MESSAGE
-          const msgRef = collection(db, 'chats', chatDoc.id, 'messages');
-          const q = query(msgRef, orderBy('createdAt', 'desc'), limit(1));
-          const msgSnap = await getDocs(q);
-          const latest = msgSnap.docs[0]?.data();
-
-          return {
-            id: chatDoc.id,
-            uid: userId,
-
-            archived: chatData.archived || false,
-            hiddenForSales: chatData.hiddenForSales || false,
-
-            // ✅ PURE FROM USERS
-            fullName: userData?.fullName || 'Unknown',
-            companyName: userData?.companyName || '',
-            email: userData?.email || '',
-            phoneNumber: userData?.phoneNumber || '',
-
-            lastMessage: latest?.text || 'No messages yet',
-            lastTime: latest?.createdAt || null,
-          };
-        })
-      );
-
-      // SORT LATEST
-      results.sort((a, b) => {
-        const aTime = a.lastTime?.seconds || 0;
-        const bTime = b.lastTime?.seconds || 0;
-        return bTime - aTime;
-      });
-
-      setChats(results);
-    });
-
-    return () => unsub();
-  }, []);
 
   // 💬 LOAD MESSAGES
   useEffect(() => {
@@ -158,6 +114,14 @@ export default function MessagesPage() {
       createdAt: new Date(),
     }
   );
+
+  // Update chat metadata
+  await updateDoc(doc(db, 'chats', selectedChat.id), {
+    lastMessage: text,
+    lastTime: new Date(),
+    lastSender: 'sales',
+    unreadCount_customer: increment(1)
+  });
 
   setText('');
 };
@@ -227,21 +191,31 @@ export default function MessagesPage() {
   >
     {/* CLICK AREA */}
     <div
-      onClick={() => setSelectedChat(chat)}
-      className="flex flex-1 gap-3"
+      onClick={() => {
+        setActiveChatId(chat.id);
+        markAsRead(chat.id);
+      }}
+      className="flex flex-1 gap-3 items-center"
     >
-      <div className="w-10 h-10 rounded-full bg-gray-400 flex items-center justify-center text-white">
+      <div className="w-10 h-10 rounded-full bg-gray-400 flex items-center justify-center text-white shrink-0">
         {chat.fullName?.charAt(0)}
       </div>
 
-      <div className="flex-1">
-        <div className="font-semibold text-sm">
+      <div className="flex-1 min-w-0">
+        <div className={`font-semibold text-sm truncate ${chat.unreadCount_sales > 0 && chat.id !== activeChatId ? 'text-blue-600 dark:text-blue-400' : ''}`}>
           {chat.fullName}
         </div>
-        <div className="text-xs text-gray-400 truncate">
+        <div className={`text-xs truncate ${chat.unreadCount_sales > 0 && chat.id !== activeChatId ? 'font-bold text-gray-900 dark:text-gray-100' : 'text-gray-400'}`}>
           {chat.lastMessage}
         </div>
       </div>
+      
+      {/* UNREAD BADGE */}
+      {chat.unreadCount_sales > 0 && chat.id !== activeChatId && (
+        <div className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full h-5 min-w-[20px] flex items-center justify-center shrink-0">
+          {chat.unreadCount_sales}
+        </div>
+      )}
     </div>
 
     {/* ⋮ BUTTON (HOVER ONLY) */}
@@ -317,7 +291,7 @@ export default function MessagesPage() {
 
     // 🔴 RESET UI
     if (selectedChat?.id === chat.id) {
-      setSelectedChat(null)
+      setActiveChatId(null)
       setMessages([])
     }
   }
@@ -476,7 +450,7 @@ export default function MessagesPage() {
 
   {/* 💬 MESSAGE BUBBLE */}
   <div
-    className={`max-w-[70%] px-3 py-2 rounded-2xl ${
+    className={`max-w-[70%] px-3 py-2 rounded-2xl animate-in fade-in zoom-in duration-300 ${
       m.sender === 'sales'
         ? 'bg-[#2787b4] text-white'
         : 'bg-gray-200 dark:bg-gray-700 text-black dark:text-white'
@@ -489,6 +463,7 @@ export default function MessagesPage() {
     </div>
   );
 })}
+            <div ref={messagesEndRef} />
           </div>
 
           <div className="border-t border-gray-200 dark:border-gray-700 
