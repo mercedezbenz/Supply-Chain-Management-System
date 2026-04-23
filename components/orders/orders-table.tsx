@@ -74,7 +74,7 @@ export function OrdersTable() {
   const stats = useMemo(() => {
     const total = orders.length
     const pending = orders.filter(o => o.status === "pending").length
-    const completed = orders.filter(o => o.status === "completed" || o.status === "delivered").length
+    const completed = orders.filter(o => o.status === "completed" || (o.status as string) === "delivered").length
     const cancelled = orders.filter(o => o.status === "cancelled").length
     return { total, pending, completed, cancelled }
   }, [orders])
@@ -90,7 +90,7 @@ export function OrdersTable() {
     let result = normalized
     if (statusFilter !== "all") {
       result = result.filter(o => {
-        if (statusFilter === "completed") return o.status === "completed" || o.status === "delivered"
+        if (statusFilter === "completed") return o.status === "completed" || (o.status as string) === "delivered"
         return o.status === statusFilter
       })
     }
@@ -269,7 +269,7 @@ export function OrdersTable() {
                   paginatedOrders.map((order) => {
                     let borderColor = "border-l-gray-200"
                     if (order.status === "pending") borderColor = "border-l-amber-400"
-                    else if (order.status === "completed" || order.status === "delivered") borderColor = "border-l-emerald-400"
+                    else if (order.status === "completed" || (order.status as string) === "delivered") borderColor = "border-l-emerald-400"
                     else if (order.status === "cancelled") borderColor = "border-l-red-400"
 
                     return (

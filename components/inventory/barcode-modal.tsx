@@ -104,7 +104,7 @@ export function BarcodeModal({
       let device = savedDevice
       if (!device) {
         // Find printer with correct UUID
-        device = await navigator.bluetooth.requestDevice({
+        device = await (navigator as any).bluetooth.requestDevice({
   filters: [
   { namePrefix: "PT" } // or exact name ng printer mo
 ],
