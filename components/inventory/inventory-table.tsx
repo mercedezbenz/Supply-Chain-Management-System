@@ -20,6 +20,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { getFirebaseDb } from "@/lib/firebase-live"
+import { collection, getDocs } from "firebase/firestore"
 
 interface InventoryTableProps {
   items: InventoryItem[]
@@ -347,6 +349,26 @@ export function InventoryTable({
   const [currentPage, setCurrentPage] = useState(1)
   const [barcodeViewItem, setBarcodeViewItem] = useState<{ barcode: string; productName: string; productionDate?: string; expiryDate?: string } | null>(null)
   const [badReturnDetailsView, setBadReturnDetailsView] = useState<{ productName: string; details: any; quantity: number } | null>(null)
+
+  // ─── Product Images ───────────────────────────────────────────────────────
+  const [productImageMap, setProductImageMap] = useState<Record<string, string>>({})
+  useEffect(() => {
+    async function loadProductImages() {
+      try {
+        const db = getFirebaseDb()
+        if (!db) return
+        const snap = await getDocs(collection(db, "products"))
+        const map: Record<string, string> = {}
+        snap.forEach(doc => {
+          map[doc.id] = doc.data().imageUrl || ""
+        })
+        setProductImageMap(map)
+      } catch (err) {
+        console.error("Error loading product images", err)
+      }
+    }
+    loadProductImages()
+  }, [])
 
   // ─── Scroll-aware indicators ────────────────────────────────────────────
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -799,17 +821,13 @@ export function InventoryTable({
 
                         {/* Product Name — left aligned, wide */}
                         <td className={`${readOnly ? "px-2.5 py-1.5" : "h-14 px-4 py-2"} font-medium text-sm text-foreground align-middle`}>
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="text-base shrink-0" aria-hidden="true">
-                              {(() => {
-                                const name = (group.productName || "").toLowerCase();
-                                if (name.includes("chicken")) return "🐔";
-                                if (name.includes("pork") || name.includes("belly") || name.includes("back fat")) return "🥩";
-                                if (name.includes("beef")) return "🐄";
-                                return "📦";
-                              })()}
-                            </span>
-                            <span className="line-clamp-1 min-w-0" title={group.productName}>
+                          <div className="flex items-center gap-3 min-w-0 group/product hover:scale-[1.02] transition-transform">
+                            <img
+                              src={productImageMap[group.barcode] || "/placeholder.png"}
+                              alt={group.productName}
+                              className="w-10 h-10 rounded-lg object-cover border bg-gray-50/50 shadow-sm shrink-0"
+                            />
+                            <span className="line-clamp-2 min-w-0" title={group.productName}>
                               {highlightMatch(group.productName, searchQuery)}
                             </span>
                           </div>

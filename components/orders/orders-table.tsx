@@ -299,15 +299,22 @@ export function OrdersTable() {
                         {/* Products */}
                         <td className="px-6 py-4 pl-6 align-top max-w-[320px]">
                           {order.items && order.items.length > 0 ? (
-                            <div className="space-y-1 text-[13px] text-gray-700 dark:text-foreground/80">
+                            <div className="space-y-2">
                               {order.items.slice(0, 3).map((item, idx) => (
-                                <p key={idx} className="truncate leading-tight flex items-center gap-1 w-full">
-                                  • {item.name} ({item.quantity})
-                                </p>
+                                <div key={idx} className="flex items-center gap-3 hover:scale-[1.02] transition-transform group/item">
+                                  <img
+                                    src={item.imageUrl || "/placeholder.png"}
+                                    alt={item.name}
+                                    className="w-8 h-8 rounded-md object-cover border border-gray-200 dark:border-border bg-gray-50/50 shadow-sm shrink-0"
+                                  />
+                                  <div className="text-[13px] text-gray-700 dark:text-foreground/80 leading-tight line-clamp-2">
+                                    <span className="font-medium">{item.name}</span> <span className="text-muted-foreground">({item.quantity})</span>
+                                  </div>
+                                </div>
                               ))}
                               {order.items.length > 3 && (
-                                <p className="text-[11px] text-blue-500 font-medium italic mt-0.5">
-                                  +{order.items.length - 3} more
+                                <p className="text-[11px] text-blue-500 font-medium italic mt-1 pl-11">
+                                  +{order.items.length - 3} more items
                                 </p>
                               )}
                             </div>

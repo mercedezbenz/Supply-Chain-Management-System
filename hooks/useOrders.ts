@@ -35,7 +35,7 @@ export interface Order {
   customerAddress: string
   shippingAddress: ShippingAddress
   items: OrderItem[]
-  status: "pending" | "ready_for_processing" | "processing" | "ready_for_delivery" | "completed" | "cancelled"
+  status: "pending" | "ready_for_processing" | "processing" | "ready_for_delivery" | "completed" | "delivered" | "cancelled"
   salesInvoiceNo?: string
   deliveryReceiptNo?: string
   isInvoiceConfirmed?: boolean
@@ -107,7 +107,7 @@ function mapDocToOrder(docId: string, d: any): Order {
  *  - orders: Order[]   — all orders, newest first
  *  - loading: boolean  — true while the initial snapshot is loading
  */
-export function useOrders(filterStatus?: "pending" | "ready_for_processing" | "processing" | "ready_for_delivery" | "completed" | "cancelled") {
+export function useOrders(filterStatus?: "pending" | "ready_for_processing" | "processing" | "ready_for_delivery" | "completed" | "delivered" | "cancelled") {
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
 

@@ -63,7 +63,7 @@ export function useOrderDetails(orderId: string | null) {
   }, [orderId])
 
   /** Update the order status in Firestore */
-  const updateStatus = async (newStatus: "pending" | "ready_for_processing" | "processing" | "ready_for_delivery" | "completed" | "cancelled") => {
+  const updateStatus = async (newStatus: "pending" | "ready_for_processing" | "processing" | "ready_for_delivery" | "completed" | "delivered" | "cancelled") => {
     if (!orderId) return
     try {
       const db = getFirebaseDb()
