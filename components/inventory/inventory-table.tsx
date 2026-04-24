@@ -136,6 +136,8 @@ function deriveUnitType(txn: any): string {
 // ─── Grouped Product type ────────────────────────────────────────────────────
 interface GroupedProduct {
   barcode: string
+  product_id: string            // Product document key for image lookup (e.g. "beef-hotdog-beef")
+  imageUrl: string              // Fallback image URL from inventory item or transaction
   productName: string
   category: string
   movementOrigin: string       // How item ENTERED system (Supplier/Production) — NOT latest action
@@ -351,24 +353,48 @@ export function InventoryTable({
   const [badReturnDetailsView, setBadReturnDetailsView] = useState<{ productName: string; details: any; quantity: number } | null>(null)
 
   // ─── Product Images ───────────────────────────────────────────────────────
+  // Primary map: product doc id → imageUrl  (e.g. "beef-hotdog-beef" → "https://...")
+  // Secondary map: lowercase product name → imageUrl  (fuzzy fallback)
   const [productImageMap, setProductImageMap] = useState<Record<string, string>>({})
+  const [productNameImageMap, setProductNameImageMap] = useState<Record<string, string>>({})
   useEffect(() => {
     async function loadProductImages() {
       try {
         const db = getFirebaseDb()
         if (!db) return
         const snap = await getDocs(collection(db, "products"))
-        const map: Record<string, string> = {}
+        const idMap: Record<string, string> = {}
+        const nameMap: Record<string, string> = {}
         snap.forEach(doc => {
-          map[doc.id] = doc.data().imageUrl || ""
+          const data = doc.data()
+          const url = data.imageUrl || ""
+          if (url) {
+            idMap[doc.id] = url
+            // Also index by product name (lowercase) for fallback matching
+            const name = (data.name || "").toLowerCase().trim()
+            if (name) nameMap[name] = url
+          }
         })
-        setProductImageMap(map)
+        setProductImageMap(idMap)
+        setProductNameImageMap(nameMap)
       } catch (err) {
         console.error("Error loading product images", err)
       }
     }
     loadProductImages()
   }, [])
+
+  // Build a barcode → imageUrl map from the items prop (inventory collection fallback)
+  const itemImageMap = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const item of items) {
+      const url = (item as any).imageUrl || (item as any).product_image || (item as any).photo || ""
+      if (url && item.barcode) {
+        map[item.barcode] = url
+      }
+    }
+    return map
+  }, [items])
 
   // ─── Scroll-aware indicators ────────────────────────────────────────────
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -396,6 +422,8 @@ export function InventoryTable({
       if (!groupMap.has(bc)) {
         groupMap.set(bc, {
           barcode: bc,
+          product_id: (txn as any).product_id || "",
+          imageUrl: "",
           productName: (txn as any).product_name || "-",
           category: (txn as any).category || "",
           movementOrigin: "",  // Will be set from the EARLIEST incoming transaction
@@ -438,8 +466,12 @@ export function InventoryTable({
       const currentLatestMs = parseDateToMs(group.latestDate)
       if (txnDateMs > currentLatestMs) {
         group.latestDate = (txn as any).transaction_date
-
+        group.product_id = (txn as any).product_id || group.product_id
         group.productName = (txn as any).product_name || group.productName
+        // Capture any imageUrl from the transaction itself
+        if (!group.imageUrl) {
+          group.imageUrl = (txn as any).imageUrl || (txn as any).product_image || ""
+        }
       }
 
       // Track bad return details
@@ -820,12 +852,19 @@ export function InventoryTable({
                         )}
 
                         {/* Product Name — left aligned, wide */}
-                        <td className={`${readOnly ? "px-2.5 py-1.5" : "h-14 px-4 py-2"} font-medium text-sm text-foreground align-middle`}>
+                        <td className={`${readOnly ? "px-2.5 py-1.5" : "h-14 pl-6 pr-4 py-2"} font-medium text-sm text-foreground align-middle`}>
                           <div className="flex items-center gap-3 min-w-0 group/product hover:scale-[1.02] transition-transform">
                             <img
-                              src={productImageMap[group.barcode] || "/placeholder.png"}
+                              src={
+                                productImageMap[group.product_id] ||
+                                productNameImageMap[(group.productName || "").toLowerCase().trim()] ||
+                                itemImageMap[group.barcode] ||
+                                group.imageUrl ||
+                                "/placeholder.png"
+                              }
                               alt={group.productName}
                               className="w-10 h-10 rounded-lg object-cover border bg-gray-50/50 shadow-sm shrink-0"
+                              onError={(e) => { e.currentTarget.src = "/placeholder.png" }}
                             />
                             <span className="line-clamp-2 min-w-0" title={group.productName}>
                               {highlightMatch(group.productName, searchQuery)}

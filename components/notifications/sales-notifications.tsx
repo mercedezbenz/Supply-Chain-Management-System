@@ -110,11 +110,11 @@ export function SalesNotifications({ userRole }: { userRole?: string }) {
       const d = parseTimestamp(n.createdAt)
       d.setHours(0,0,0,0)
       if (d.getTime() === todayDate.getTime()) {
-        today.push(n)
+        today.push(n as any)
       } else if (d.getTime() === yesterdayDate.getTime()) {
-        yesterday.push(n)
+        yesterday.push(n as any)
       } else {
-        earlier.push(n)
+        earlier.push(n as any)
       }
     })
 
