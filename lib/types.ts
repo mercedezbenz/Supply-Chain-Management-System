@@ -53,6 +53,8 @@ export interface InventoryItem {
   // Transaction reference documents
   sales_invoice_no?: string | null
   delivery_receipt_no?: string | null
+  isArchived?: boolean
+  archivedAt?: Date | any
   createdBy?: string
   createdAt: Date
   updatedAt: Date

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { InventoryItem, InventoryTransaction, Category } from "@/lib/types"
 import { formatTimestamp, formatExpirationDate } from "@/lib/utils"
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, ChevronUp, Pencil, Trash2, Loader2, Barcode, MessageSquareWarning, Package, History, Printer, SearchX, Archive } from "lucide-react"
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, ChevronUp, Pencil, Trash2, Loader2, Barcode, MessageSquareWarning, Package, History, Printer, SearchX, Archive, RotateCcw } from "lucide-react"
 import { getItemStatus } from "./inventory-dashboard"
 import { buildProductDisplayName } from "@/lib/product-data"
 import { useToast } from "@/hooks/use-toast"
@@ -21,7 +21,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { getFirebaseDb } from "@/lib/firebase-live"
-import { collection, getDocs } from "firebase/firestore"
+import { collection, getDocs, serverTimestamp } from "firebase/firestore"
 
 interface InventoryTableProps {
   items: InventoryItem[]
@@ -139,6 +139,7 @@ interface GroupedProduct {
   product_id: string            // Product document key for image lookup (e.g. "beef-hotdog-beef")
   imageUrl: string              // Fallback image URL from inventory item or transaction
   productName: string
+  isArchived: boolean
   category: string
   movementOrigin: string       // How item ENTERED system (Supplier/Production) — NOT latest action
   latestDate: any
@@ -345,7 +346,7 @@ export function InventoryTable({
   const { toast } = useToast()
   const [cancellingItem, setCancellingItem] = useState<InventoryTransaction | null>(null)
   const [cancelLoading, setCancelLoading] = useState(false)
-  const [archivingItem, setArchivingItem] = useState<{ id: string; barcode: string; productName: string } | null>(null)
+  const [archivingItem, setArchivingItem] = useState<{ id: string; barcode: string; productName: string; isRestore?: boolean } | null>(null)
   const [archiveLoading, setArchiveLoading] = useState(false)
   const [expandedBarcodes, setExpandedBarcodes] = useState<Set<string>>(new Set())
   const [currentPage, setCurrentPage] = useState(1)
@@ -425,6 +426,7 @@ export function InventoryTable({
           product_id: (txn as any).product_id || "",
           imageUrl: "",
           productName: (txn as any).product_name || "-",
+          isArchived: false,
           category: (txn as any).category || "",
           movementOrigin: "",  // Will be set from the EARLIEST incoming transaction
           latestDate: (txn as any).transaction_date,
@@ -523,10 +525,24 @@ export function InventoryTable({
     }
 
     // Default sort: groups by latest date (newest first)
-    return Array.from(groupMap.values()).sort((a, b) => {
+    // POST-PROCESS: Add inventory item details (like isArchived)
+    const itemsByBarcode = new Map<string, any>()
+    for (const item of items) {
+      if (item.barcode) itemsByBarcode.set(item.barcode, item)
+    }
+
+    const result = Array.from(groupMap.values())
+    for (const group of result) {
+      const item = itemsByBarcode.get(group.barcode)
+      if (item) {
+        group.isArchived = Boolean(item.isArchived)
+      }
+    }
+
+    return result.sort((a, b) => {
       return parseDateToMs(b.latestDate) - parseDateToMs(a.latestDate)
     })
-  }, [transactions])
+  }, [transactions, items])
 
   // ─── Apply sort mode from dashboard ────────────────────────────────────
   const sortedProducts = useMemo(() => {
@@ -751,7 +767,7 @@ export function InventoryTable({
                       className={[
                         readOnly ? "px-2.5 py-1.5" : "h-11 px-4 py-2.5",
                         "text-[11px] font-bold text-muted-foreground/80 uppercase tracking-wider whitespace-nowrap select-none",
-                        col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left",
+                        col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "left",
                         col.width || "",
                         (col as any).weightGroup ? "border-l-2 border-border/50" : "",
                         col.key === "actions" ? "" : "",
@@ -1095,23 +1111,45 @@ export function InventoryTable({
                                   <Printer className="h-3.5 w-3.5 shrink-0" />
                                   Print
                                 </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-8 px-2.5 gap-1.5 text-xs font-medium text-amber-700 border-amber-200 hover:text-amber-800 hover:bg-amber-50 hover:border-amber-300 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-950/30 transition-colors shrink-0"
-                                  onClick={() => {
-                                    const item = items.find(i => i.barcode === group.barcode);
-                                    if (item) {
-                                      setArchivingItem({ id: item.id, barcode: group.barcode, productName: group.productName });
-                                    } else {
-                                      toast({ title: "Error", description: "Item not found in inventory.", variant: "destructive" });
-                                    }
-                                  }}
-                                  title="Archive Item"
-                                >
-                                  <Archive className="h-3.5 w-3.5 shrink-0" />
-                                  Archive
-                                </Button>
+                                {!group.isArchived ? (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8 px-2.5 gap-1.5 text-xs font-medium text-amber-700 border-amber-200 hover:text-amber-800 hover:bg-amber-50 hover:border-amber-300 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-950/30 transition-colors shrink-0"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const item = items.find((i: any) => i.barcode === group.barcode);
+                                      if (item) {
+                                        setArchivingItem({ id: item.id, barcode: group.barcode, productName: group.productName, isRestore: false });
+                                      } else {
+                                        toast({ title: "Error", description: "Item not found in inventory.", variant: "destructive" });
+                                      }
+                                    }}
+                                    title="Archive Item"
+                                  >
+                                    <Archive className="h-3.5 w-3.5 shrink-0" />
+                                    Archive
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8 px-2.5 gap-1.5 text-xs font-medium text-emerald-700 border-emerald-200 hover:text-emerald-800 hover:bg-emerald-50 hover:border-emerald-300 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-950/30 transition-colors shrink-0"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const item = items.find((i: any) => i.barcode === group.barcode);
+                                      if (item) {
+                                        setArchivingItem({ id: item.id, barcode: group.barcode, productName: group.productName, isRestore: true });
+                                      } else {
+                                        toast({ title: "Error", description: "Item not found in inventory.", variant: "destructive" });
+                                      }
+                                    }}
+                                    title="Restore Item"
+                                  >
+                                    <RotateCcw className="h-3.5 w-3.5 shrink-0" />
+                                    Restore
+                                  </Button>
+                                )}
                               </>
                             )}
                           </div>
@@ -1392,24 +1430,45 @@ export function InventoryTable({
                           <Printer className="h-3.5 w-3.5" />
                           Print
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="flex-1 h-9 sm:h-10 rounded-lg gap-1.5 text-[11px] sm:text-sm font-semibold text-amber-700 border-amber-200/80 bg-amber-50/40 hover:bg-amber-100/60 hover:text-amber-800 hover:border-amber-300 dark:text-amber-400 dark:border-amber-800 dark:bg-amber-950/20 dark:hover:bg-amber-950/40 transition-all active:scale-[0.98]"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const item = items.find(i => i.barcode === group.barcode);
-                            if (item) {
-                              setArchivingItem({ id: item.id, barcode: group.barcode, productName: group.productName });
-                            } else {
-                              toast({ title: "Error", description: "Item not found in inventory.", variant: "destructive" });
-                            }
-                          }}
-                          title="Archive Item"
-                        >
-                          <Archive className="h-3.5 w-3.5" />
-                          Archive
-                        </Button>
+                        {!group.isArchived ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="flex-1 h-9 sm:h-10 rounded-lg gap-1.5 text-[11px] sm:text-sm font-semibold text-amber-700 border-amber-200/80 bg-amber-50/40 hover:bg-amber-100/60 hover:text-amber-800 hover:border-amber-300 dark:text-amber-400 dark:border-amber-800 dark:bg-amber-950/20 dark:hover:bg-amber-950/40 transition-all active:scale-[0.98]"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const item = items.find(i => i.barcode === group.barcode);
+                              if (item) {
+                                setArchivingItem({ id: item.id, barcode: group.barcode, productName: group.productName, isRestore: false });
+                              } else {
+                                toast({ title: "Error", description: "Item not found in inventory.", variant: "destructive" });
+                              }
+                            }}
+                            title="Archive Item"
+                          >
+                            <Archive className="h-3.5 w-3.5" />
+                            Archive
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="flex-1 h-9 sm:h-10 rounded-lg gap-1.5 text-[11px] sm:text-sm font-semibold text-emerald-700 border-emerald-200/80 bg-emerald-50/40 hover:bg-emerald-100/60 hover:text-emerald-800 hover:border-emerald-300 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40 transition-all active:scale-[0.98]"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const item = items.find(i => i.barcode === group.barcode);
+                              if (item) {
+                                setArchivingItem({ id: item.id, barcode: group.barcode, productName: group.productName, isRestore: true });
+                              } else {
+                                toast({ title: "Error", description: "Item not found in inventory.", variant: "destructive" });
+                              }
+                            }}
+                            title="Restore Item"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            Restore
+                          </Button>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1589,29 +1648,42 @@ export function InventoryTable({
       <ConfirmationDialog
         open={!!archivingItem}
         onOpenChange={(open) => { if (!open) setArchivingItem(null) }}
-        title="Archive Item"
-        description="Are you sure you want to archive this item? It will be hidden from the main list but its history will remain intact. You can view archived items using the Status filter."
-        confirmLabel="Yes, Archive Item"
+        title={archivingItem?.isRestore ? "Restore Item" : "Archive Item"}
+        description={archivingItem?.isRestore 
+          ? "Are you sure you want to restore this item to the active inventory?"
+          : "Are you sure you want to archive this item? It will be hidden from the main list but its history will remain intact. You can view archived items using the Status filter."}
+        confirmLabel={archivingItem?.isRestore ? "Yes, Restore Item" : "Yes, Archive Item"}
         cancelLabel="Cancel"
-        variant="danger"
+        variant={archivingItem?.isRestore ? "default" : "danger"}
         loading={archiveLoading}
         onConfirm={async () => {
           if (!archivingItem) return
           setArchiveLoading(true)
           try {
-            await FirebaseService.updateDocument("inventory", archivingItem.id, {
-              isDeleted: true,
-              deletedAt: new Date()
-            })
-            toast({
-              title: "✅ Item Archived",
-              description: `"${archivingItem.productName}" has been archived.`,
-            })
+            if (archivingItem.isRestore) {
+              await FirebaseService.updateDocument("inventory", archivingItem.id, {
+                isArchived: false,
+                archivedAt: null
+              })
+              toast({
+                title: "✅ Item Restored",
+                description: `"${archivingItem.productName}" has been restored to active inventory.`,
+              })
+            } else {
+              await FirebaseService.updateDocument("inventory", archivingItem.id, {
+                isArchived: true,
+                archivedAt: serverTimestamp()
+              })
+              toast({
+                title: "✅ Item Archived",
+                description: `"${archivingItem.productName}" has been archived.`,
+              })
+            }
             setArchivingItem(null)
           } catch (error: any) {
-            console.error("[InventoryTable] Archive item error:", error)
+            console.error("[InventoryTable] Archive/Restore item error:", error)
             toast({
-              title: "❌ Failed to Archive",
+              title: archivingItem.isRestore ? "❌ Failed to Restore" : "❌ Failed to Archive",
               description: error?.message || "Something went wrong. Please try again.",
               variant: "destructive",
             })
@@ -1620,7 +1692,7 @@ export function InventoryTable({
           }
         }}
       >
-        {archivingItem && (
+        {archivingItem && !archivingItem.isRestore && (
           <div className="rounded-lg border border-amber-200 bg-amber-50/60 dark:bg-amber-950/20 dark:border-amber-800 p-3 text-sm space-y-1.5 mt-2">
             <div className="flex gap-2">
               <span className="text-muted-foreground text-xs font-semibold uppercase w-16 shrink-0">Product</span>

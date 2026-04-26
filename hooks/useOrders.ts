@@ -55,43 +55,70 @@ function parseTimestamp(ts: any): Date {
   return new Date(0)
 }
 
-/**
- * Map a raw Firestore document to the Order interface.
- * Supports both the shippingAddress sub-object structure and legacy flat fields.
- */
 function mapDocToOrder(docId: string, d: any): Order {
-  const shipping: ShippingAddress = d.shippingAddress || {}
+  if (!d) return { id: docId } as Order; // Extreme fallback
   
+  const shipping = d.shippingAddress || d.shipping || {};
+  const userFallback = d.user || d.customer || {};
+  
+  // Ensure items is always an array
+  let rawItems = [];
+  if (Array.isArray(d.items)) {
+    rawItems = d.items;
+  } else if (d.items && typeof d.items === "object") {
+    rawItems = Object.values(d.items);
+  }
+
   // Update items to include unit
-  const items: OrderItem[] = (d.items ?? []).map((p: any) => ({
-    ...p,
-    name: p.name || "Unnamed",
-    quantity: p.quantity ?? p.qty ?? 0,
-    unit: p.unit || "unit"
+  const items: OrderItem[] = rawItems.map((p: any) => ({
+    ...(typeof p === "object" && p !== null ? p : {}),
+    id: p?.id || p?.productId || "",
+    productId: p?.productId || p?.id || "",
+    name: p?.name || p?.productName || p?.title || "Unnamed",
+    quantity: Number(p?.quantity ?? p?.qty ?? p?.count ?? 1) || 1,
+    unit: p?.unit || "unit",
+    imageUrl: p?.imageUrl || p?.image || ""
   }))
+
+  const getAddress = () => {
+    // 1. Check for the new shippingAddress schema
+    const newSchemaParts = [
+      shipping.address, // Sometimes legacy address is here
+      shipping.barangay,
+      shipping.city,
+      shipping.province,
+      shipping.zipCode
+    ].filter(Boolean);
+
+    if (newSchemaParts.length > 0) {
+      // Remove duplicates if barangay and address are exactly the same
+      return Array.from(new Set(newSchemaParts)).join(", ");
+    }
+    
+    // 2. Fallbacks for old orders
+    return d.customerAddress || d.address || userFallback.address || "";
+  }
 
   return {
     id: docId,
-    // Prefer shippingAddress fields, fall back to legacy flat fields
-    customerName: shipping.fullName || d.customerName || "Unknown",
-    customerPhone: shipping.phoneNumber || d.customerPhone || "N/A",
-    customerAddress: shipping.address
-      ? `${shipping.address}${shipping.city ? `, ${shipping.city}` : ""}`
-      : d.customerAddress || "",
+    // Try multiple possible locations for customer info
+    customerName: shipping.fullName || d.customerName || d.fullName || d.name || userFallback.name || userFallback.fullName || "Unknown",
+    customerPhone: shipping.phone || shipping.phoneNumber || d.customerPhone || d.phone || d.phoneNumber || userFallback.phone || "N/A",
+    customerAddress: getAddress(),
     shippingAddress: {
-      fullName: shipping.fullName || d.customerName || "Unknown",
-      phoneNumber: shipping.phoneNumber || d.customerPhone || "N/A",
-      address: shipping.address || d.customerAddress || "",
-      city: shipping.city || "",
+      fullName: shipping.fullName || d.customerName || d.fullName || d.name || "Unknown",
+      phoneNumber: shipping.phone || shipping.phoneNumber || d.customerPhone || d.phone || "N/A",
+      address: getAddress(),
+      city: shipping.city || d.city || "",
     },
     items,
-    // Normalize status to lowercase for consistent filtering
-    status: (d.status ? String(d.status).toLowerCase() : "pending") as Order["status"],
-    salesInvoiceNo: d.salesInvoiceNo || "",
-    deliveryReceiptNo: d.deliveryReceiptNo || "",
-    isInvoiceConfirmed: d.isInvoiceConfirmed || false,
-    createdAt: d.createdAt,
-    userId: d.userId || d.customerId || "",
+    // Normalize status to lowercase, fallback to pending
+    status: (d.status ? String(d.status).toLowerCase().replace(/\s+/g, '_') : "pending") as Order["status"],
+    salesInvoiceNo: d.salesInvoiceNo || d.invoiceNo || "",
+    deliveryReceiptNo: d.deliveryReceiptNo || d.receiptNo || "",
+    isInvoiceConfirmed: Boolean(d.isInvoiceConfirmed || d.confirmed),
+    createdAt: d.createdAt || d.timestamp || d.date || null,
+    userId: d.userId || d.customerId || d.uid || userFallback.id || "",
   }
 }
 
@@ -174,19 +201,20 @@ export function useOrders(filterStatus?: "pending" | "ready_for_processing" | "p
             
             const processedOrder = { ...order, items: itemsWithImages }
 
-            // Only fetch if phone is "N/A" and userId exists
-            if ((processedOrder.customerPhone === "N/A" || !processedOrder.customerPhone) && processedOrder.userId) {
+            // Fetch missing user data (phone, address) from users collection if userId exists
+            if (processedOrder.userId && (!processedOrder.customerPhone || processedOrder.customerPhone === "N/A" || !processedOrder.customerAddress)) {
               try {
                 const userDoc = await fbGetDoc(fbDoc(db, "users", processedOrder.userId))
                 if (userDoc.exists()) {
                   const userData = userDoc.data()
                   return {
                     ...processedOrder,
-                    customerPhone: userData.phoneNumber || ""
+                    customerPhone: (!processedOrder.customerPhone || processedOrder.customerPhone === "N/A") ? (userData.phoneNumber || "") : processedOrder.customerPhone,
+                    customerAddress: !processedOrder.customerAddress ? (userData.address || "") : processedOrder.customerAddress
                   }
                 }
               } catch (err) {
-                console.error(`[useOrders] Error fetching user phone for ${processedOrder.userId}:`, err)
+                console.error(`[useOrders] Error fetching user data for ${processedOrder.userId}:`, err)
               }
             }
             return processedOrder

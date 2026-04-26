@@ -21,6 +21,51 @@ const STATUS_FILTER = [
   "completed", "COMPLETED"
 ]
 
+const StatusBadge = ({ status }: { status?: string }) => {
+  if (!status) return <span className="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider rounded-full bg-gray-100 text-gray-600 border border-gray-200">Unknown</span>
+
+  const normalized = status.toLowerCase()
+  let label = status
+  let classes = "bg-gray-100 text-gray-700 border-gray-200"
+
+  switch (normalized) {
+    case "pending":
+    case "ready_for_processing":
+    case "processing":
+      label = "Pending"
+      classes = "bg-blue-50 text-blue-700 border-blue-200"
+      break
+    case "verified":
+    case "for_verification":
+    case "for_delivery":
+      label = "Verified & Ready"
+      classes = "bg-emerald-50 text-emerald-700 border-emerald-200"
+      break
+    case "on_delivery":
+      label = "On Delivery"
+      classes = "bg-orange-50 text-orange-700 border-orange-200"
+      break
+    case "delivered":
+    case "completed":
+      label = "Delivered"
+      classes = "bg-green-50 text-green-700 border-green-200"
+      break
+    case "cancelled":
+      label = "Cancelled"
+      classes = "bg-red-50 text-red-700 border-red-200"
+      break
+    default:
+      label = status.replace(/_/g, " ")
+      break
+  }
+
+  return (
+    <span className={`inline-flex items-center px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider rounded-full border ${classes}`}>
+      {label}
+    </span>
+  )
+}
+
 export function EncoderDashboard() {
   const { tasks: orders, loading } = useEncoderTasks(STATUS_FILTER)
   const [search, setSearch] = useState("")
@@ -223,7 +268,7 @@ export function EncoderDashboard() {
                 <div>Items</div>
                 <div>Sales Invoice No.</div>
                 <div>Delivery Receipt No.</div>
-                <div>Date Created</div>
+                <div>Status</div>
                 <div className="text-right">Action</div>
               </div>
 
@@ -298,48 +343,12 @@ export function EncoderDashboard() {
                       </span>
                     </div>
 
-                    {/* Date / Status */}
-                    <div className="min-w-0 flex flex-col justify-center">
-                      {activeTab === "pending" ? (
-                        <>
-                          <span className="text-[13px] text-gray-700 dark:text-foreground font-medium">
-                            {order.createdAt?.toDate ? order.createdAt.toDate().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "N/A"}
-                          </span>
-                          <span className="text-[11px] text-gray-400">
-                            {order.createdAt?.toDate ? order.createdAt.toDate().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : ""}
-                          </span>
-                        </>
-                      ) : activeTab === "verification" ? (
-                        <div>
-                          <span className="text-[12px] font-bold text-gray-500 uppercase tracking-wider block mb-1">Status</span>
-                          <span className={`text-[12px] px-2 py-0.5 rounded-full font-semibold border ${
-                            scannedItems === totalItems
-                              ? "bg-emerald-50 text-emerald-600 border-emerald-200"
-                              : "bg-amber-50 text-amber-600 border-amber-200"
-                          }`}>
-                            {scannedItems === totalItems ? "Ready" : `${scannedItems}/${totalItems} Scanned`}
-                          </span>
-                        </div>
-                      ) : activeTab === "delivery" ? (
-                        <div>
-                           <span className="text-[12px] font-bold text-violet-600 uppercase tracking-wider block mb-1">Status</span>
-                           <span className="text-[12px] px-2 py-0.5 rounded-full font-semibold border bg-violet-50 text-violet-700 border-violet-200">
-                             Verified & Ready
-                           </span>
-                        </div>
-                      ) : activeTab === "on_delivery" ? (
-                        <div>
-                           <span className="text-[12px] font-bold text-orange-600 uppercase tracking-wider block mb-1">Status</span>
-                           <span className="text-[12px] px-2 py-0.5 rounded-full font-semibold border bg-orange-50 text-orange-700 border-orange-200">
-                             On Delivery
-                           </span>
-                        </div>
-                      ) : (
-                        <div>
-                           <span className="text-[12px] font-bold text-green-600 uppercase tracking-wider block mb-1">Status</span>
-                           <span className="text-[12px] px-2 py-0.5 rounded-full font-semibold border bg-green-50 text-green-700 border-green-200">
-                             Delivered
-                           </span>
+                    {/* Status */}
+                    <div className="min-w-0 flex flex-col justify-center items-start">
+                      <StatusBadge status={order.status} />
+                      {activeTab === "verification" && totalItems > 0 && (
+                        <div className="text-[10px] font-medium text-muted-foreground mt-1.5 ml-1">
+                          {scannedItems === totalItems ? "All items scanned" : `${scannedItems}/${totalItems} items scanned`}
                         </div>
                       )}
                     </div>

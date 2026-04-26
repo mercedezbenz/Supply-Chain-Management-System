@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
-import { Package, TrendingUp, TrendingDown, AlertTriangle, Search, X, Plus, ArrowDownUp, Clock, PackageMinus, ScanLine, Tag, RotateCcw, Filter, CalendarClock, Layers } from "lucide-react"
+import { Package, TrendingUp, TrendingDown, AlertTriangle, Search, X, Plus, ArrowDownUp, Clock, PackageMinus, ScanLine, Tag, RotateCcw, Filter, CalendarClock, Layers, Archive } from "lucide-react"
 import { TodaysMovementIcon, StockOverviewIcon, ReturnsSummaryIcon, FastMovingIcon } from "./inventory-icons"
 import { Button } from "@/components/ui/button"
 import { InventoryTable } from "./inventory-table"
@@ -13,6 +13,7 @@ import { AddItemDialog } from "./add-item-dialog"
 import { OutgoingStockDialog } from "./outgoing-stock-dialog"
 import { ReturnItemDialog } from "./return-item-dialog"
 import { ScanItemDialog } from "./scan-item-dialog"
+import { ArchivedItemsDialog } from "./archived-items-dialog"
 import { InventoryService, CategoryService, TransactionService } from "@/services/firebase-service"
 import type { InventoryItem, InventoryTransaction, Category } from "@/lib/types"
 import { CATEGORIES, TYPES, getTypesForCategory } from "@/lib/product-data"
@@ -107,7 +108,7 @@ export function getItemStatus(item: any): Exclude<ItemStatus, "all"> {
   return "in-stock"
 }
 
-export function InventoryDashboard() {
+export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: boolean }) {
   const [items, setItems] = useState<InventoryItem[]>([])
   const [transactions, setTransactions] = useState<InventoryTransaction[]>([])
   const [categories, setCategories] = useState<Category[]>([])
@@ -117,7 +118,7 @@ export function InventoryDashboard() {
   const [selectedCategory, setSelectedCategory] = useState<string>("all")
   const [selectedType, setSelectedType] = useState<string>("all")
   const [recentlyAddedFilter, setRecentlyAddedFilter] = useState<string>("all")
-  const [stockStatusFilter, setStockStatusFilter] = useState<string>("all")
+  const [stockStatusFilter, setStockStatusFilter] = useState<string>(isArchiveView ? "archived" : "all")
   const [expirationFilter, setExpirationFilter] = useState<string>("all")
   // Search: real-time debounced
   const [searchQuery, setSearchQuery] = useState<string>("")
@@ -133,6 +134,7 @@ export function InventoryDashboard() {
   const [outgoingDialogOpen, setOutgoingDialogOpen] = useState(false)
   const [returnDialogOpen, setReturnDialogOpen] = useState(false)
   const [scanDialogOpen, setScanDialogOpen] = useState(false)
+  const [archivedDialogOpen, setArchivedDialogOpen] = useState(false)
   // Scanned item passed from ScanItemDialog to outgoing/add-item dialogs
   const [scannedItem, setScannedItem] = useState<InventoryItem | null>(null)
   // Barcode captured by USB scanner — passed into ScanItemDialog as initialBarcode
@@ -451,7 +453,7 @@ export function InventoryDashboard() {
       }
 
       // Archive / Status filter
-      const isArchived = Boolean((item as any).isDeleted)
+      const isArchived = Boolean((item as any).isArchived)
       if (stockStatusFilter === "archived") {
         if (!isArchived) return false
       } else {
@@ -518,7 +520,7 @@ export function InventoryDashboard() {
       // Archive filter
       // Get the inventory item by barcode to check if it's archived
       const inventoryItem = items.find(i => i.barcode === txn.barcode)
-      const isArchived = Boolean(inventoryItem && (inventoryItem as any).isDeleted)
+      const isArchived = Boolean(inventoryItem && (inventoryItem as any).isArchived)
       
       if (stockStatusFilter === "archived") {
         if (!isArchived) return false
@@ -535,13 +537,13 @@ export function InventoryDashboard() {
     })
 
     return filtered // Sorting handled by sortMode in the table
-  }, [transactions, selectedCategory, selectedType, debouncedSearch, recentlyAddedFilter])
+  }, [transactions, items, selectedCategory, selectedType, debouncedSearch, recentlyAddedFilter, stockStatusFilter])
 
   console.log("[Inventory Dashboard] Total items:", items.length, "Filtered items:", filteredItems.length, "Category:", selectedCategory, "Type:", selectedType, "Search:", debouncedSearch)
 
-  const totalItems = items.length
+  const totalItems = filteredItems.length
   // Calculate total stock using correct formula: incomingStock - outgoingStock + goodReturnStock - damageReturnStock
-  const totalStock = items.reduce((sum, item) => {
+  const totalStock = filteredItems.reduce((sum, item) => {
     const incomingStock = (item as any).incoming ?? 0
     const outgoingStock = (item as any).outgoing ?? 0
     const goodReturnStock = (item as any).goodReturnStock ?? 0
@@ -551,7 +553,7 @@ export function InventoryDashboard() {
   }, 0)
 
   // Filter low stock items using correct formula
-  const lowStockItems = items.filter((item) => {
+  const lowStockItems = filteredItems.filter((item) => {
     const incomingStock = (item as any).incoming ?? 0
     const outgoingStock = (item as any).outgoing ?? 0
     const goodReturnStock = (item as any).goodReturnStock ?? 0
@@ -560,7 +562,7 @@ export function InventoryDashboard() {
     return stockLeft < 10
   }).length
 
-  const nearExpiryItems = items.filter((item) => {
+  const nearExpiryItems = filteredItems.filter((item) => {
     if (!item.expirationDate) return false
     const expiryDate = new Date(item.expirationDate)
     const today = new Date()
@@ -608,7 +610,7 @@ export function InventoryDashboard() {
 
   // Compute Low Stock Alert (items with stock < 10, sorted lowest to highest)
   const lowStockAlertList = useMemo(() => {
-    const alerts = items.map(item => {
+    const alerts = filteredItems.map(item => {
       const incomingStock = (item as any).incoming ?? 0
       const outgoingStock = (item as any).outgoing ?? 0
       const goodReturnStock = (item as any).goodReturnStock ?? 0
@@ -620,12 +622,12 @@ export function InventoryDashboard() {
       .filter(item => item.stock < 10)
       .sort((a, b) => a.stock - b.stock)
       .slice(0, 3)
-  }, [items])
+  }, [filteredItems])
 
   // Calculate weekly changes using correct stock formula
   const totalStockWeeklyChange = useMemo(() => {
     return calculateWeeklyChange({
-      items,
+      items: filteredItems,
       getValue: (item) => {
         const incomingStock = (item as any).incoming ?? 0
         const outgoingStock = (item as any).outgoing ?? 0
@@ -635,11 +637,11 @@ export function InventoryDashboard() {
       },
       getDate: (item) => parseFirestoreDate((item as any).updatedAt || (item as any).createdAt),
     })
-  }, [items])
+  }, [filteredItems])
 
   const lowStockWeeklyChange = useMemo(() => {
     return calculateWeeklyCountChange({
-      items,
+      items: filteredItems,
       getDate: (item) => parseFirestoreDate((item as any).updatedAt || (item as any).createdAt),
       currentWeekCount: lowStockItems,
       filter: (item) => {
@@ -651,7 +653,7 @@ export function InventoryDashboard() {
         return stockLeft < 10
       },
     })
-  }, [items, lowStockItems])
+  }, [filteredItems, lowStockItems])
 
   // Build active filter tags
   const activeFilterTags = useMemo(() => {
@@ -689,39 +691,64 @@ export function InventoryDashboard() {
       <div className="space-y-4 sm:space-y-6 md:space-y-8">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
           <div className="min-w-0">
-            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-balance">Inventory Monitoring</h1>
-            <p className="text-xs sm:text-sm text-muted-foreground">Monitor stock movement, expiration, and barcode management</p>
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-balance">
+              {isArchiveView ? "Archived Inventory" : "Inventory Monitoring"}
+            </h1>
+            <p className="text-xs sm:text-sm text-muted-foreground">
+              {isArchiveView 
+                ? "View and restore archived items" 
+                : "Monitor stock movement, expiration, and barcode management"}
+            </p>
           </div>
-          {canEditInventory && (
-            <div className="grid grid-cols-3 sm:flex sm:items-center gap-1.5 sm:gap-2 shrink-0">
-              <Button onClick={() => setAddItemDialogOpen(true)} className="gap-1 sm:gap-2 h-9 sm:h-10 text-[11px] sm:text-sm px-2 sm:px-4 rounded-lg">
-                <Plus className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
-                <span className="truncate">Add Item</span>
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 shrink-0">
+            {canEditInventory && !isArchiveView && (
+              <>
+                <Button onClick={() => setAddItemDialogOpen(true)} className="gap-1 sm:gap-2 h-9 sm:h-10 text-[11px] sm:text-sm px-2 sm:px-4 rounded-lg">
+                  <Plus className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+                  <span className="truncate">Add Item</span>
+                </Button>
+                <Button
+                  onClick={() => setScanDialogOpen(true)}
+                  className="gap-1 sm:gap-2 h-9 sm:h-10 text-[11px] sm:text-sm px-2 sm:px-4 bg-violet-600 hover:bg-violet-700 text-white rounded-lg"
+                >
+                  <ScanLine className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+                  <span className="truncate">Scan</span>
+                </Button>
+                <Button
+                  onClick={() => setReturnDialogOpen(true)}
+                  className="gap-1 sm:gap-2 h-9 sm:h-10 text-[11px] sm:text-sm px-2 sm:px-4 bg-teal-600 hover:bg-teal-700 text-white rounded-lg"
+                >
+                  <RotateCcw className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+                  <span className="truncate">Return</span>
+                </Button>
+              </>
+            )}
+
+            {isArchiveView ? (
+              <Button variant="outline" className="h-9 sm:h-10 text-[11px] sm:text-sm px-2 sm:px-4 rounded-lg" onClick={() => window.history.back()}>
+                Back to Inventory
               </Button>
-              <Button
-                onClick={() => setScanDialogOpen(true)}
-                className="gap-1 sm:gap-2 h-9 sm:h-10 text-[11px] sm:text-sm px-2 sm:px-4 bg-violet-600 hover:bg-violet-700 text-white rounded-lg"
+            ) : (
+              <Button 
+                variant="outline" 
+                className="h-9 sm:h-10 text-[11px] sm:text-sm px-2 sm:px-4 rounded-lg gap-2" 
+                onClick={() => setArchivedDialogOpen(true)}
               >
-                <ScanLine className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
-                <span className="truncate">Scan</span>
+                <Archive className="h-4 w-4" />
+                View Archives
               </Button>
-              <Button
-                onClick={() => setReturnDialogOpen(true)}
-                className="gap-1 sm:gap-2 h-9 sm:h-10 text-[11px] sm:text-sm px-2 sm:px-4 bg-teal-600 hover:bg-teal-700 text-white rounded-lg"
-              >
-                <RotateCcw className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
-                <span className="truncate">Return</span>
-              </Button>
-            </div>
-          )}
-          {isReadOnly && (
-            <div className="flex items-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl border border-blue-200/60 dark:border-blue-800/40 bg-blue-50/80 dark:bg-blue-950/20 shrink-0">
-              <svg className="h-4 w-4 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-              <span className="text-[11px] sm:text-xs font-semibold text-blue-700 dark:text-blue-300">View Only Access</span>
-            </div>
-          )}
+            )}
+
+            {isReadOnly && (
+              <div className="flex items-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl border border-blue-200/60 dark:border-blue-800/40 bg-blue-50/80 dark:bg-blue-950/20 shrink-0">
+                <svg className="h-4 w-4 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                <span className="text-[11px] sm:text-xs font-semibold text-blue-700 dark:text-blue-300">View Only Access</span>
+              </div>
+            )}
+          </div>
         </div>
 
+        {!isArchiveView && (
         <div className="grid gap-2.5 sm:gap-4 md:gap-5 grid-cols-2 lg:grid-cols-4">
           {/* 1. Today's Transactions */}
           <Card
@@ -843,6 +870,7 @@ export function InventoryDashboard() {
             </CardContent>
           </Card>
         </div>
+        )}
 
         {/* Main Content - Inventory Section */}
         <Card className="shadow-sm rounded-xl bg-white dark:bg-card overflow-hidden">
@@ -933,21 +961,25 @@ export function InventoryDashboard() {
                   </SelectContent>
                 </Select>
 
-                {/* Stock Status */}
-                <Select value={stockStatusFilter} onValueChange={setStockStatusFilter}>
-                  <SelectTrigger className={`h-8 sm:h-[34px] w-auto min-w-0 sm:min-w-[120px] rounded-lg border text-[11px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-0.5 sm:gap-1 px-1.5 sm:px-2.5 ${stockStatusFilter !== "all"
-                    ? "bg-sky-50 border-sky-200 text-sky-700 shadow-[inset_0_1px_0_rgba(14,165,233,0.08)] dark:bg-sky-950/40 dark:border-sky-700 dark:text-sky-300"
-                    : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
-                    }`}>
-                    <Layers className={`h-3 w-3 shrink-0 hidden sm:block ${stockStatusFilter !== "all" ? "text-sky-500" : "text-gray-400"}`} />
-                    <SelectValue placeholder="Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {STOCK_STATUS_OPTIONS.map(opt => (
-                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {/* Stock Status Filter - Hidden in archive view */}
+                {!isArchiveView && (
+                  <Select value={stockStatusFilter} onValueChange={setStockStatusFilter}>
+                    <SelectTrigger className={`h-8 sm:h-[34px] w-auto min-w-0 sm:min-w-[120px] rounded-lg border text-[11px] sm:text-[13px] font-medium transition-all duration-200 focus:ring-2 focus:ring-blue-500/15 gap-0.5 sm:gap-1 px-1.5 sm:px-2.5 ${stockStatusFilter !== "all"
+                      ? "bg-sky-50 border-sky-200 text-sky-700 shadow-[inset_0_1px_0_rgba(14,165,233,0.08)] dark:bg-sky-950/40 dark:border-sky-700 dark:text-sky-300"
+                      : "bg-white dark:bg-card border-gray-200/80 dark:border-border text-gray-600 dark:text-foreground hover:border-gray-300 hover:bg-gray-50/50"
+                      }`}>
+                      <Layers className={`h-3 w-3 shrink-0 hidden sm:block ${stockStatusFilter !== "all" ? "text-sky-500" : "text-gray-400"}`} />
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {STOCK_STATUS_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value} className="text-sm">
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
 
                 {/* Expiration */}
                 <Select value={expirationFilter} onValueChange={setExpirationFilter}>
@@ -1137,6 +1169,10 @@ export function InventoryDashboard() {
         }}
         inventoryItems={items}
         scannedItem={scannedItem}
+      />
+      <ArchivedItemsDialog 
+        open={archivedDialogOpen} 
+        onOpenChange={setArchivedDialogOpen} 
       />
     </div>
   )

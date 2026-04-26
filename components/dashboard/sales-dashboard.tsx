@@ -172,15 +172,17 @@ export function SalesDashboard() {
   // ─── Computed: KPI Stats ───
   const stats = useMemo(() => {
     const totalOrdersToday = todayOrders.length
-    const pendingOrders = orders.filter((o) => o.status === "pending").length
     const completedOrders = orders.filter((o) => o.status === "completed" || o.status === "delivered").length
+    const cancelledOrders = orders.filter((o) => o.status === "cancelled").length
+    // Group all active statuses under "pendingOrders" for the dashboard KPIs
+    const pendingOrders = orders.length - completedOrders - cancelledOrders
 
     return { totalOrdersToday, pendingOrders, completedOrders }
   }, [orders, todayOrders])
 
-  // ─── Computed: Recent 10 orders (newest first — already sorted by hook) ───
+  // ─── Computed: All orders (newest first — already sorted by hook) ───
   const recentOrders = useMemo(() => {
-    return orders.slice(0, 10)
+    return orders // Removed .slice(0, 10) to allow full dataset pagination
   }, [orders])
 
   // ─── Pagination ───
@@ -422,9 +424,10 @@ export function SalesDashboard() {
 
             {/* Summary Bar */}
             {(() => {
-              const pendingCount = recentOrders.filter(o => o.status === "pending").length
               const completedCount = recentOrders.filter(o => o.status === "completed" || o.status === "delivered").length
               const cancelledCount = recentOrders.filter(o => o.status === "cancelled").length
+              // Any order that is not completed or cancelled is active/pending
+              const pendingCount = recentOrders.length - completedCount - cancelledCount
 
               if (pendingCount > 0 || completedCount > 0 || cancelledCount > 0) {
                 return (
@@ -487,8 +490,8 @@ export function SalesDashboard() {
                       else if (order.status === "completed" || order.status === "delivered") borderColor = "border-l-emerald-400"
                       else if (order.status === "cancelled") borderColor = "border-l-red-400"
 
-                      // Highlight pending rows
-                      const isPending = order.status === "pending"
+                      // Highlight pending/active rows
+                      const isPending = order.status !== "completed" && order.status !== "delivered" && order.status !== "cancelled"
 
                       return (
                         <div

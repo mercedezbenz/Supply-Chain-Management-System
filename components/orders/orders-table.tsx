@@ -73,9 +73,10 @@ export function OrdersTable() {
   // ─── Stats ───
   const stats = useMemo(() => {
     const total = orders.length
-    const pending = orders.filter(o => o.status === "pending").length
     const completed = orders.filter(o => o.status === "completed" || (o.status as string) === "delivered").length
     const cancelled = orders.filter(o => o.status === "cancelled").length
+    // Group all other active statuses (pending, processing, in_production, etc.) under "pending"
+    const pending = total - completed - cancelled
     return { total, pending, completed, cancelled }
   }, [orders])
 
@@ -91,15 +92,20 @@ export function OrdersTable() {
     if (statusFilter !== "all") {
       result = result.filter(o => {
         if (statusFilter === "completed") return o.status === "completed" || (o.status as string) === "delivered"
+        if (statusFilter === "cancelled") return o.status === "cancelled"
+        // If "pending" is selected, show all active orders (not completed, not cancelled)
+        if (statusFilter === "pending") {
+          return o.status !== "completed" && (o.status as string) !== "delivered" && o.status !== "cancelled"
+        }
         return o.status === statusFilter
       })
     }
     if (search.trim()) {
       const q = search.toLowerCase()
       result = result.filter(o =>
-        o.customerName.toLowerCase().includes(q) ||
-        o.customerPhone?.toLowerCase().includes(q) ||
-        o.customerAddress?.toLowerCase().includes(q)
+        (o.customerName || "").toLowerCase().includes(q) ||
+        (o.customerPhone || "").toLowerCase().includes(q) ||
+        (o.customerAddress || "").toLowerCase().includes(q)
       )
     }
     return result

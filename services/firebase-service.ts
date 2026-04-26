@@ -196,6 +196,11 @@ export const InventoryService = {
     errorCallback?: (error: any) => void
   ) =>
     FirebaseService.subscribeToCollection("inventory", callback, errorCallback),
+  subscribeToArchivedItems: (
+    callback: (items: InventoryItem[]) => void,
+    errorCallback?: (error: any) => void
+  ) =>
+    FirebaseService.subscribeToCollection("inventory", callback, errorCallback, [where("isArchived", "==", true)]),
 }
 
 export const CategoryService = {

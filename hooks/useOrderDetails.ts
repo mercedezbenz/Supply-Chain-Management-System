@@ -37,9 +37,52 @@ export function useOrderDetails(orderId: string | null) {
 
       unsubscribe = fbOnSnapshot(
         docRef,
-        (snapshot) => {
+        async (snapshot) => {
           if (snapshot.exists()) {
-            setOrder(mapDocToOrder(snapshot.id, snapshot.data()))
+            const initialOrder = mapDocToOrder(snapshot.id, snapshot.data())
+            
+            // Batch fetch products to get image URLs (for just this order's items)
+            const productIds = initialOrder.items.map(item => item.id || item.productId || "").filter(Boolean)
+            const productMap: Record<string, string> = {}
+            if (productIds.length > 0) {
+              try {
+                // To simplify, we could just fetch all or specific products, but for a single order, fetching all is fine or fetching specific ones
+                const { getDocs, collection } = await import("firebase/firestore")
+                const productsSnapshot = await getDocs(collection(db, "products"))
+                productsSnapshot.forEach(doc => {
+                  productMap[doc.id] = doc.data().imageUrl || ""
+                })
+              } catch (err) {
+                console.error("[useOrderDetails] Error fetching products for images:", err)
+              }
+            }
+
+            const itemsWithImages = initialOrder.items.map(item => ({
+              ...item,
+              imageUrl: productMap[item.id || item.productId || ""] || ""
+            }))
+
+            let resolvedOrder = { ...initialOrder, items: itemsWithImages }
+
+            // Fetch missing user data (phone, address) from users collection if userId exists
+            if (resolvedOrder.userId && (!resolvedOrder.customerPhone || resolvedOrder.customerPhone === "N/A" || !resolvedOrder.customerAddress)) {
+              try {
+                const { getDoc } = await import("firebase/firestore")
+                const userDoc = await getDoc(fbDoc(db, "users", resolvedOrder.userId))
+                if (userDoc.exists()) {
+                  const userData = userDoc.data()
+                  resolvedOrder = {
+                    ...resolvedOrder,
+                    customerPhone: (!resolvedOrder.customerPhone || resolvedOrder.customerPhone === "N/A") ? (userData.phoneNumber || "") : resolvedOrder.customerPhone,
+                    customerAddress: !resolvedOrder.customerAddress ? (userData.address || "") : resolvedOrder.customerAddress
+                  }
+                }
+              } catch (err) {
+                console.error(`[useOrderDetails] Error fetching user data for ${resolvedOrder.userId}:`, err)
+              }
+            }
+            
+            setOrder(resolvedOrder)
           } else {
             setOrder(null)
           }
