@@ -331,9 +331,16 @@ export function OrderDetails({ orderId }: OrderDetailsProps) {
                       <MapPin className="h-3 w-3" /> Delivery Address
                     </p>
                     <p className="text-[15px] text-gray-600 dark:text-foreground/80 leading-relaxed">
-                      {order.shippingAddress?.address || order.customerAddress || "N/A"}
-                      {order.shippingAddress?.city ? `, ${order.shippingAddress.city}` : ""}
-                    </p>
+  {[
+    order.shippingAddress?.street,
+    order.shippingAddress?.barangay,
+    order.shippingAddress?.city,
+    order.shippingAddress?.province,
+    order.shippingAddress?.postalCode,
+  ]
+    .filter(Boolean)
+    .join(", ") || "N/A"}
+</p>
                   </div>
                 </div>
               </CardContent>
@@ -399,9 +406,9 @@ export function OrderDetails({ orderId }: OrderDetailsProps) {
   </div>
 
   {/* Value */}
-  <div className="text-right text-emerald-600 dark:text-emerald-400 text-lg font-extrabold">
-    ₱ {totalAmount.toLocaleString()}
-  </div>
+  <div className="text-right text-[#2787b4] text-lg font-extrabold">
+  ₱ {totalAmount.toLocaleString()}
+</div>
 
 </div>
                     </div>

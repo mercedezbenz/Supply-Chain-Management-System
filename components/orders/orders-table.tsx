@@ -62,6 +62,19 @@ const StatusBadge = ({ status }: { status: string }) => {
 type StatusFilter = "all" | "pending" | "completed" | "cancelled"
 
 export function OrdersTable() {
+  const formatAddress = (addr: any) => {
+  if (!addr) return "—"
+
+  return [
+    addr.street,
+    addr.barangay,
+    addr.city,
+    addr.province,
+    addr.postalCode,
+  ]
+    .filter(Boolean)
+    .join(", ")
+}
   const { orders, loading } = useOrders()
   const router = useRouter()
 
@@ -298,7 +311,9 @@ export function OrdersTable() {
                         <td className="px-4 py-4 pr-6 align-top max-w-[260px]">
                           <div className="flex gap-2 items-start text-[13px] text-gray-600 dark:text-gray-400 leading-snug line-clamp-2" title={order.customerAddress}>
                             <span className="shrink-0 mt-0.5 text-xs opacity-70">📍</span>
-                            <span>{order.customerAddress || "—"}</span>
+                            <span>
+  {formatAddress(order.shippingAddress) || "—"}
+</span>
                           </div>
                         </td>
 

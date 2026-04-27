@@ -25,8 +25,11 @@ export interface OrderItem {
 export interface ShippingAddress {
   fullName: string
   phoneNumber: string
-  address: string
-  city: string
+  street?: string
+  barangay?: string
+  city?: string
+  province?: string
+  postalCode?: string
 }
 
 export interface Order {
@@ -108,11 +111,15 @@ function mapDocToOrder(docId: string, d: any): Order {
     customerPhone: shipping.phone || shipping.phoneNumber || d.customerPhone || d.phone || d.phoneNumber || userFallback.phone || "N/A",
     customerAddress: getAddress(),
     shippingAddress: {
-      fullName: shipping.fullName || d.customerName || d.fullName || d.name || "Unknown",
-      phoneNumber: shipping.phone || shipping.phoneNumber || d.customerPhone || d.phone || "N/A",
-      address: getAddress(),
-      city: shipping.city || d.city || "",
-    },
+  fullName: shipping.fullName || d.customerName || d.fullName || d.name || "Unknown",
+  phoneNumber: shipping.phone || shipping.phoneNumber || d.customerPhone || d.phone || "N/A",
+
+  street: shipping.street || "",
+  barangay: shipping.barangay || "",
+  city: shipping.city || "",
+  province: shipping.province || "",
+  postalCode: shipping.postalCode || shipping.zipCode || "",
+},
     items,
     // Normalize status to lowercase, fallback to pending
     status: (d.status ? String(d.status).toLowerCase().replace(/\s+/g, '_') : "pending") as Order["status"],
