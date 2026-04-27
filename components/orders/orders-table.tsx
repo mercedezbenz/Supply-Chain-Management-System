@@ -314,7 +314,7 @@ export function OrdersTable() {
                                     className="w-8 h-8 rounded-md object-cover border border-gray-200 dark:border-border bg-gray-50/50 shadow-sm shrink-0"
                                   />
                                   <div className="text-[13px] text-gray-700 dark:text-foreground/80 leading-tight line-clamp-2">
-                                    <span className="font-medium">{item.name}</span> <span className="text-muted-foreground">({item.quantity})</span>
+                                    <span className="font-medium">{item.name}</span> 
                                   </div>
                                 </div>
                               ))}

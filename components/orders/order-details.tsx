@@ -254,6 +254,10 @@ export function OrderDetails({ orderId }: OrderDetailsProps) {
     }, 300)
   }
 
+  const totalAmount = order?.items?.reduce((sum, item) => {
+    return sum + ((item.price || 0) * (item.quantity || 0))
+  }, 0) ?? 0
+
   if (loading) {
     return <AuthLoadingSkeleton />
   }
@@ -354,22 +358,52 @@ export function OrderDetails({ orderId }: OrderDetailsProps) {
                 {order.items && order.items.length > 0 ? (
                   <div className="w-full">
                     {/* Header Row */}
-                    <div className="grid grid-cols-[3fr_1fr] gap-4 px-6 py-3 bg-gray-50/80 dark:bg-secondary/30 text-[11px] font-bold text-gray-400 uppercase tracking-widest border-b border-gray-100 dark:border-border">
+                    <div className="grid grid-cols-[3fr_1fr_1fr_1fr] gap-4 px-6 py-3 bg-gray-50/80 dark:bg-secondary/30 text-[11px] font-bold text-gray-400 uppercase tracking-widest border-b border-gray-100 dark:border-border">
                       <div>Product</div>
                       <div className="text-center">Quantity</div>
+                      <div className="text-right">Price</div>
+                      <div className="text-right">Subtotal</div>
                     </div>
                     {/* Items */}
                     <div className="divide-y divide-gray-50 dark:divide-border/50">
-                      {order.items.map((item, idx) => (
-                        <div key={idx} className="grid grid-cols-[3fr_1fr] gap-4 px-6 py-4 items-center hover:bg-gray-50/50 dark:hover:bg-secondary/20 transition-colors">
-                          <p className="text-[14px] font-semibold text-gray-900 dark:text-foreground">{item.name || "Unnamed Item"}</p>
-                          <div className="flex justify-center">
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider bg-gray-100 text-gray-600 border border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700">
-                              {item.quantity} {item.unit || "unit"}
-                            </span>
+                      {order.items.map((item, idx) => {
+                        const hasPrice = item.price !== undefined && item.price !== null
+                        const subtotal = hasPrice ? (item.price! * (item.quantity || 0)) : null
+                        return (
+                          <div key={idx} className="grid grid-cols-[3fr_1fr_1fr_1fr] gap-4 px-6 py-4 items-center hover:bg-gray-50/50 dark:hover:bg-secondary/20 transition-colors">
+                            <p className="text-[14px] font-semibold text-gray-900 dark:text-foreground">{item.name || "Unnamed Item"}</p>
+                            <div className="flex justify-center">
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider bg-gray-100 text-gray-600 border border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700">
+                                {item.quantity} {item.unit || "unit"}
+                              </span>
+                            </div>
+                            <p className="text-[13px] text-gray-600 dark:text-foreground/80 text-right">
+                              {hasPrice ? `₱ ${item.price!.toLocaleString()}` : <span className="text-gray-300 dark:text-gray-600">N/A</span>}
+                            </p>
+                            <p className="text-[13px] font-semibold text-gray-800 dark:text-foreground text-right">
+                              {subtotal !== null ? `₱ ${subtotal.toLocaleString()}` : <span className="text-gray-300 dark:text-gray-600">N/A</span>}
+                            </p>
                           </div>
-                        </div>
-                      ))}
+                        )
+                      })}
+                         {/* Total Row */}
+<div className="grid grid-cols-[3fr_1fr_1fr_1fr] gap-4 px-6 py-4 bg-gray-50/80 dark:bg-secondary/30 border-t-2 border-gray-200 dark:border-border font-bold">
+  
+  {/* Empty */}
+  <div></div>
+  <div></div>
+
+  {/* Label */}
+  <div className="text-right text-gray-700 dark:text-foreground uppercase text-sm">
+    Total
+  </div>
+
+  {/* Value */}
+  <div className="text-right text-emerald-600 dark:text-emerald-400 text-lg font-extrabold">
+    ₱ {totalAmount.toLocaleString()}
+  </div>
+
+</div>
                     </div>
                   </div>
                 ) : (
@@ -454,7 +488,7 @@ export function OrderDetails({ orderId }: OrderDetailsProps) {
             {/* Order Summary & Primary Action */}
             <Card className="rounded-2xl border border-gray-100 dark:border-border shadow-lg shadow-sky-500/5 bg-white dark:bg-card overflow-hidden">
               <CardHeader className="px-6 pt-6 pb-4">
-                <CardTitle className="text-base font-bold">Order Summary</CardTitle>
+                <CardTitle className="text-base font-bold">Date of Order </CardTitle>
               </CardHeader>
               <CardContent className="p-0">
                 <div className="px-6 pb-6 space-y-4">
@@ -466,6 +500,7 @@ export function OrderDetails({ orderId }: OrderDetailsProps) {
                     <span className="text-gray-500 dark:text-gray-400">Time Placed</span>
                     <span className="font-medium text-gray-900 dark:text-foreground">{formatTime(order.createdAt)}</span>
                   </div>
+               
                 </div>
 
                 {isSales && !isReadOnly && order.status === "pending" && (

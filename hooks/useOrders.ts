@@ -19,6 +19,7 @@ export interface OrderItem {
   quantity: number
   unit?: string
   imageUrl?: string
+  price?: number // ✅ ADD THIS
 }
 
 export interface ShippingAddress {
@@ -71,14 +72,15 @@ function mapDocToOrder(docId: string, d: any): Order {
 
   // Update items to include unit
   const items: OrderItem[] = rawItems.map((p: any) => ({
-    ...(typeof p === "object" && p !== null ? p : {}),
-    id: p?.id || p?.productId || "",
-    productId: p?.productId || p?.id || "",
-    name: p?.name || p?.productName || p?.title || "Unnamed",
-    quantity: Number(p?.quantity ?? p?.qty ?? p?.count ?? 1) || 1,
-    unit: p?.unit || "unit",
-    imageUrl: p?.imageUrl || p?.image || ""
-  }))
+  ...(typeof p === "object" && p !== null ? p : {}),
+  id: p?.id || p?.productId || "",
+  productId: p?.productId || p?.id || "",
+  name: p?.name || p?.productName || p?.title || "Unnamed",
+  quantity: Number(p?.quantity ?? p?.qty ?? p?.count ?? 1) || 1,
+  unit: p?.unit || "unit",
+  imageUrl: p?.imageUrl || p?.image || "",
+  price: Number(p?.price ?? 0) 
+}))
 
   const getAddress = () => {
     // 1. Check for the new shippingAddress schema
