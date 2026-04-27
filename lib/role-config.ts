@@ -52,6 +52,12 @@ export const MENU_ITEMS: MenuItem[] = [
     icon: MessageCircle,
     roles: ["sales"],
   },
+  {
+    label: "Products",
+    href: "/products",
+    icon: Package, 
+    roles: ["sales"], 
+  },
 ]
 
 // ─── Route Access Map ────────────────────────────────────────────────────────
@@ -70,6 +76,7 @@ export const ROUTE_ACCESS: Record<string, AppRole[]> = {
 
   // ✅ NEW
   "/messages":   ["sales"],
+  "/products":   ["sales"], 
 }
 
 /**
