@@ -19,15 +19,10 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<any[]>([]);
   const [text, setText] = useState('');
 
-  // ⏳ loading state
-  if (loading) {
-    return <div className="p-6">Loading...</div>;
-  }
+  // Hooks moved to top
 
-  // 🔒 SALES ONLY
-  if (user?.role !== 'sales') {
-    return <div className="p-6">Access Denied</div>;
-  }
+
+
 
   useEffect(() => {
     if (!chatId) return;
@@ -48,6 +43,16 @@ export default function ChatPage() {
 
     return () => unsub();
   }, [chatId]);
+
+  // ⏳ loading state
+  if (loading) {
+    return <div className="p-6">Loading...</div>;
+  }
+
+  // 🔒 SALES ONLY
+  if (user?.role !== 'sales') {
+    return <div className="p-6">Access Denied</div>;
+  }
 
   const sendMessage = async () => {
     if (!text.trim()) return;

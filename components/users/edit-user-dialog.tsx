@@ -451,7 +451,7 @@ export function EditUserDialog({ user, open, onOpenChange, onUserUpdated }: Edit
                         <div className="space-y-2">
                             <Label htmlFor="licenseNumber" className="flex items-center gap-2 text-sm font-medium">
                                 <CreditCard className="h-4 w-4 text-muted-foreground" />
-                                Driver's License Number
+                                Driver&apos;s License Number
                             </Label>
                             <Input
                                 id="licenseNumber"

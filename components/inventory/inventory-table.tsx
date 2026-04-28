@@ -1,6 +1,8 @@
 "use client"
 
-import { useState, useEffect, useRef, useMemo, useCallback, ReactNode } from "react"
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage"
+import { useState, useEffect, useRef, useMemo, useCallback, ReactNode, Fragment } from "react"
+import Image from "next/image"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,6 +12,7 @@ import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, Ch
 import { getItemStatus } from "./inventory-dashboard"
 import { buildProductDisplayName } from "@/lib/product-data"
 import { useToast } from "@/hooks/use-toast"
+import { useAuth } from "@/hooks/use-auth"
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog"
 import { TransactionService } from "@/services/firebase-service"
 import { FirebaseService } from "@/services/firebase-service"
@@ -42,6 +45,8 @@ interface InventoryTableProps {
   highlightFilter?: string
   /** If true, hide edit/delete action buttons (view-only mode for owner role) */
   readOnly?: boolean
+  /** If true, shows archive specific columns and badges */
+  isArchiveView?: boolean
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -127,12 +132,9 @@ function getMovementBadgeStyle(type: string): string {
 /** Derive the unit type for a transaction row */
 function deriveUnitType(txn: any): string {
   if (txn.unit_type) return txn.unit_type.toUpperCase()
-  const inUnit = (txn.incoming_unit || "").toLowerCase()
-  const outUnit = (txn.outgoing_unit || "").toLowerCase()
-  if (inUnit === "pack" || outUnit === "pack") return "PACK"
   return "BOX" // default
 }
-
+const storage = getStorage()
 // ─── Grouped Product type ────────────────────────────────────────────────────
 interface GroupedProduct {
   barcode: string
@@ -140,6 +142,8 @@ interface GroupedProduct {
   imageUrl: string              // Fallback image URL from inventory item or transaction
   productName: string
   isArchived: boolean
+  archivedReason: string
+  archivedAt: any
   category: string
   movementOrigin: string       // How item ENTERED system (Supplier/Production) — NOT latest action
   latestDate: any
@@ -161,9 +165,16 @@ interface GroupedProduct {
   production_weight: number | null
   packing_weight: number | null
   weight_difference: number | null
+  // Incoming weight tracking
+  incoming_weight: number | null
   // Transaction references
   sales_invoice_no: string | null
   delivery_receipt_no: string | null
+  
+  // NEW: Support for batches (multiple barcodes per product name)
+  totalQty?: number
+  totalWeight?: number
+  batches?: any[]
 }
 
 
@@ -223,21 +234,23 @@ function TransactionHistoryList({ transactions, setCancellingItem, readOnly = fa
       const isReturn = mt.includes("return")
       const isIncoming = mt.includes("supplier") || mt.includes("production") || mt.includes("packing") || ((txn.source || "").toLowerCase() === "incoming") || mt.includes("incoming") || txn.type === "IN"
       const dateStr = formatTxnDate(txn.transaction_date || txn.created_at || new Date())
-      const unit = deriveUnitType(txn) === "PACK" ? "packs" : "boxes"
-      const rem = txn.stock_left ?? "\u2014"
+      const unit = "kg"
+      const rem = txn.weight_left ?? txn.stock_left ?? "\u2014"
 
 
       if (isOutgoing) {
-          parts.push({ txn, id: `${txn.id}-out`, type: 'OUT', qty: txn.outgoing_qty ?? txn.outgoing_packs ?? txn.quantity ?? 0, rem, date: dateStr, unit })
+          parts.push({ txn, id: `${txn.id}-out`, type: 'OUT', qty: txn.outgoing_weight ?? txn.outgoing_qty ?? 0, rem, date: dateStr, unit })
       } else if (isReturn) {
-          if ((txn.good_return ?? 0) > 0) {
-              parts.push({ txn, id: `${txn.id}-good`, type: 'GOOD_RETURN', qty: txn.good_return, rem, date: dateStr, unit })
+          if ((txn.good_return_weight ?? txn.good_return ?? 0) > 0) {
+              parts.push({ txn, id: `${txn.id}-good`, type: 'GOOD_RETURN', qty: txn.good_return_weight ?? txn.good_return, rem, date: dateStr, unit })
           }
-          if ((txn.damage_return ?? 0) > 0) {
-              parts.push({ txn, id: `${txn.id}-bad`, type: 'BAD_RETURN', qty: txn.damage_return, reason: txn.bad_return_details?.reason || "Damaged", rem: null, date: dateStr, unit })
+          if ((txn.damage_return_weight ?? txn.damage_return ?? 0) > 0) {
+              parts.push({ txn, id: `${txn.id}-bad`, type: 'BAD_RETURN', qty: txn.damage_return_weight ?? txn.damage_return, reason: txn.bad_return_details?.reason || "Damaged", rem: null, date: dateStr, unit })
           }
       } else if (isIncoming) {
-          parts.push({ txn, id: `${txn.id}-in`, type: 'IN', qty: txn.incoming_qty ?? txn.incoming_packs ?? txn.quantity ?? 0, rem, date: dateStr, unit })
+          const inWeight = txn.incoming_weight ?? txn.production_weight ?? null
+          const inQty = txn.incoming_qty ?? txn.incoming_packs ?? txn.quantity ?? 0
+          parts.push({ txn, id: `${txn.id}-in`, type: 'IN', qty: inWeight ?? inQty, rem, date: dateStr, unit })
       } else {
           parts.push({ txn, id: `${txn.id}-other`, type: 'OTHER', qty: 0, rem, date: dateStr, unit })
       }
@@ -342,7 +355,9 @@ export function InventoryTable({
   searchQuery = "",
   highlightFilter,
   readOnly = false,
+  isArchiveView = false,
 }: InventoryTableProps) {
+  const { user } = useAuth()
   const { toast } = useToast()
   const [cancellingItem, setCancellingItem] = useState<InventoryTransaction | null>(null)
   const [cancelLoading, setCancelLoading] = useState(false)
@@ -352,6 +367,7 @@ export function InventoryTable({
   const [currentPage, setCurrentPage] = useState(1)
   const [barcodeViewItem, setBarcodeViewItem] = useState<{ barcode: string; productName: string; productionDate?: string; expiryDate?: string } | null>(null)
   const [badReturnDetailsView, setBadReturnDetailsView] = useState<{ productName: string; details: any; quantity: number } | null>(null)
+  const [txnDialogProduct, setTxnDialogProduct] = useState<GroupedProduct | null>(null)
 
   // ─── Product Images ───────────────────────────────────────────────────────
   // Primary map: product doc id → imageUrl  (e.g. "beef-hotdog-beef" → "https://...")
@@ -406,7 +422,7 @@ export function InventoryTable({
 
   const itemsPerPage = rowsPerPageProp
 
-  // ─── Group transactions by barcode ──────────────────────────────────────
+  // ─── Group transactions by product_name ──────────────────────────────────────
   const groupedProducts: GroupedProduct[] = useMemo(() => {
     // STEP 1: Sort ALL transactions chronologically (oldest first) BEFORE grouping
     // This ensures movementOrigin detection is reliable regardless of Firestore document order
@@ -414,19 +430,21 @@ export function InventoryTable({
       return parseDateToMs(a.transaction_date) - parseDateToMs(b.transaction_date)
     })
 
-    const groupMap = new Map<string, GroupedProduct>()
+    const barcodeMap = new Map<string, GroupedProduct>()
 
     for (const txn of sortedTransactions) {
       const bc = (txn as any).barcode || txn.id
       if (!bc) continue
 
-      if (!groupMap.has(bc)) {
-        groupMap.set(bc, {
+      if (!barcodeMap.has(bc)) {
+        barcodeMap.set(bc, {
           barcode: bc,
           product_id: (txn as any).product_id || "",
           imageUrl: "",
-          productName: (txn as any).product_name || "-",
+          productName: (txn as any).product_name || "Unknown Product",
           isArchived: false,
+          archivedReason: "manual",
+          archivedAt: null,
           category: (txn as any).category || "",
           movementOrigin: "",  // Will be set from the EARLIEST incoming transaction
           latestDate: (txn as any).transaction_date,
@@ -447,21 +465,31 @@ export function InventoryTable({
           production_weight: null,
           packing_weight: null,
           weight_difference: null,
+          // Incoming weight tracking
+          incoming_weight: null,
           // Transaction references
           sales_invoice_no: null,
           delivery_receipt_no: null,
         })
       }
 
-      const group = groupMap.get(bc)!
+      const group = barcodeMap.get(bc)!
       group.transactions.push(txn)
 
-      // Accumulate totals
-      group.totalIncoming += ((txn as any).incoming_packs ?? (txn as any).incoming_qty ?? 0)
-      group.totalOutgoing += ((txn as any).outgoing_packs ?? (txn as any).outgoing_qty ?? 0)
-      group.totalGoodReturn += ((txn as any).good_return ?? 0)
-      group.totalDamageReturn += ((txn as any).damage_return ?? 0)
+      // Accumulate totals — prioritize weight fields
+      const incomingW = (txn as any).incoming_weight ?? (txn as any).production_weight ?? 0
+      const outgoingW = (txn as any).outgoing_weight ?? 0
+      const goodReturnW = (txn as any).good_return_weight ?? 0
+      const damageReturnW = (txn as any).damage_return_weight ?? 0
 
+      group.totalIncoming += incomingW
+      group.totalOutgoing += outgoingW
+      group.totalGoodReturn += goodReturnW
+      group.totalDamageReturn += damageReturnW
+
+      if (incomingW > 0) {
+        group.incoming_weight = (group.incoming_weight || 0) + incomingW
+      }
 
       // Track latest transaction date
       const txnDateMs = parseDateToMs((txn as any).transaction_date)
@@ -482,13 +510,8 @@ export function InventoryTable({
       }
     }
 
-    // STEP 2: For each group, determine movementOrigin from the EARLIEST incoming transaction
-    // Sort each group's transactions by date (newest first for display)
-    // AND compute stock from totals
-    for (const group of groupMap.values()) {
-      // Since we sorted oldest-first during iteration, the first incoming txn in the array
-      // IS the chronologically earliest. But let's be explicit:
-      // Detect from the EARLIEST incoming transaction (includes 'incoming' source from add-item form)
+    // STEP 2: Process each barcode group
+    for (const group of barcodeMap.values()) {
       const earliestIncoming = group.transactions.find((txn: any) => {
         const mt = getMovementType(txn).toLowerCase()
         const src = ((txn as any).source || "").toLowerCase()
@@ -496,52 +519,146 @@ export function InventoryTable({
       })
       if (earliestIncoming) {
         group.movementOrigin = getMovementType(earliestIncoming)
-        // Extract context fields from the earliest incoming transaction
         group.dateAdded = (earliestIncoming as any).created_at || (earliestIncoming as any).transaction_date || null
         group.expiryDate = (earliestIncoming as any).expiry_date || null
         group.productionDate = (earliestIncoming as any).production_date || null
         group.supplierName = (earliestIncoming as any).supplier_name || ""
-        // Extract weight tracking & doc refs from earliest incoming txn
         group.production_weight = (earliestIncoming as any).production_weight ?? null
         group.packing_weight = (earliestIncoming as any).packing_weight ?? null
         group.weight_difference = (earliestIncoming as any).weight_difference ?? null
+        group.incoming_weight = (earliestIncoming as any).incoming_weight ?? null
         group.sales_invoice_no = (earliestIncoming as any).sales_invoice_no ?? null
         group.delivery_receipt_no = (earliestIncoming as any).delivery_receipt_no ?? null
       }
 
-      // Fallback: if no incoming source match, use the very first transaction
       if (!group.dateAdded && group.transactions.length > 0) {
-        const first = group.transactions[group.transactions.length - 1] // oldest (sorted newest-first later)
+        const first = group.transactions[group.transactions.length - 1] 
         group.dateAdded = (first as any).created_at || (first as any).transaction_date || null
         group.expiryDate = group.expiryDate || (first as any).expiry_date || null
       }
-
-      // Now sort newest-first for display in the UI
-      group.transactions.sort((a: any, b: any) => {
-        return parseDateToMs(b.transaction_date) - parseDateToMs(a.transaction_date)
-      })
-      // Stock = totalIncoming - totalOutgoing + totalGoodReturn
-      group.stockLeft = group.totalIncoming - group.totalOutgoing + group.totalGoodReturn
+      group.stockLeft = Math.max(0, group.totalIncoming - group.totalOutgoing + group.totalGoodReturn)
     }
 
-    // Default sort: groups by latest date (newest first)
-    // POST-PROCESS: Add inventory item details (like isArchived)
     const itemsByBarcode = new Map<string, any>()
     for (const item of items) {
       if (item.barcode) itemsByBarcode.set(item.barcode, item)
     }
 
-    const result = Array.from(groupMap.values())
-    for (const group of result) {
+    const barcodeGroups = Array.from(barcodeMap.values())
+    for (const group of barcodeGroups) {
       const item = itemsByBarcode.get(group.barcode)
       if (item) {
         group.isArchived = Boolean(item.isArchived)
+        group.archivedReason = item.archivedReason || item.archived_reason || "manual"
+        group.archivedAt = item.archivedAt || item.archived_at || item.updatedAt
       }
     }
 
-    return result.sort((a, b) => {
-      return parseDateToMs(b.latestDate) - parseDateToMs(a.latestDate)
-    })
+    // STEP 3: Group by product_name (case-insensitive) and aggregate batches
+    const productMap = new Map<string, GroupedProduct>()
+    for (const bg of barcodeGroups) {
+      const pName = (bg.productName || "Unknown Product").trim()
+      const pNameLower = pName.toLowerCase()
+      
+      if (!productMap.has(pNameLower)) {
+        productMap.set(pNameLower, {
+          productName: pName,
+          product_id: bg.product_id,
+          imageUrl: bg.imageUrl,
+          category: bg.category,
+          latestDate: bg.latestDate,
+          unitType: bg.unitType,
+          totalIncoming: 0,
+          totalOutgoing: 0,
+          totalGoodReturn: 0,
+          totalDamageReturn: 0,
+          stockLeft: 0,
+          production_weight: null,
+          packing_weight: null,
+          weight_difference: null,
+          incoming_weight: null,
+          batches: [],
+          transactions: [],
+          barcode: bg.barcode,
+          isArchived: bg.isArchived,
+          archivedReason: bg.archivedReason,
+          archivedAt: bg.archivedAt,
+          movementOrigin: bg.movementOrigin,
+          latestBadReturnDetails: bg.latestBadReturnDetails,
+          dateAdded: bg.dateAdded,
+          expiryDate: bg.expiryDate,
+          productionDate: bg.productionDate,
+          supplierName: bg.supplierName,
+          sales_invoice_no: bg.sales_invoice_no,
+          delivery_receipt_no: bg.delivery_receipt_no,
+          totalQty: 0,
+          totalWeight: 0
+        })
+      }
+      
+      const pg = productMap.get(pNameLower)!
+      
+      // Accumulate totals
+      pg.totalIncoming += bg.totalIncoming
+      pg.totalOutgoing += bg.totalOutgoing
+      pg.totalGoodReturn += bg.totalGoodReturn
+      pg.totalDamageReturn += bg.totalDamageReturn
+      pg.stockLeft += bg.stockLeft
+      pg.totalQty! += bg.stockLeft
+      pg.totalWeight! += (bg.packing_weight ?? bg.production_weight ?? 0)
+      
+      if (bg.production_weight != null) pg.production_weight = (pg.production_weight || 0) + bg.production_weight
+      if (bg.packing_weight != null) pg.packing_weight = (pg.packing_weight || 0) + bg.packing_weight
+      if (bg.weight_difference != null) pg.weight_difference = (pg.weight_difference || 0) + bg.weight_difference
+      if (bg.incoming_weight != null) pg.incoming_weight = (pg.incoming_weight || 0) + bg.incoming_weight
+      
+      if (parseDateToMs(bg.latestDate) > parseDateToMs(pg.latestDate)) {
+        pg.latestDate = bg.latestDate
+        if (!pg.imageUrl && bg.imageUrl) pg.imageUrl = bg.imageUrl
+      }
+      
+      pg.transactions.push(...bg.transactions)
+      
+      pg.batches!.push({
+        id: bg.barcode,
+        qty: bg.stockLeft,
+        weight: bg.packing_weight ?? bg.production_weight ?? 0,
+        expiry: bg.expiryDate,
+        ...bg
+      })
+    }
+    
+    const result = Array.from(productMap.values())
+    
+    // Process batches and transactions inside each product
+    for (const pg of result) {
+      pg.batches!.sort((a: any, b: any) => {
+        // Move zero stock to bottom
+        const aStock = a.qty || 0
+        const bStock = b.qty || 0
+        if (aStock <= 0 && bStock > 0) return 1
+        if (aStock > 0 && bStock <= 0) return -1
+        
+        // FIFO (Oldest first) for active batches
+        return parseDateToMs(a.dateAdded) - parseDateToMs(b.dateAdded)
+      })
+      pg.transactions.sort((a: any, b: any) => parseDateToMs(b.transaction_date) - parseDateToMs(a.transaction_date))
+      
+      const first = pg.batches![0]
+      if (first) {
+        pg.barcode = first.barcode
+        pg.dateAdded = first.dateAdded
+        pg.expiryDate = first.expiryDate
+        pg.productionDate = first.productionDate
+        pg.supplierName = first.supplierName
+        pg.isArchived = pg.batches!.every((b: any) => b.isArchived)
+        pg.archivedReason = first.archivedReason
+        pg.archivedAt = first.archivedAt
+        pg.latestBadReturnDetails = first.latestBadReturnDetails
+      }
+    }
+
+    return result.sort((a, b) => parseDateToMs(b.latestDate) - parseDateToMs(a.latestDate))
   }, [transactions, items])
 
   // ─── Apply sort mode from dashboard ────────────────────────────────────
@@ -586,13 +703,14 @@ export function InventoryTable({
     }
     return sorted
   }, [groupedProducts, sortMode])
-
-  const dataLength = sortedProducts.length
+  
+const filteredProducts = sortedProducts.filter(group => group.stockLeft > 0)
+  const dataLength = filteredProducts.length
   const totalPages = Math.max(1, Math.ceil(dataLength / itemsPerPage))
   const paginatedGroups = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage
-    return sortedProducts.slice(start, start + itemsPerPage)
-  }, [sortedProducts, currentPage, itemsPerPage])
+    return filteredProducts.slice(start, start + itemsPerPage)
+  }, [filteredProducts, currentPage, itemsPerPage])
 
   // ─── Expand/Collapse ───────────────────────────────────────────────────
   const toggleExpand = useCallback((barcode: string) => {
@@ -641,6 +759,35 @@ export function InventoryTable({
   useEffect(() => {
     setCurrentPage(1)
   }, [dataLength, itemsPerPage, sortMode])
+
+  // Handle jump-to-page and auto-expand for scrollToItemId
+  useEffect(() => {
+    if (!scrollToItemId) return
+    
+    // Find the product containing this barcode (either as main barcode or in batches)
+    const productIndex = filteredProducts.findIndex(p => 
+      p.barcode === scrollToItemId || 
+      (p.batches && p.batches.some((b: any) => b.barcode === scrollToItemId))
+    )
+
+    if (productIndex !== -1) {
+      const pageOfItem = Math.floor(productIndex / itemsPerPage) + 1
+      if (pageOfItem !== currentPage) {
+        setCurrentPage(pageOfItem)
+      }
+      
+      const product = filteredProducts[productIndex]
+      // If it's a batch barcode, expand the product to show the row
+      if (product.batches && product.batches.some((b: any) => b.barcode === scrollToItemId)) {
+        setExpandedBarcodes(prev => {
+          if (prev.has(product.barcode)) return prev
+          const next = new Set(prev)
+          next.add(product.barcode)
+          return next
+        })
+      }
+    }
+  }, [scrollToItemId, filteredProducts, itemsPerPage, currentPage])
 
   // Scroll to item
   useEffect(() => {
@@ -715,13 +862,13 @@ export function InventoryTable({
     { key: "goodReturn",        label: "Good Rtn",            align: "right"  as const, width: "min-w-[100px] w-[100px]" },
     { key: "badReturn",         label: "Bad Rtn",             align: "right"  as const, width: "min-w-[100px] w-[100px]" },
     { key: "remainingStock",    label: "Remaining",           align: "right"  as const, width: "min-w-[120px] w-[120px]" },
+    ...(isArchiveView ? [{ key: "archiveInfo", label: "Archive Info", align: "center" as const, width: "min-w-[120px] w-[120px]" }] : []),
     { key: "status",            label: "Status",              align: "center" as const, width: "min-w-[110px] w-[110px]", ownerOnly: true },
     { key: "reorderNeeded",     label: "Reorder Needed",      align: "center" as const, width: "min-w-[130px] w-[130px]", ownerOnly: true },
     // ── Weight group: subtle left-border on first column ──
     { key: "productionWeight",  label: "Prod. Weight",        align: "right"  as const, width: "min-w-[110px] w-[110px]", weightGroup: true },
     { key: "packingWeight",     label: "Pack. Weight",        align: "right"  as const, width: "min-w-[110px] w-[110px]" },
     { key: "weightDifference",  label: "Wt. Diff.",           align: "right"  as const, width: "min-w-[100px] w-[100px]" },
-    { key: "unit",              label: "Unit",                align: "center" as const, width: "min-w-[72px]  w-[72px]" },
     { key: "actions",           label: "Actions",             align: "center" as const, width: "min-w-[218px] w-[218px]" },
   ].filter(col => {
     if (readOnly) {
@@ -737,7 +884,7 @@ export function InventoryTable({
       if (col.key === "reorderNeeded") return { ...col, width: "w-[13%]", align: "center" }
     }
     return col
-  })
+  });
 
 
 
@@ -779,68 +926,93 @@ export function InventoryTable({
                 </tr>
               </thead>
               <tbody>
-                {paginatedGroups.map((group, groupIndex) => {
-                  const isExpanded = expandedBarcodes.has(group.barcode)
+                {paginatedGroups.map((originalGroup, groupIndex) => {
+                  const isExpanded = expandedBarcodes.has(originalGroup.productName)
 
-                  const historyTransactions = group.transactions
+                  const historyTransactions = originalGroup.transactions
                   const hasHistory = historyTransactions.length > 0
-
-                  // Check if item should be highlighted based on the filter
-                  let isHighlighted = false
-                  if (highlightFilter === "low-stock" && group.stockLeft > 0 && group.stockLeft < 10) {
-                    isHighlighted = true
-                  } else if (highlightFilter === "out-of-stock" && group.stockLeft <= 0) {
-                    isHighlighted = true
-                  } else if ((highlightFilter === "expiring" || highlightFilter === "expiring-soon") && group.expiryDate) {
-                    const todayUrl = new Date()
-                    todayUrl.setHours(0, 0, 0, 0)
-                    const expDUrl = new Date(group.expiryDate instanceof Date ? group.expiryDate : group.expiryDate?.toDate ? group.expiryDate.toDate() : new Date(group.expiryDate))
-                    if (!isNaN(expDUrl.getTime())) {
-                      const sevenDaysUrl = new Date(todayUrl)
-                      sevenDaysUrl.setDate(todayUrl.getDate() + 7)
-                      if (expDUrl <= sevenDaysUrl) {
-                        isHighlighted = true
-                      }
-                    }
-                  }
-
-                  let highlightRing = ""
-                  if (isHighlighted) {
-                    if (highlightFilter === "low-stock") highlightRing = "bg-amber-50/60 dark:bg-amber-950/20 ring-1 ring-amber-400 ring-inset border-transparent relative z-10"
-                    else if (highlightFilter === "out-of-stock") highlightRing = "bg-red-50/60 dark:bg-red-950/20 ring-1 ring-red-400 ring-inset border-transparent relative z-10"
-                    else if (highlightFilter === "expiring" || highlightFilter === "expiring-soon") highlightRing = "bg-orange-50/60 dark:bg-orange-950/20 ring-1 ring-orange-400 ring-inset border-transparent relative z-10"
-                  }
-                  // Weight discrepancy indicator — secondary highlight (only when no filter highlight active)
-                  const hasWeightDiscrepancy = group.weight_difference != null && group.weight_difference > 5
-                  if (!isHighlighted && hasWeightDiscrepancy) {
-                    highlightRing = "ring-1 ring-orange-300 ring-inset border-transparent relative z-10"
-                  }
+                  
+                  const batches = originalGroup.batches && originalGroup.batches.length > 0
+                    ? originalGroup.batches
+                    : [originalGroup]
+                  const mainBatch = batches[0]
+                  
+                  const rowsToRender = isExpanded && batches.length > 1
+                    ? batches
+                    : [mainBatch];
 
                   return (
-                    <>{/* Fragment for summary + expanded rows */}
-                      {/* ═══ SUMMARY ROW ═══ */}
-                      <tr
-                        key={group.barcode}
-                        id={`inventory-item-${group.barcode}`}
-                        ref={(el) => { if (el) itemRowRefs.current.set(group.barcode, el) }}
-                        className={[
-                          "group border-b border-border/25 transition-colors duration-150",
-                          hasHistory ? "cursor-pointer" : "",
-                          isExpanded
-                            ? "bg-blue-50/70 dark:bg-blue-950/20"
-                            : groupIndex % 2 === 0
-                              ? "bg-white dark:bg-card"
-                              : "bg-gray-50/50 dark:bg-muted/10",
-                          "hover:bg-blue-50/40 dark:hover:bg-muted/25",
-                          highlightRing,
-                        ].filter(Boolean).join(" ")}
-                        onClick={() => hasHistory && toggleExpand(group.barcode)}
-                        title={hasHistory ? "Click to view transaction history" : ""}
-                      >
+                    <Fragment key={originalGroup.productName}>
+                      {rowsToRender.map((rowData: any, rowIndex: number) => {
+                        const isMainRow = rowIndex === 0;
+                        // For main row: use originalGroup totals but batch-specific fields (barcode, expiry, dateAdded)
+                        // For child rows: use batch data directly
+                        const batchBarcode = rowData.barcode || rowData.id || ""
+                        const group = isMainRow
+                          ? { ...originalGroup, barcode: batchBarcode, expiryDate: rowData.expiryDate, dateAdded: rowData.dateAdded, productionDate: rowData.productionDate, supplierName: rowData.supplierName, production_weight: rowData.production_weight, packing_weight: rowData.packing_weight, weight_difference: rowData.weight_difference, incoming_weight: rowData.incoming_weight ?? originalGroup.incoming_weight, totalIncoming: rowData.totalIncoming ?? originalGroup.totalIncoming, totalOutgoing: rowData.totalOutgoing ?? originalGroup.totalOutgoing, totalGoodReturn: rowData.totalGoodReturn ?? originalGroup.totalGoodReturn, totalDamageReturn: rowData.totalDamageReturn ?? originalGroup.totalDamageReturn, stockLeft: isExpanded ? (rowData.stockLeft ?? originalGroup.stockLeft) : originalGroup.stockLeft }
+                          : { ...rowData, productName: originalGroup.productName, barcode: batchBarcode, stockLeft: rowData.stockLeft ?? rowData.qty }
+
+                        // Check if item should be highlighted based on the filter
+                        let isHighlighted = false
+                        if (highlightFilter === "low-stock" && group.stockLeft > 0 && group.stockLeft < 10) {
+                          isHighlighted = true
+                        } else if (highlightFilter === "out-of-stock" && group.stockLeft <= 0) {
+                          isHighlighted = true
+                        } else if ((highlightFilter === "expiring" || highlightFilter === "expiring-soon") && group.expiryDate) {
+                          const todayUrl = new Date()
+                          todayUrl.setHours(0, 0, 0, 0)
+                          const expDUrl = new Date(group.expiryDate instanceof Date ? group.expiryDate : group.expiryDate?.toDate ? group.expiryDate.toDate() : new Date(group.expiryDate))
+                          if (!isNaN(expDUrl.getTime())) {
+                            const sevenDaysUrl = new Date(todayUrl)
+                            sevenDaysUrl.setDate(todayUrl.getDate() + 7)
+                            if (expDUrl <= sevenDaysUrl) {
+                              isHighlighted = true
+                            }
+                          }
+                        }
+
+                        let highlightRing = ""
+                        if (isHighlighted) {
+                          if (highlightFilter === "low-stock") highlightRing = "bg-amber-50/60 dark:bg-amber-950/20 ring-1 ring-amber-400 ring-inset border-transparent relative z-10"
+                          else if (highlightFilter === "out-of-stock") highlightRing = "bg-red-50/60 dark:bg-red-950/20 ring-1 ring-red-400 ring-inset border-transparent relative z-10"
+                          else if (highlightFilter === "expiring" || highlightFilter === "expiring-soon") highlightRing = "bg-orange-50/60 dark:bg-orange-950/20 ring-1 ring-orange-400 ring-inset border-transparent relative z-10"
+                        }
+                        // Weight discrepancy indicator — secondary highlight (only when no filter highlight active)
+                        const hasWeightDiscrepancy = group.weight_difference != null && group.weight_difference > 5
+                        if (!isHighlighted && hasWeightDiscrepancy) {
+                          highlightRing = "ring-1 ring-orange-300 ring-inset border-transparent relative z-10"
+                        }
+
+                        return (
+                          <tr
+                            key={isMainRow ? originalGroup.productName : `${originalGroup.productName}-batch-${group.barcode}`}
+                            id={`inventory-${batchBarcode}`}
+                            ref={(el) => { 
+                              if (el) {
+                                if (isMainRow) itemRowRefs.current.set(originalGroup.productName, el)
+                                itemRowRefs.current.set(batchBarcode, el)
+                              }
+                            }}
+                            className={[
+                              "group border-b border-border/25 transition-colors duration-150",
+                              hasHistory && isMainRow ? "cursor-pointer" : "",
+                              !isMainRow
+                                ? "bg-slate-50/40 dark:bg-slate-900/10"
+                                : isExpanded
+                                  ? "bg-blue-50/70 dark:bg-blue-950/20"
+                                  : groupIndex % 2 === 0
+                                    ? "bg-white dark:bg-card"
+                                    : "bg-gray-50/50 dark:bg-muted/10",
+                              isMainRow ? "hover:bg-blue-50/40 dark:hover:bg-muted/25" : "hover:bg-slate-100/50 dark:hover:bg-slate-800/20",
+                              highlightRing,
+                            ].filter(Boolean).join(" ")}
+                            onClick={() => hasHistory && isMainRow && toggleExpand(originalGroup.productName)}
+                            title={hasHistory && isMainRow ? "Click to view transaction history" : ""}
+                          >
                         {/* Expand Icon */}
                         {!readOnly && (
                         <td className="h-14 px-3 py-2 align-middle text-center w-10">
-                          {hasHistory ? (
+                          {hasHistory && isMainRow ? (
                             <div className={`inline-flex items-center justify-center w-6 h-6 rounded-md transition-all duration-200 ${
                               isExpanded
                                 ? "bg-blue-500 text-white shadow-sm"
@@ -870,17 +1042,19 @@ export function InventoryTable({
                         {/* Product Name — left aligned, wide */}
                         <td className={`${readOnly ? "px-2.5 py-1.5" : "h-14 pl-6 pr-4 py-2"} font-medium text-sm text-foreground align-middle`}>
                           <div className="flex items-center gap-3 min-w-0 group/product hover:scale-[1.02] transition-transform">
-                            <img
+                            <Image
                               src={
                                 productImageMap[group.product_id] ||
                                 productNameImageMap[(group.productName || "").toLowerCase().trim()] ||
-                                itemImageMap[group.barcode] ||
+                                itemImageMap[batchBarcode] ||
                                 group.imageUrl ||
                                 "/placeholder.png"
                               }
                               alt={group.productName}
+                              width={40}
+                              height={40}
                               className="w-10 h-10 rounded-lg object-cover border bg-gray-50/50 shadow-sm shrink-0"
-                              onError={(e) => { e.currentTarget.src = "/placeholder.png" }}
+                              onError={(e: any) => { e.currentTarget.src = "/placeholder.png" }}
                             />
                             <span className="line-clamp-2 min-w-0" title={group.productName}>
                               {highlightMatch(group.productName, searchQuery)}
@@ -891,9 +1065,9 @@ export function InventoryTable({
                         {/* Barcode — left aligned, wide, mono */}
                         {!readOnly && (
                         <td className="h-14 px-4 py-2 align-middle">
-                          <div className="font-mono text-[12px] text-foreground/80 truncate" title={group.barcode}>
-                            {group.barcode
-                              ? highlightMatch(group.barcode, searchQuery)
+                          <div className="font-mono text-[12px] text-foreground/80 truncate" title={batchBarcode}>
+                            {batchBarcode
+                              ? highlightMatch(batchBarcode, searchQuery)
                               : <span className="text-muted-foreground">—</span>
                             }
                           </div>
@@ -909,17 +1083,23 @@ export function InventoryTable({
                           )}
                         </td>
 
-                        {/* Incoming Stock — right aligned */}
+                        {/* Incoming Stock — right aligned, show weight in kg */}
                         {!readOnly && (
                         <td className="h-14 px-4 py-2 align-middle text-right">
-                          <span className={`text-sm font-semibold ${
-                            group.totalIncoming > 0 ? "text-green-600 dark:text-green-400" : "text-muted-foreground font-normal"
-                          }`}>
-                            {formatNumber(group.totalIncoming)}
-                            <span className="text-[10px] font-normal opacity-70 ml-1">
-                              {group.unitType === "PACK" ? "pks" : "bx"}
-                            </span>
-                          </span>
+                          {(() => {
+                            const inWeight = group.incoming_weight ?? (group.production_weight ?? null)
+                            return (
+                              <span className={`text-sm font-semibold ${
+                                group.totalIncoming > 0 ? "text-green-600 dark:text-green-400" : "text-muted-foreground font-normal"
+                              }`}>
+                                {inWeight != null ? (
+                                  <>{formatWeight(inWeight)}<span className="text-[10px] font-normal opacity-70 ml-1">kg</span></>
+                                ) : (
+                                  <>{formatNumber(group.totalIncoming)}<span className="text-[10px] font-normal opacity-70 ml-1">kg</span></>
+                                )}
+                              </span>
+                            )
+                          })()}
                         </td>
                         )}
 
@@ -930,9 +1110,7 @@ export function InventoryTable({
                             group.totalOutgoing > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground font-normal"
                           }`}>
                             {formatNumber(group.totalOutgoing)}
-                            <span className="text-[10px] font-normal opacity-70 ml-1">
-                              {group.unitType === "PACK" ? "pks" : "bx"}
-                            </span>
+                            <span className="text-[10px] font-normal opacity-70 ml-1">kg</span>
                           </span>
                         </td>
                         )}
@@ -944,9 +1122,7 @@ export function InventoryTable({
                             group.totalGoodReturn > 0 ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground font-normal"
                           }`}>
                             {group.totalGoodReturn > 0 ? "+" : ""}{formatNumber(group.totalGoodReturn)}
-                            <span className="text-[10px] font-normal opacity-70 ml-1">
-                              {group.unitType === "PACK" ? "pks" : "bx"}
-                            </span>
+                            <span className="text-[10px] font-normal opacity-70 ml-1">kg</span>
                           </span>
                         </td>
                         )}
@@ -958,18 +1134,17 @@ export function InventoryTable({
                             group.totalDamageReturn > 0 ? "text-slate-500 dark:text-slate-400" : "text-muted-foreground font-normal"
                           }`}>
                             {formatNumber(group.totalDamageReturn)}
-                            <span className="text-[10px] font-normal opacity-70 ml-1">
-                              {group.unitType === "PACK" ? "pks" : "bx"}
-                            </span>
+                            <span className="text-[10px] font-normal opacity-70 ml-1">kg</span>
                           </span>
                         </td>
                         )}
 
-                        {/* Remaining Stock — right aligned, colored badge */}
+                        {/* Remaining Stock — right aligned, weight-based display */}
                         <td className={`${readOnly ? "px-2.5 py-1.5 text-center" : "h-14 px-4 py-2 text-right"} align-middle`}>
                           {(() => {
                             const stock = group.stockLeft;
-                            const unit = group.unitType === "PACK" ? "pks" : "bx";
+                            const remainingWeight = stock;
+                            const totalBoxes = Math.floor(remainingWeight / 25);
                             let colorClass = "text-green-700 dark:text-green-400";
                             let bgClass = "bg-green-50 dark:bg-green-950/20";
                             let dotClass = "bg-green-500";
@@ -985,12 +1160,32 @@ export function InventoryTable({
                             return (
                               <span className={`inline-flex items-center gap-1.5 font-bold text-sm px-2 py-0.5 rounded-md ${colorClass} ${bgClass}`}>
                                 <span className={`w-1.5 h-1.5 rounded-full ${dotClass} shrink-0`} />
-                                {formatNumber(stock)}
-                                <span className="text-[10px] font-normal opacity-75">{unit}</span>
+                                {formatWeight(remainingWeight)} kg
+                                {stock <= 0 && <span className="ml-1 text-[10px] uppercase tracking-wider font-black">(OUT OF STOCK)</span>}
+                                {remainingWeight >= 25 && <span className="text-[10px] font-normal opacity-75">({totalBoxes} boxes)</span>}
                               </span>
                             );
                           })()}
                         </td>
+
+                        {/* Archive Info — ONLY shown when isArchiveView is true */}
+                        {isArchiveView && (
+                          <td className="h-14 px-4 py-2 align-middle text-center">
+                            <div className="flex flex-col items-center gap-1">
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                group.archivedReason === "no_remaining_stock" ? "bg-red-50 text-red-700 border-red-200" :
+                                group.archivedReason === "expired" ? "bg-orange-50 text-orange-700 border-orange-200" :
+                                "bg-slate-50 text-slate-700 border-slate-200"
+                              }`}>
+                                {group.archivedReason === "no_remaining_stock" ? "No Stock" :
+                                 group.archivedReason === "expired" ? "Expired" : "Manual"}
+                              </span>
+                              <span className="text-[9px] text-muted-foreground whitespace-nowrap">
+                                {formatTxnDate(group.archivedAt) !== "\u2014" ? formatTxnDate(group.archivedAt) : ""}
+                              </span>
+                            </div>
+                          </td>
+                        )}
 
                         {/* Status — ONLY shown when readOnly is true */}
                         {readOnly && (
@@ -1067,15 +1262,6 @@ export function InventoryTable({
 
 
 
-                        {/* Unit — center aligned, narrow */}
-                        {!readOnly && (
-                        <td className="h-14 px-4 py-2 align-middle text-center whitespace-nowrap">
-                          <span className="text-[11px] font-medium text-foreground/60 uppercase tracking-wide">
-                            {group.unitType === "PACK" ? "Pack" : "Box"}
-                          </span>
-                        </td>
-                        )}
-
                         {/* Actions — sticky right, equal-gap buttons */}
                         {!readOnly && (
                         <td className="h-14 px-4 py-2 align-middle text-center whitespace-nowrap bg-inherit">
@@ -1083,24 +1269,25 @@ export function InventoryTable({
                             className="flex items-center justify-center gap-2"
                             onClick={(e) => e.stopPropagation()}
                           >
-                            {group.barcode && (
+                            {hasHistory && isMainRow && (
+                              <Button
+                                size="sm"
+                                className="h-8 px-2.5 gap-1.5 text-xs font-medium bg-violet-600 text-white hover:bg-violet-700 transition-colors shrink-0 shadow-sm"
+                                onClick={() => setTxnDialogProduct(originalGroup)}
+                                title="View Transaction History"
+                              >
+                                <History className="h-3.5 w-3.5 shrink-0" />
+                                Transactions
+                              </Button>
+                            )}
+                            {batchBarcode && (
                               <>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-8 px-2.5 gap-1.5 text-xs font-medium text-emerald-700 border-emerald-200 hover:text-emerald-800 hover:bg-emerald-50 hover:border-emerald-300 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-950/30 transition-colors shrink-0"
-                                  onClick={() => setBarcodeViewItem({ barcode: group.barcode, productName: group.productName, productionDate: formatTxnDate(group.productionDate) !== "\u2014" ? formatTxnDate(group.productionDate) : undefined, expiryDate: formatTxnDate(group.expiryDate) !== "\u2014" ? formatTxnDate(group.expiryDate) : undefined })}
-                                  title="Show Barcode"
-                                >
-                                  <Barcode className="h-3.5 w-3.5 shrink-0" />
-                                  Show
-                                </Button>
                                 <Button
                                   size="sm"
                                   variant="outline"
                                   className="h-8 px-2.5 gap-1.5 text-xs font-medium text-blue-700 border-blue-200 hover:text-blue-800 hover:bg-blue-50 hover:border-blue-300 dark:text-blue-400 dark:border-blue-800 dark:hover:bg-blue-950/30 transition-colors shrink-0"
                                   onClick={() => {
-                                    setBarcodeViewItem({ barcode: group.barcode, productName: group.productName, productionDate: formatTxnDate(group.productionDate) !== "\u2014" ? formatTxnDate(group.productionDate) : undefined, expiryDate: formatTxnDate(group.expiryDate) !== "\u2014" ? formatTxnDate(group.expiryDate) : undefined })
+                                    setBarcodeViewItem({ barcode: batchBarcode, productName: group.productName, productionDate: formatTxnDate(group.productionDate) !== "\u2014" ? formatTxnDate(group.productionDate) : undefined, expiryDate: formatTxnDate(group.expiryDate) !== "\u2014" ? formatTxnDate(group.expiryDate) : undefined })
                                     setTimeout(() => {
                                       const printBtn = document.querySelector('[data-barcode-print]') as HTMLButtonElement
                                       if (printBtn) printBtn.click()
@@ -1118,9 +1305,9 @@ export function InventoryTable({
                                     className="h-8 px-2.5 gap-1.5 text-xs font-medium text-amber-700 border-amber-200 hover:text-amber-800 hover:bg-amber-50 hover:border-amber-300 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-950/30 transition-colors shrink-0"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      const item = items.find((i: any) => i.barcode === group.barcode);
+                                      const item = items.find((i: any) => i.barcode === batchBarcode);
                                       if (item) {
-                                        setArchivingItem({ id: item.id, barcode: group.barcode, productName: group.productName, isRestore: false });
+                                        setArchivingItem({ id: item.id, barcode: batchBarcode, productName: group.productName, isRestore: false });
                                       } else {
                                         toast({ title: "Error", description: "Item not found in inventory.", variant: "destructive" });
                                       }
@@ -1137,9 +1324,9 @@ export function InventoryTable({
                                     className="h-8 px-2.5 gap-1.5 text-xs font-medium text-emerald-700 border-emerald-200 hover:text-emerald-800 hover:bg-emerald-50 hover:border-emerald-300 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-950/30 transition-colors shrink-0"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      const item = items.find((i: any) => i.barcode === group.barcode);
+                                      const item = items.find((i: any) => i.barcode === batchBarcode);
                                       if (item) {
-                                        setArchivingItem({ id: item.id, barcode: group.barcode, productName: group.productName, isRestore: true });
+                                        setArchivingItem({ id: item.id, barcode: batchBarcode, productName: group.productName, isRestore: true });
                                       } else {
                                         toast({ title: "Error", description: "Item not found in inventory.", variant: "destructive" });
                                       }
@@ -1156,34 +1343,8 @@ export function InventoryTable({
                         </td>
                         )}
                       </tr>
-
-                      {/* ═══ EXPANDED TRANSACTION HISTORY (TABLE FORMAT) ═══ */}
-                      {isExpanded && hasHistory && (
-                        <tr key={`${group.barcode}-expanded`}>
-                          <td colSpan={SUMMARY_COLUMNS.length} className="p-0">
-                            <div className="bg-slate-50/80 dark:bg-slate-900/30 border-y border-blue-200/60 dark:border-blue-800/40">
-                              {/* Sub-table header */}
-                              <div className="flex items-center gap-2 px-5 py-2.5 bg-blue-50/80 dark:bg-blue-950/20 border-b border-blue-100 dark:border-blue-900/40">
-                                <History className="h-3.5 w-3.5 text-blue-500" />
-                                <span className="text-xs font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wider">
-                                  Transaction History
-                                </span>
-                                <span className="text-[10px] text-blue-500/70 ml-1">
-                                  ({historyTransactions.length} {historyTransactions.length === 1 ? "record" : "records"})
-                                </span>
-                              </div>
-
-                              {/* Sub-table: Stacked transaction cards/rows */}
-                              <TransactionHistoryList 
-                                transactions={historyTransactions} 
-                                setCancellingItem={setCancellingItem}
-                                readOnly={readOnly}
-                              />
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </>
+                      )})}
+                    </Fragment>
                   )
                 })}
               </tbody>
@@ -1211,14 +1372,33 @@ export function InventoryTable({
 
         {/* ─── MOBILE / TABLET CARD VIEW ─────────────────────────────────── */}
         <div className="lg:hidden grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
-          {paginatedGroups.map((group) => {
-            const isExpanded = expandedBarcodes.has(group.barcode)
-            const historyTransactions = group.transactions
+          {paginatedGroups.map((originalGroup) => {
+            const isExpanded = expandedBarcodes.has(originalGroup.productName)
+            const historyTransactions = originalGroup.transactions
             const hasHistory = historyTransactions.length > 0
 
-            // Remaining stock status
+            const batches = originalGroup.batches && originalGroup.batches.length > 0
+              ? originalGroup.batches
+              : [originalGroup]
+            const mainBatch = batches[0]
+
+            const rowsToRender = isExpanded && batches.length > 1
+              ? batches
+              : [mainBatch];
+
+            return (
+              <Fragment key={originalGroup.productName}>
+                {rowsToRender.map((rowData: any, rowIndex: number) => {
+                  const isMainRow = rowIndex === 0;
+                  const batchBarcode = rowData.barcode || rowData.id || ""
+                  const group = isMainRow
+                    ? { ...originalGroup, barcode: batchBarcode, expiryDate: rowData.expiryDate, dateAdded: rowData.dateAdded, productionDate: rowData.productionDate, supplierName: rowData.supplierName, production_weight: rowData.production_weight, packing_weight: rowData.packing_weight, weight_difference: rowData.weight_difference, incoming_weight: rowData.incoming_weight ?? originalGroup.incoming_weight, totalIncoming: rowData.totalIncoming ?? originalGroup.totalIncoming, totalOutgoing: rowData.totalOutgoing ?? originalGroup.totalOutgoing, stockLeft: isExpanded ? (rowData.stockLeft ?? originalGroup.stockLeft) : originalGroup.stockLeft }
+                    : { ...rowData, productName: originalGroup.productName, barcode: batchBarcode, stockLeft: rowData.stockLeft ?? rowData.qty }
+
+                  // Remaining stock status
             const stock = group.stockLeft
-            const unitShort = group.unitType === "PACK" ? "pk" : "bx"
+            const mobileWeight = stock
+            const mobileBoxes = Math.floor(mobileWeight / 25)
             let stockColorClass = "text-green-700 dark:text-green-400"
             let stockBgClass = "bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-800"
             let stockDotClass = "bg-green-500"
@@ -1234,15 +1414,17 @@ export function InventoryTable({
 
             return (
               <div
-                key={group.barcode}
-                id={`inventory-item-mobile-${group.barcode}`}
-                ref={(el) => { if (el) itemRowRefs.current.set(group.barcode, el) }}
+                key={isMainRow ? originalGroup.productName : `${originalGroup.productName}-batch-${group.barcode}`}
+                id={isMainRow ? `inventory-item-mobile-${originalGroup.productName.replace(/\\s+/g, '-')}` : `inventory-item-mobile-${group.barcode}`}
+                ref={(el) => { if (el && isMainRow) itemRowRefs.current.set(originalGroup.productName, el) }}
                 className={[
                   "inventory-mobile-card relative rounded-xl overflow-hidden transition-all duration-300 border",
-                  isExpanded
-                    ? "border-blue-300 dark:border-blue-700 shadow-lg shadow-blue-500/10 ring-1 ring-blue-200/50 dark:ring-blue-800/30 md:col-span-2"
-                    : "border-border/60 shadow-sm hover:shadow-md hover:border-blue-200/80 dark:hover:border-blue-800/60",
-                  "bg-white dark:bg-card",
+                  !isMainRow
+                    ? "border-slate-300 dark:border-slate-700 md:col-span-2 bg-slate-50/40 dark:bg-slate-900/10"
+                    : isExpanded
+                      ? "border-blue-300 dark:border-blue-700 shadow-lg shadow-blue-500/10 ring-1 ring-blue-200/50 dark:ring-blue-800/30 md:col-span-2"
+                      : "border-border/60 shadow-sm hover:shadow-md hover:border-blue-200/80 dark:hover:border-blue-800/60",
+                  isMainRow ? "bg-white dark:bg-card" : "",
                 ].join(" ")}
               >
                 {/* Accent stripe — top indicator */}
@@ -1256,9 +1438,9 @@ export function InventoryTable({
                 <div
                   className={[
                     "px-3 pt-3 pb-2 transition-colors",
-                    hasHistory ? "cursor-pointer active:bg-blue-50/40 dark:active:bg-blue-950/30" : "",
+                    hasHistory && isMainRow ? "cursor-pointer active:bg-blue-50/40 dark:active:bg-blue-950/30" : "",
                   ].join(" ")}
-                  onClick={() => hasHistory && toggleExpand(group.barcode)}
+                  onClick={() => hasHistory && isMainRow && toggleExpand(originalGroup.productName)}
                 >
                   <div className="flex items-start justify-between gap-2">
                     {/* Left: Info */}
@@ -1282,13 +1464,13 @@ export function InventoryTable({
                       {/* Barcode — small mono text */}
                       {!readOnly && (
                       <p className="text-[10px] sm:text-[11px] text-muted-foreground font-mono mt-1 ml-7 tracking-wide">
-                        {highlightMatch(group.barcode, searchQuery)}
+                        {highlightMatch(batchBarcode, searchQuery)}
                       </p>
                       )}
                     </div>
 
                     {/* Right: Expand toggle */}
-                    {hasHistory && (
+                    {hasHistory && isMainRow && (
                       <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-all duration-200 shrink-0 mt-0.5 ${
                         isExpanded
                           ? "bg-blue-500 text-white shadow-md shadow-blue-500/25"
@@ -1311,9 +1493,12 @@ export function InventoryTable({
                     <div className="relative flex flex-col items-center justify-center rounded-lg border border-green-200/80 dark:border-green-800/40 bg-green-50/60 dark:bg-green-950/20 py-1.5 sm:py-2 px-1.5">
                       <span className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider text-green-600/80 dark:text-green-400/70 mb-0.5">In</span>
                       <span className="text-sm sm:text-base font-bold text-green-700 dark:text-green-400 leading-tight">
-                        {group.totalIncoming > 0 ? formatNumber(group.totalIncoming) : "0"}
+                        {(() => {
+                          const inW = group.incoming_weight ?? group.production_weight ?? null
+                          return inW != null ? formatWeight(inW) : (group.totalIncoming > 0 ? formatNumber(group.totalIncoming) : "0")
+                        })()}
                       </span>
-                      <span className="text-[8px] sm:text-[9px] text-green-600/60 dark:text-green-400/50 font-medium">{unitShort}</span>
+                      <span className="text-[8px] sm:text-[9px] text-green-600/60 dark:text-green-400/50 font-medium">kg</span>
                     </div>
                     )}
 
@@ -1324,11 +1509,11 @@ export function InventoryTable({
                       <span className="text-sm sm:text-base font-bold text-red-700 dark:text-red-400 leading-tight">
                         {group.totalOutgoing > 0 ? formatNumber(group.totalOutgoing) : "0"}
                       </span>
-                      <span className="text-[8px] sm:text-[9px] text-red-600/60 dark:text-red-400/50 font-medium">{unitShort}</span>
+                      <span className="text-[8px] sm:text-[9px] text-red-600/60 dark:text-red-400/50 font-medium">kg</span>
                     </div>
                     )}
 
-                    {/* Remaining — Dynamic badge */}
+                    {/* Remaining — Dynamic badge, weight-based */}
                     <div className={`relative flex flex-col items-center justify-center rounded-lg border py-1.5 sm:py-2 px-1.5 ${stockBgClass}`}>
                       <span className={`text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider mb-0.5 ${
                         stock <= 0 ? "text-red-600/80 dark:text-red-400/70" :
@@ -1338,19 +1523,35 @@ export function InventoryTable({
                       <div className="flex items-center gap-0.5">
                         <span className={`w-1.5 h-1.5 rounded-full ${stockDotClass} shrink-0`} />
                         <span className={`text-sm sm:text-base font-bold leading-tight ${stockColorClass}`}>
-                          {formatNumber(stock)}
+                          {formatWeight(mobileWeight)} kg
+                          {stock <= 0 && <span className="block text-[8px] uppercase tracking-wider font-black">(OUT OF STOCK)</span>}
                         </span>
                       </div>
                       <span className={`text-[8px] sm:text-[9px] font-medium ${
                         stock <= 0 ? "text-red-600/60 dark:text-red-400/50" :
                         stock < 10 ? "text-amber-600/60 dark:text-amber-400/50" :
                         "text-green-600/60 dark:text-green-400/50"
-                      }`}>{unitShort}</span>
+                      }`}>{mobileWeight >= 25 ? `(${mobileBoxes} boxes)` : ""}</span>
                     </div>
                   </div>
 
-                  {/* ═══ ADDITIONAL DETAILS — Expiry ═══ */}
+                  {/* ═══ ADDITIONAL DETAILS — Expiry & Archive ═══ */}
                   <div className="grid grid-cols-1 gap-1.5 mt-1.5">
+                    {isArchiveView && (
+                      <div className="flex items-center gap-1.5 rounded-lg bg-red-50/80 dark:bg-red-950/20 border border-red-200/60 dark:border-red-900/40 px-2 py-1.5">
+                        <Archive className="h-3 w-3 text-red-500 shrink-0" />
+                        <div className="min-w-0">
+                          <span className="text-[8px] sm:text-[9px] uppercase tracking-wider text-red-600/80 font-semibold block leading-none mb-0.5">Archive Reason</span>
+                          <span className="text-[11px] sm:text-xs font-semibold text-red-700">
+                            {group.archivedReason === "no_remaining_stock" ? "No Stock" :
+                             group.archivedReason === "expired" ? "Expired" : "Manual"}
+                             <span className="text-[9px] ml-1 font-normal text-red-600/70">
+                               ({formatTxnDate(group.archivedAt) !== "\u2014" ? formatTxnDate(group.archivedAt) : ""})
+                             </span>
+                          </span>
+                        </div>
+                      </div>
+                    )}
                     <div className="flex items-center gap-1.5 rounded-lg bg-slate-50/80 dark:bg-slate-800/30 border border-slate-200/60 dark:border-slate-700/40 px-2 py-1.5">
                       <svg className="h-3 w-3 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -1400,26 +1601,29 @@ export function InventoryTable({
                 </div>
 
                   {/* ═══ ACTIONS — Show Barcode + Print (touch-friendly) ═══ */}
-                  {!readOnly && group.barcode && (
+                  {!readOnly && (batchBarcode || hasHistory) && isMainRow && (
                     <div className="px-3 pb-3 pt-0.5">
-                      <div className="flex items-center gap-1.5">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="flex-1 h-9 sm:h-10 rounded-lg gap-1.5 text-[11px] sm:text-sm font-semibold text-emerald-700 border-emerald-200/80 bg-emerald-50/40 hover:bg-emerald-100/60 hover:text-emerald-800 hover:border-emerald-300 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40 transition-all active:scale-[0.98]"
-                          onClick={(e) => { e.stopPropagation(); setBarcodeViewItem({ barcode: group.barcode, productName: group.productName, productionDate: formatTxnDate(group.productionDate) !== "\u2014" ? formatTxnDate(group.productionDate) : undefined, expiryDate: formatTxnDate(group.expiryDate) !== "\u2014" ? formatTxnDate(group.expiryDate) : undefined }) }}
-                          title="Show Barcode"
-                        >
-                          <Barcode className="h-3.5 w-3.5" />
-                          Barcode
-                        </Button>
+                      <div className="flex flex-col gap-1.5">
+                        {hasHistory && (
+                          <Button
+                            size="sm"
+                            className="w-full h-9 sm:h-10 rounded-lg gap-1.5 text-[11px] sm:text-sm font-semibold bg-violet-600 text-white hover:bg-violet-700 shadow-md transition-all active:scale-[0.98]"
+                            onClick={(e) => { e.stopPropagation(); setTxnDialogProduct(originalGroup) }}
+                            title="View Transactions"
+                          >
+                            <History className="h-3.5 w-3.5" />
+                            Transactions
+                          </Button>
+                        )}
+                        {batchBarcode && (
+                        <div className="flex items-center gap-1.5">
                         <Button
                           size="sm"
                           variant="outline"
                           className="flex-1 h-9 sm:h-10 rounded-lg gap-1.5 text-[11px] sm:text-sm font-semibold text-blue-700 border-blue-200/80 bg-blue-50/40 hover:bg-blue-100/60 hover:text-blue-800 hover:border-blue-300 dark:text-blue-400 dark:border-blue-800 dark:bg-blue-950/20 dark:hover:bg-blue-950/40 transition-all active:scale-[0.98]"
                           onClick={(e) => {
                             e.stopPropagation()
-                            setBarcodeViewItem({ barcode: group.barcode, productName: group.productName, productionDate: formatTxnDate(group.productionDate) !== "\u2014" ? formatTxnDate(group.productionDate) : undefined, expiryDate: formatTxnDate(group.expiryDate) !== "\u2014" ? formatTxnDate(group.expiryDate) : undefined })
+                            setBarcodeViewItem({ barcode: batchBarcode, productName: group.productName, productionDate: formatTxnDate(group.productionDate) !== "\u2014" ? formatTxnDate(group.productionDate) : undefined, expiryDate: formatTxnDate(group.expiryDate) !== "\u2014" ? formatTxnDate(group.expiryDate) : undefined })
                             setTimeout(() => {
                               const printBtn = document.querySelector('[data-barcode-print]') as HTMLButtonElement
                               if (printBtn) printBtn.click()
@@ -1437,9 +1641,9 @@ export function InventoryTable({
                             className="flex-1 h-9 sm:h-10 rounded-lg gap-1.5 text-[11px] sm:text-sm font-semibold text-amber-700 border-amber-200/80 bg-amber-50/40 hover:bg-amber-100/60 hover:text-amber-800 hover:border-amber-300 dark:text-amber-400 dark:border-amber-800 dark:bg-amber-950/20 dark:hover:bg-amber-950/40 transition-all active:scale-[0.98]"
                             onClick={(e) => {
                               e.stopPropagation();
-                              const item = items.find(i => i.barcode === group.barcode);
+                              const item = items.find(i => i.barcode === batchBarcode);
                               if (item) {
-                                setArchivingItem({ id: item.id, barcode: group.barcode, productName: group.productName, isRestore: false });
+                                setArchivingItem({ id: item.id, barcode: batchBarcode, productName: group.productName, isRestore: false });
                               } else {
                                 toast({ title: "Error", description: "Item not found in inventory.", variant: "destructive" });
                               }
@@ -1456,9 +1660,9 @@ export function InventoryTable({
                             className="flex-1 h-9 sm:h-10 rounded-lg gap-1.5 text-[11px] sm:text-sm font-semibold text-emerald-700 border-emerald-200/80 bg-emerald-50/40 hover:bg-emerald-100/60 hover:text-emerald-800 hover:border-emerald-300 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40 transition-all active:scale-[0.98]"
                             onClick={(e) => {
                               e.stopPropagation();
-                              const item = items.find(i => i.barcode === group.barcode);
+                              const item = items.find(i => i.barcode === batchBarcode);
                               if (item) {
-                                setArchivingItem({ id: item.id, barcode: group.barcode, productName: group.productName, isRestore: true });
+                                setArchivingItem({ id: item.id, barcode: batchBarcode, productName: group.productName, isRestore: true });
                               } else {
                                 toast({ title: "Error", description: "Item not found in inventory.", variant: "destructive" });
                               }
@@ -1469,32 +1673,16 @@ export function InventoryTable({
                             Restore
                           </Button>
                         )}
+                        </div>
+                        )}
                       </div>
                     </div>
                   )}
 
-                {/* ═══ EXPANDED: Transaction History ═══ */}
-                {isExpanded && hasHistory && (
-                  <div className="border-t border-blue-200/60 dark:border-blue-800/40 bg-slate-50/60 dark:bg-slate-900/20">
-                    <div className="flex items-center gap-2 px-3 py-2 bg-blue-50/70 dark:bg-blue-950/20 border-b border-blue-100/60 dark:border-blue-900/40">
-                      <History className="h-3 w-3 text-blue-500" />
-                      <span className="text-[10px] sm:text-[11px] font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wider">
-                        Transaction History
-                      </span>
-                      <span className="text-[9px] sm:text-[10px] text-blue-500/60 dark:text-blue-400/40 ml-0.5">
-                        ({historyTransactions.length} {historyTransactions.length === 1 ? "record" : "records"})
-                      </span>
-                    </div>
-                    <div className="bg-white/60 dark:bg-black/10">
-                      <TransactionHistoryList 
-                        transactions={historyTransactions} 
-                        setCancellingItem={setCancellingItem}
-                        readOnly={readOnly}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
+                </div>
+              )
+            })}
+              </Fragment>
             )
           })}
         </div>
@@ -1663,7 +1851,9 @@ export function InventoryTable({
             if (archivingItem.isRestore) {
               await FirebaseService.updateDocument("inventory", archivingItem.id, {
                 isArchived: false,
-                archivedAt: null
+                archivedAt: null,
+                archivedReason: null,
+                status: "active"
               })
               toast({
                 title: "✅ Item Restored",
@@ -1672,7 +1862,9 @@ export function InventoryTable({
             } else {
               await FirebaseService.updateDocument("inventory", archivingItem.id, {
                 isArchived: true,
-                archivedAt: serverTimestamp()
+                archivedAt: serverTimestamp(),
+                archivedReason: "manual",
+                status: "archived"
               })
               toast({
                 title: "✅ Item Archived",
@@ -1706,6 +1898,43 @@ export function InventoryTable({
         )}
       </ConfirmationDialog>
 
+      {/* ─── TRANSACTION HISTORY DIALOG ──────────────────────────────────────── */}
+      <Dialog open={!!txnDialogProduct} onOpenChange={(open) => { if (!open) setTxnDialogProduct(null) }}>
+        <DialogContent className="!w-[95vw] sm:!w-auto max-w-[680px] max-h-[85vh] flex flex-col p-0 gap-0 overflow-hidden">
+          <DialogHeader className="px-5 py-4 border-b border-border/40 shrink-0">
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <History className="h-4 w-4 text-violet-500" />
+              <span>Transaction History</span>
+              {txnDialogProduct && (
+                <span className="text-muted-foreground font-normal text-sm ml-1">— {txnDialogProduct.productName}</span>
+              )}
+            </DialogTitle>
+            {txnDialogProduct && (
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {txnDialogProduct.transactions.length} {txnDialogProduct.transactions.length === 1 ? "record" : "records"} found
+              </p>
+            )}
+          </DialogHeader>
+          <div className="overflow-y-auto flex-1">
+            {txnDialogProduct && txnDialogProduct.transactions.length > 0 ? (
+              <TransactionHistoryList
+                transactions={txnDialogProduct.transactions}
+                setCancellingItem={(txn) => { setCancellingItem(txn); setTxnDialogProduct(null) }}
+                readOnly={readOnly}
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <History className="h-8 w-8 mb-3 opacity-30" />
+                <p className="text-sm">No transactions found.</p>
+              </div>
+            )}
+          </div>
+          <div className="px-5 py-3 border-t border-border/40 shrink-0 flex justify-end">
+            <Button variant="outline" size="sm" onClick={() => setTxnDialogProduct(null)}>Close</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <BarcodeModal
         open={!!barcodeViewItem}
         onOpenChange={(open) => { if (!open) setBarcodeViewItem(null) }}
@@ -1732,8 +1961,8 @@ export function InventoryTable({
                   <span className="font-medium text-slate-800 text-right max-w-[200px] truncate">{badReturnDetailsView.productName}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Quantity</span>
-                  <span className="font-bold text-red-600">{badReturnDetailsView.quantity}</span>
+                  <span className="text-slate-500">Weight</span>
+                  <span className="font-bold text-red-600">{badReturnDetailsView.quantity} kg</span>
                 </div>
               </div>
               {badReturnDetailsView.details ? (

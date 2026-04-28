@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo } from "react"
+import { useRouter, usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -24,11 +25,14 @@ interface ExpiryNotification {
 interface LowStockNotification {
   item: InventoryItem
   stockLevel: number
+  productName?: string
 }
 
 type NotificationFilter = "all" | "low-stock" | "expired" | "expiring"
 
 export function ExpiryNotifications() {
+  const router = useRouter()
+  const pathname = usePathname()
   const [expiryNotifications, setExpiryNotifications] = useState<ExpiryNotification[]>([])
   const [lowStockNotifications, setLowStockNotifications] = useState<LowStockNotification[]>([])
   const [loading, setLoading] = useState(true)
@@ -52,8 +56,9 @@ export function ExpiryNotifications() {
       e.stopPropagation()
       e.preventDefault()
     }
-    if (!readIds.includes(id)) {
-      const newReadIds = [...readIds, id]
+    const cleanId = id.replace(/[\s\W]+/g, "-").toLowerCase();
+    if (!readIds.includes(cleanId)) {
+      const newReadIds = [...readIds, cleanId]
       setReadIds(newReadIds)
       localStorage.setItem("readExpiryNotifications", JSON.stringify(newReadIds))
     }
@@ -65,7 +70,7 @@ export function ExpiryNotifications() {
       e.preventDefault()
     }
     const currentIds = [
-      ...lowStockNotifications.map(n => `low-stock-${n.item.id}`),
+      ...lowStockNotifications.map(n => `low-stock-${(n.productName || n.item.id).replace(/[\s\W]+/g, "-").toLowerCase()}`),
       ...expiryNotifications.map(n => `expiry-${n.status}-${n.item.id}`)
     ]
     const combined = Array.from(new Set([...readIds, ...currentIds]))
@@ -107,43 +112,59 @@ export function ExpiryNotifications() {
         const today = new Date()
         today.setHours(0, 0, 0, 0)
 
+        // AGGREGATION STEP: Group by Product Name (Category + Subcategory)
+        const productAggregation = new Map<string, {
+          productName: string,
+          totalStock: number,
+          items: any[]
+        }>();
+
+        normalizedItems.forEach((item: any) => {
+          const stockBase = Number(item.stock) || 0
+          const incoming = Number(item.incoming) || 0
+          const outgoing = Number(item.outgoing) || 0
+          const returned = Number(item.returned) || 0
+          const totalStock = stockBase + incoming - outgoing + returned
+
+          const productName = item.subcategory 
+            ? `${item.category} - ${item.subcategory}`
+            : item.category || "Unknown Product";
+
+          const existing = productAggregation.get(productName) || { productName, totalStock: 0, items: [] as any[] };
+          existing.totalStock += totalStock;
+          existing.items.push(item);
+          productAggregation.set(productName, existing);
+        });
+
         const expiredItems: ExpiryNotification[] = []
         const expiringTodayItems: ExpiryNotification[] = []
         const expiringSoonItems: ExpiryNotification[] = []
         const lowStockItems: LowStockNotification[] = []
 
+        // Process Aggregated Low Stock
+        productAggregation.forEach((data) => {
+          // Trigger per product when total <= 50 kg and > 0
+          if (data.totalStock <= 50 && data.totalStock > 0) {
+            // Pick the oldest batch for barcode reference (FIFO)
+            const sortedItems = [...data.items].sort((a, b) => {
+              const dateA = a.createdAt || a.updatedAt || new Date(0)
+              const dateB = b.createdAt || b.updatedAt || new Date(0)
+              const timeA = dateA instanceof Date ? dateA.getTime() : (dateA?.toDate ? dateA.toDate().getTime() : new Date(dateA).getTime())
+              const timeB = dateB instanceof Date ? dateB.getTime() : (dateB?.toDate ? dateB.toDate().getTime() : new Date(dateB).getTime())
+              return timeA - timeB
+            })
+
+            lowStockItems.push({
+              item: sortedItems[0], // Reference item from oldest batch
+              stockLevel: data.totalStock,
+              productName: data.productName
+            });
+          }
+        });
+
+        // Process Expiry per Item (stays as is)
         normalizedItems.forEach((item: any) => {
           try {
-            // Use normalized fields for calculations
-            const stockBase = Number(item.stock) || 0
-            const incoming = Number(item.incoming) || 0
-            const outgoing = Number(item.outgoing) || 0
-            const returned = Number(item.returned) || 0
-
-            // Calculate total available stock: base stock + incoming - outgoing + returned
-            const totalStock = stockBase + incoming - outgoing + returned
-
-            // Debug logging for low stock
-            if (totalStock < 20) {
-              console.log("[Notifications] Low stock item found:", {
-                id: item.id,
-                barcode: item.barcode,
-                category: item.category,
-                stock: stockBase,
-                incoming,
-                outgoing,
-                returned,
-                totalStock
-              })
-            }
-
-            // Check if stock is low (below 20 units)
-            if (totalStock < 20 && totalStock >= 0) {
-              lowStockItems.push({
-                item,
-                stockLevel: totalStock,
-              })
-            }
 
             // Check for expiry notifications - use normalized expiry field
             const expiryDate = item.expiryDate || item.expirationDate
@@ -276,7 +297,7 @@ export function ExpiryNotifications() {
               outgoing,
               returned,
               totalStock: total,
-              isLowStock: total < 20,
+              isLowStock: total <= 50,
               hasExpiryDate: !!expiry,
               expiryDate: expiry
             })
@@ -379,13 +400,31 @@ export function ExpiryNotifications() {
     }
   }
 
+  const handleNavigateToItem = (barcode: string, productName?: string) => {
+    if (pathname !== "/inventory") {
+      const url = productName 
+        ? `/inventory?product=${encodeURIComponent(productName)}&barcode=${barcode}`
+        : `/inventory?barcode=${barcode}`
+      router.push(url)
+      return
+    }
+
+    // If already on inventory page, use the global handler if available
+    // or set the URL search params which the dashboard will listen to
+    const params = new URLSearchParams(window.location.search)
+    if (productName) params.set("product", productName)
+    params.set("barcode", barcode)
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }
+
   const totalNotifications = expiryNotifications.length + lowStockNotifications.length
   const filteredData = getFilteredNotifications()
 
   const unreadCount = useMemo(() => {
     let unread = 0;
     lowStockNotifications.forEach(n => {
-      if (!readIds.includes(`low-stock-${n.item.id}`)) unread++;
+      const idStr = `low-stock-${(n.productName || n.item.id).replace(/[\s\W]+/g, "-").toLowerCase()}`
+      if (!readIds.includes(idStr)) unread++;
     });
     expiryNotifications.forEach(n => {
       if (!readIds.includes(`expiry-${n.status}-${n.item.id}`)) unread++;
@@ -485,17 +524,22 @@ export function ExpiryNotifications() {
                     Low Stock ({lowStockNotifications.length})
                   </DropdownMenuLabel>
                   {lowStockNotifications.map((notification) => {
-                    const categoryDisplay = notification.item.subcategory
+                    const categoryDisplay = notification.productName || (notification.item.subcategory
                       ? `${notification.item.category} - ${notification.item.subcategory}`
-                      : notification.item.category
-                    const idStr = `low-stock-${notification.item.id}`
+                      : notification.item.category)
+                    const idStr = `low-stock-${categoryDisplay.replace(/[\s\W]+/g, "-").toLowerCase()}`
                     const isRead = readIds.includes(idStr)
 
                     return (
                       <DropdownMenuItem 
                         key={idStr} 
                         className={`flex items-start gap-3 p-3 cursor-pointer rounded-lg m-1 transition-all ${isRead ? 'bg-transparent' : 'bg-blue-50/60 dark:bg-gray-800'}`}
-                        onClick={() => markAsRead(idStr)}
+                        onClick={() => {
+                          markAsRead(idStr)
+                          if (notification.item.barcode) {
+                            handleNavigateToItem(notification.item.barcode, categoryDisplay)
+                          }
+                        }}
                       >
                         <div className="flex-shrink-0 mt-0.5">
                           <TrendingDown className="h-4 w-4 text-red-500" />
@@ -508,11 +552,14 @@ export function ExpiryNotifications() {
                             {!isRead && <span className="h-1.5 w-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.8)] animate-pulse flex-shrink-0" />}
                           </div>
                           <div className="text-xs text-muted-foreground truncate">
-                            Barcode: {notification.item.barcode}
+                            Barcode: {notification.item.barcode || "N/A"}
                           </div>
                           <div className="flex items-center gap-2 mt-1">
                             <Badge variant="destructive" className="text-xs">
-                              {notification.stockLevel} units left
+                              {(() => {
+                                const boxes = Math.ceil(notification.stockLevel / 25)
+                                return `${boxes} box${boxes > 1 ? "es" : ""} remaining (${notification.stockLevel} kg)`
+                              })()}
                             </Badge>
 
                           </div>
@@ -541,7 +588,12 @@ export function ExpiryNotifications() {
                       <DropdownMenuItem 
                          key={idStr} 
                          className={`flex items-start gap-3 p-3 cursor-pointer rounded-lg m-1 transition-all ${isRead ? 'bg-transparent' : 'bg-blue-50/60 dark:bg-gray-800'}`}
-                         onClick={() => markAsRead(idStr)}
+                         onClick={() => {
+                           markAsRead(idStr)
+                           if (notification.item.barcode) {
+                             handleNavigateToItem(notification.item.barcode, categoryDisplay)
+                           }
+                         }}
                       >
                         <div className="flex-shrink-0 mt-0.5">{getStatusIcon(notification.status)}</div>
                         <div className="flex-1 min-w-0">
@@ -585,7 +637,12 @@ export function ExpiryNotifications() {
                       <DropdownMenuItem 
                          key={idStr} 
                          className={`flex items-start gap-3 p-3 cursor-pointer rounded-lg m-1 transition-all ${isRead ? 'bg-transparent' : 'bg-blue-50/60 dark:bg-gray-800'}`}
-                         onClick={() => markAsRead(idStr)}
+                         onClick={() => {
+                           markAsRead(idStr)
+                           if (notification.item.barcode) {
+                             handleNavigateToItem(notification.item.barcode, categoryDisplay)
+                           }
+                         }}
                       >
                         <div className="flex-shrink-0 mt-0.5">{getStatusIcon(notification.status)}</div>
                         <div className="flex-1 min-w-0">

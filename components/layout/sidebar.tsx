@@ -10,15 +10,23 @@ import Image from "next/image"
 import { useSidebar } from "./sidebar-context"
 import { useAuth } from "@/hooks/use-auth"
 import { getMenuItemsForRole } from "@/lib/role-config"
+import { useNotifications } from "@/hooks/useNotifications"
 
 export function Sidebar() {
   const [isOpen, setIsOpen] = useState(false)
   const pathname = usePathname()
   const { isCollapsed, toggleSidebar } = useSidebar()
   const { user } = useAuth()
+  const { notifications } = useNotifications(user?.role)
 
   // Role-based menu filtering — only show items the user's role can access
   const filteredNavigation = getMenuItemsForRole(user?.role)
+
+  const hasUnreadOrders = notifications.some(n => 
+    !n.isRead && 
+    (n.type?.toLowerCase() === "new_order" || n.title?.toLowerCase().includes("new order"))
+  )
+  const showOrdersBadge = hasUnreadOrders && !pathname?.startsWith("/orders")
 
   return (
     <>
@@ -84,14 +92,15 @@ export function Sidebar() {
           )}>
             {filteredNavigation.map((item) => {
               const isActive = item.href === "/" ? pathname === "/" : pathname?.startsWith(item.href)
-              return (
+              const isOrdersTab = item.label === "Orders"
 
+              return (
                 <Link
                   key={item.label}
                   href={item.href}
                   title={isCollapsed ? item.label : undefined}
                   className={cn(
-                    "flex items-center text-sm font-medium rounded-lg transition-all duration-200",
+                    "flex items-center text-sm font-medium rounded-lg transition-all duration-200 relative",
                     isCollapsed ? "px-2 py-3 justify-center" : "px-4 py-3",
                     isActive
                       ? "bg-sky-500 text-white shadow-md"
@@ -99,8 +108,25 @@ export function Sidebar() {
                   )}
                   onClick={() => setIsOpen(false)}
                 >
-                  <item.icon className={cn("h-5 w-5", !isCollapsed && "mr-3")} />
-                  {!isCollapsed && <span>{item.label}</span>}
+                  <div className="relative flex items-center justify-center">
+                    <item.icon className={cn("h-5 w-5", !isCollapsed && "mr-3")} />
+                    {isOrdersTab && showOrdersBadge && (
+                      <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500 border border-white dark:border-gray-900"></span>
+                      </span>
+                    )}
+                  </div>
+                  {!isCollapsed && (
+                    <div className="flex flex-1 items-center justify-between">
+                      <span>{item.label}</span>
+                      {isOrdersTab && showOrdersBadge && (
+                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+                          !
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </Link>
               )
             })}

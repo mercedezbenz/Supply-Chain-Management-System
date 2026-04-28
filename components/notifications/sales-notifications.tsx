@@ -90,7 +90,7 @@ export function SalesNotifications({ userRole }: { userRole?: string }) {
       }
       return true
     })
-  }, [normalizedNotifications, activeFilter])
+  }, [normalizedNotifications, activeFilter, userRole])
 
   const unreadCount = filteredNotifications.filter(n => !n.isRead).length
 
@@ -211,7 +211,7 @@ export function SalesNotifications({ userRole }: { userRole?: string }) {
             type="button"
             className="relative inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground h-8 w-8 p-0"
           >
-            <Bell className="h-5 w-5" />
+            <Bell className={unreadCount > 0 ? "h-5 w-5 animate-pulse" : "h-5 w-5"} />
             {unreadCount > 0 && (
               <Badge
                 variant="destructive"
@@ -277,7 +277,7 @@ export function SalesNotifications({ userRole }: { userRole?: string }) {
                  <div className="h-12 w-12 rounded-full bg-gray-100 dark:bg-secondary/50 flex items-center justify-center mb-3">
                     <CheckCircle2 className="h-6 w-6 text-gray-400" />
                  </div>
-                 <p className="font-medium text-gray-900 dark:text-foreground">You're all caught up!</p>
+                 <p className="font-medium text-gray-900 dark:text-foreground">You&apos;re all caught up!</p>
                  <p className="text-xs mt-1">No pending notifications.</p>
               </div>
             ) : (

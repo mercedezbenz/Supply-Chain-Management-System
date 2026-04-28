@@ -107,7 +107,7 @@ export function GlobalOrderListener() {
             try {
               await addDoc(collection(db, "notifications"), {
                 title: "New Order Received",
-                message: `Order #${orderId.slice(-6).toUpperCase()} from ${customerName} is ready for review.`,
+                message: `${customerName} placed an order`,
                 type: "new_order",
                 targetRole: "sales",
                 orderId: orderId,
@@ -119,8 +119,7 @@ export function GlobalOrderListener() {
               playNotificationSound();
 
               // Show Toast
-              toast.success("New Order Received", {
-                description: `Order from ${customerName} has been placed.`,
+              toast.success(`🛒 New order received from ${customerName}`, {
                 duration: 8000,
               });
             } catch (err) {

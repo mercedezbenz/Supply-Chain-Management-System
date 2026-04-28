@@ -269,7 +269,7 @@ export function OrderDetails({ orderId }: OrderDetailsProps) {
           <Package className="h-7 w-7 text-gray-300" />
         </div>
         <h2 className="text-xl font-bold text-gray-800 dark:text-foreground mb-1">Order Not Found</h2>
-        <p className="text-sm text-gray-400 mb-6">This order may have been deleted or doesn't exist.</p>
+        <p className="text-sm text-gray-400 mb-6">This order may have been deleted or doesn&apos;t exist.</p>
         <Button variant="outline" onClick={() => router.push("/orders")}>
           <ArrowLeft className="h-4 w-4 mr-2" /> Back to Orders
         </Button>

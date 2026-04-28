@@ -78,8 +78,8 @@ export function Header() {
             {/* Notifications based on role */}
             {user?.role === "sales" && (
               <>
-                <ChatNotifications userRole={user.role} />
                 <SalesNotifications userRole={user.role} />
+                <ChatNotifications userRole={user.role} />
               </>
             )}
             {user?.role === "encoder" && (

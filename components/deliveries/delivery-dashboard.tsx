@@ -439,7 +439,7 @@ export function DeliveryDashboard() {
       <div className="min-h-screen flex flex-col items-center justify-center bg-background p-6 text-white text-center">
         <AlertCircle className="h-12 w-12 text-red-500 mb-4" />
         <h1 className="text-xl font-bold mb-2">User Profile Error</h1>
-        <p className="text-muted-foreground mb-4">We found your account but couldn't load your permissions. Please try logging in again.</p>
+        <p className="text-muted-foreground mb-4">We found your account but couldn&apos;t load your permissions. Please try logging in again.</p>
         <Button onClick={() => window.location.href = "/login"} variant="outline">
           Back to Login
         </Button>

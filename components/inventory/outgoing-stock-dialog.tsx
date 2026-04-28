@@ -63,10 +63,10 @@ interface OutgoingStockDialogProps {
 // ---
 
 function resolveStockLeft(item: InventoryItem): number {
-  const incoming = (item as any).incoming ?? (item as any).incomingStock ?? 0
-  const outgoing = (item as any).outgoing ?? (item as any).outgoingStock ?? 0
-  const goodReturn = (item as any).goodReturnStock ?? 0
-  const damageReturn = (item as any).damageReturnStock ?? 0
+  const incoming = (item as any).incoming_weight ?? (item as any).production_weight ?? 0
+  const outgoing = (item as any).outgoing_weight ?? 0
+  const goodReturn = (item as any).good_return_weight ?? 0
+  const damageReturn = (item as any).damage_return_weight ?? 0
   return Math.max(0, incoming - outgoing + goodReturn - damageReturn)
 }
 
@@ -274,7 +274,7 @@ function OlderStockModal({
                         )}
                         variant="outline"
                       >
-                        {stockLeft} left
+                        {stockLeft.toFixed(1)} kg ({Math.floor(stockLeft / 25)} boxes) left
                       </Badge>
                     </div>
                   </div>
@@ -448,11 +448,9 @@ export function OutgoingStockDialog({
 
   // State
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null)
-  const [quantity, setQuantity] = useState("")
+  const [weight, setWeight] = useState("")
   const [search, setSearch] = useState("")
   const [loading, setLoading] = useState(false)
-  const [detectedUnit, setDetectedUnit] = useState<"box" | "pack">("box")
-  const [unitLoading, setUnitLoading] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [filterType, setFilterType] = useState<"all" | "near_expiry" | "pork" | "chicken" | "beef">("all")
   const [sortBy, setSortBy] = useState<"added_desc" | "added_asc" | "expiry_asc" | "expiry_desc">("added_desc")
@@ -524,18 +522,17 @@ export function OutgoingStockDialog({
   }, [availableItems, search, filterType, sortBy])
 
   const stockLeft = selectedItem ? resolveStockLeft(selectedItem) : 0
-  const quantityNum = Math.max(0, Number(quantity) || 0)
+  const weightNum = Math.max(0, Number(weight) || 0)
+  const computedBoxes = Math.floor(weightNum / 25)
 
   // Reset
   const reset = useCallback(() => {
     setSelectedItem(null)
-    setQuantity("")
+    setWeight("")
     setSearch("")
     setFilterType("all")
     setSortBy("added_desc")
     setErrors({})
-    setDetectedUnit("box")
-    setUnitLoading(false)
     setShowWeightWarning(false)
     setOlderStockModalOpen(false)
     setOlderStockBatches([])
@@ -544,23 +541,10 @@ export function OutgoingStockDialog({
 
   // Product select — detect unit from transactions
   const handleProductSelect = useCallback(
-    async (item: InventoryItem) => {
+    (item: InventoryItem) => {
       setSelectedItem(item)
-      setQuantity("")
+      setWeight("")
       setErrors({})
-      setUnitLoading(true)
-      try {
-        const txn = await TransactionService.findByBarcode(item.barcode || "")
-        if (txn && (txn as any).incoming_unit) {
-          setDetectedUnit((txn as any).incoming_unit as "box" | "pack")
-        } else {
-          setDetectedUnit("box")
-        }
-      } catch {
-        setDetectedUnit("box")
-      } finally {
-        setUnitLoading(false)
-      }
     },
     []
   )
@@ -604,22 +588,22 @@ export function OutgoingStockDialog({
   }, [open])
 
   // Quantity change handler
-  const handleQuantityChange = (rawValue: string) => {
+  const handleWeightChange = (rawValue: string) => {
     if (rawValue === "") {
-      setQuantity("")
-      setErrors((p) => ({ ...p, quantity: "" }))
+      setWeight("")
+      setErrors((p) => ({ ...p, weight: "" }))
       return
     }
-    const num = parseInt(rawValue, 10)
+    const num = parseFloat(rawValue)
     if (isNaN(num) || num < 0) return
-    setQuantity(String(num))
+    setWeight(rawValue)
     if (num > stockLeft) {
       setErrors((p) => ({
         ...p,
-        quantity: `Cannot exceed available stock (${stockLeft}).`,
+        weight: `Cannot exceed available stock (${stockLeft.toFixed(1)} kg).`,
       }))
     } else {
-      setErrors((p) => ({ ...p, quantity: "" }))
+      setErrors((p) => ({ ...p, weight: "" }))
     }
   }
 
@@ -630,13 +614,10 @@ export function OutgoingStockDialog({
     if (!selectedItem) {
       newErrors.product = "Please select a product."
     }
-    if (!quantityNum || quantityNum <= 0) {
-      newErrors.quantity = "Quantity must be greater than 0."
-    } else if (quantityNum > stockLeft) {
-      newErrors.quantity = `Cannot exceed available stock (${stockLeft}).`
-    }
-    if (unitLoading) {
-      newErrors.unit = "Please wait — detecting unit."
+    if (!weightNum || weightNum <= 0) {
+      newErrors.weight = "Weight must be greater than 0."
+    } else if (weightNum > stockLeft) {
+      newErrors.weight = `Cannot exceed available stock (${stockLeft.toFixed(1)} kg).`
     }
 
     setErrors(newErrors)
@@ -655,13 +636,12 @@ export function OutgoingStockDialog({
 
     setLoading(true)
     try {
-      const newStockLeft = stockLeft - quantityNum
+      const newWeightLeft = stockLeft - weightNum
 
       // 1. Update inventory item
       await InventoryService.updateItem(selectedItem.id, {
-        outgoing: ((selectedItem as any).outgoing ?? 0) + quantityNum,
-        stock: newStockLeft,
-        total: newStockLeft,
+        outgoing_weight: ((selectedItem as any).outgoing_weight ?? 0) + weightNum,
+        outgoing_boxes: ((selectedItem as any).outgoing_boxes ?? 0) + computedBoxes,
       } as any)
 
       // 2. Create transaction ledger entry (append-only)
@@ -674,16 +654,11 @@ export function OutgoingStockDialog({
           (selectedItem as any).productType ||
           (selectedItem as any).subcategory ||
           "",
-        unit_type: detectedUnit.toUpperCase(),
-        incoming_qty: 0,
-        incoming_packs: 0,
-        outgoing_qty: quantityNum,
-        outgoing_packs: quantityNum,
-        outgoing_unit: detectedUnit,
-        avg_weight: 0,
-        good_return: 0,
-        damage_return: 0,
-        stock_left: newStockLeft,
+        unit_type: "BOX",
+        outgoing_weight: weightNum,
+        outgoing_boxes: computedBoxes,
+        outgoing_unit: "box",
+        stock_left_weight: newWeightLeft,
         expiry_date:
           (selectedItem as any).expiryDate ||
           (selectedItem as any).expirationDate ||
@@ -709,7 +684,7 @@ export function OutgoingStockDialog({
     }
   }
 
-  const unitLabel = detectedUnit === "pack" ? "Packs" : "Boxes"
+  const unitLabel = "Boxes"
 
   return (
     <>
@@ -728,7 +703,7 @@ export function OutgoingStockDialog({
                 <DialogTitle className="text-xl font-bold text-slate-800">Product Out</DialogTitle>
                 <DialogDescription className="text-xs mt-0.5 text-slate-500">
                   {selectedItem
-                    ? "Enter quantity to deduct from stock"
+                    ? "Enter weight to deduct from stock"
                     : "Select a product with available stock to proceed"}
                 </DialogDescription>
               </div>
@@ -954,7 +929,7 @@ export function OutgoingStockDialog({
                     onClick={() => {
                       if (!scannedItem) {
                         setSelectedItem(null)
-                        setQuantity("")
+                        setWeight("")
                         setErrors({})
                         setShowWeightWarning(false)
                       }
@@ -990,8 +965,11 @@ export function OutgoingStockDialog({
                       <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                         Current Stock
                       </p>
-                      <p className="text-3xl font-bold text-slate-800">
-                        {stockLeft}
+                      <p className="text-xl sm:text-2xl font-bold text-slate-800">
+                        {stockLeft.toFixed(1)} <span className="text-[10px] text-slate-400">kg</span>
+                      </p>
+                      <p className="text-[10px] text-slate-400 font-medium">
+                        {Math.floor(stockLeft / 25)} boxes
                       </p>
                     </div>
                     <div className="flex flex-col items-center gap-1">
@@ -1000,16 +978,21 @@ export function OutgoingStockDialog({
                       </p>
                       <p
                         className={cn(
-                          "text-3xl font-bold",
-                          quantityNum > stockLeft
+                          "text-xl sm:text-2xl font-bold",
+                          weightNum > stockLeft
                             ? "text-red-600"
-                            : quantityNum > 0
+                            : weightNum > 0
                               ? "text-orange-600"
                               : "text-slate-300"
                         )}
                       >
-                        {quantityNum > 0 ? `-${quantityNum}` : "0"}
+                        {weightNum > 0 ? `-${weightNum.toFixed(1)}` : "0"} <span className="text-[10px]">kg</span>
                       </p>
+                      {weightNum > 0 && (
+                         <p className="text-[10px] text-orange-400 font-medium">
+                           -{computedBoxes} boxes
+                         </p>
+                      )}
                     </div>
                     <div className="flex flex-col items-center gap-1">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -1017,15 +1000,18 @@ export function OutgoingStockDialog({
                       </p>
                       <p
                         className={cn(
-                          "text-3xl font-bold",
-                          stockLeft - quantityNum <= 0
+                          "text-xl sm:text-2xl font-bold",
+                          stockLeft - weightNum <= 0
                             ? "text-red-600"
-                            : stockLeft - quantityNum <= 5
+                            : stockLeft - weightNum <= 125
                               ? "text-orange-600"
                               : "text-emerald-600"
                         )}
                       >
-                        {Math.max(0, stockLeft - quantityNum)}
+                        {Math.max(0, stockLeft - weightNum).toFixed(1)} <span className="text-[10px]">kg</span>
+                      </p>
+                      <p className="text-[10px] text-slate-400 font-medium">
+                        {Math.max(0, Math.floor((stockLeft - weightNum) / 25))} boxes
                       </p>
                     </div>
                   </div>
@@ -1033,51 +1019,48 @@ export function OutgoingStockDialog({
 
                 {/* ── Quantity + Unit ── */}
                 <div className="grid gap-3">
-                  {/* Row 1: Quantity + Unit side-by-side */}
                   <div className="grid grid-cols-[1fr_130px] gap-3">
                     <div className="grid gap-1.5">
                       <Label className="text-sm font-semibold text-slate-700">
-                        Quantity to Deduct{" "}
-                        <span className="text-red-500">*</span>
+                        Weight to Deduct (kg) <span className="text-red-500">*</span>
                       </Label>
-                      <Input
-                        type="number"
-                        min="1"
-                        max={stockLeft}
-                        value={quantity}
-                        onChange={(e) => handleQuantityChange(e.target.value)}
-                        placeholder={`1 – ${stockLeft}`}
-                        className={cn(
-                          "h-12 text-xl font-bold",
-                          errors.quantity ? "border-destructive" : ""
-                        )}
-                        autoFocus
-                      />
-                      {errors.quantity && (
+                      <div className="relative">
+                        <Scale className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0.1"
+                          max={stockLeft}
+                          value={weight}
+                          onChange={(e) => handleWeightChange(e.target.value)}
+                          placeholder={`0.1 – ${stockLeft.toFixed(1)}`}
+                          className={cn(
+                            "h-12 pl-9 text-xl font-bold",
+                            errors.weight ? "border-destructive focus-visible:ring-destructive/20" : "border-slate-200 focus-visible:ring-orange-200 focus-visible:border-orange-400"
+                          )}
+                          autoFocus
+                        />
+                      </div>
+                      {errors.weight && (
                         <p className="text-xs text-destructive flex items-center gap-1">
-                          <AlertTriangle className="h-3 w-3" /> {errors.quantity}
+                          <AlertTriangle className="h-3 w-3" /> {errors.weight}
                         </p>
                       )}
                     </div>
                     <div className="grid gap-1.5">
                       <Label className="text-sm font-semibold text-slate-700 flex items-center gap-1">
-                        Unit
+                        Boxes
                         <Lock className="h-3 w-3 text-amber-500" />
                       </Label>
-                      {unitLoading ? (
-                        <div className="h-12 px-3 flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 text-slate-400 text-sm cursor-wait animate-pulse">
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          <span>Detecting…</span>
-                        </div>
-                      ) : (
-                        <div className="h-12 px-3 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 text-amber-800 text-sm font-bold cursor-not-allowed">
-                          <Lock className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-                          <span>{unitLabel}</span>
-                        </div>
-                      )}
+                      <div className="h-12 px-3 flex flex-col items-center justify-center rounded-md border border-amber-200 bg-amber-50 text-amber-800 cursor-not-allowed">
+                        <span className="text-[10px] font-bold text-amber-600/70 uppercase leading-none mb-0.5">Auto-Computed</span>
+                        <span className="text-lg font-black leading-none">{computedBoxes}</span>
+                      </div>
                     </div>
                   </div>
-
+                  <p className="text-[11px] text-slate-400">
+                    Business Rule: <span className="font-semibold text-slate-600">1 Box = 25 kg</span>. Boxes are computed using <code>Math.floor(weight / 25)</code>.
+                  </p>
                 </div>
 
                 {/* ── Auto FIFO status indicator (replaces button) ── */}
@@ -1188,14 +1171,14 @@ export function OutgoingStockDialog({
               type="button"
               onClick={handleConfirm}
               disabled={
-                loading || !quantityNum || quantityNum > stockLeft || unitLoading
+                loading || !weightNum || weightNum > stockLeft
               }
               className={cn(
                 "gap-2 min-w-[160px] font-semibold",
                 showWeightWarning
-                  ? "bg-orange-600 hover:bg-orange-700 text-white"
-                  : quantityNum > 0 && quantityNum <= stockLeft && !unitLoading
-                    ? "bg-orange-500 hover:bg-orange-600 text-white"
+                  ? "bg-orange-600 hover:bg-orange-700 text-white shadow-lg shadow-orange-200"
+                  : weightNum > 0 && weightNum <= stockLeft
+                    ? "bg-orange-500 hover:bg-orange-600 text-white shadow-lg shadow-orange-200"
                     : ""
               )}
             >

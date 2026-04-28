@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
+import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -132,7 +133,7 @@ export function OrdersTable() {
   )
 
   // Reset page when filter/search changes
-  useMemo(() => setCurrentPage(1), [statusFilter, search])
+  useEffect(() => { setCurrentPage(1) }, [statusFilter, search])
 
   if (loading) {
     return (
@@ -323,9 +324,11 @@ export function OrdersTable() {
                             <div className="space-y-2">
                               {order.items.slice(0, 3).map((item, idx) => (
                                 <div key={idx} className="flex items-center gap-3 hover:scale-[1.02] transition-transform group/item">
-                                  <img
+                                  <Image
                                     src={item.imageUrl || "/placeholder.png"}
                                     alt={item.name}
+                                    width={32}
+                                    height={32}
                                     className="w-8 h-8 rounded-md object-cover border border-gray-200 dark:border-border bg-gray-50/50 shadow-sm shrink-0"
                                   />
                                   <div className="text-[13px] text-gray-700 dark:text-foreground/80 leading-tight line-clamp-2">

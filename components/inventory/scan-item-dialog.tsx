@@ -63,10 +63,10 @@ type ScanState = "idle" | "searching" | "found" | "not-found"
 // ─────────────────────────────────────────────────────────────────────────────
 
 function resolveStockLeft(item: InventoryItem): number {
-  const incoming = (item as any).incoming ?? (item as any).incomingStock ?? 0
-  const outgoing = (item as any).outgoing ?? (item as any).outgoingStock ?? 0
-  const goodReturn = (item as any).goodReturnStock ?? 0
-  const damageReturn = (item as any).damageReturnStock ?? 0
+  const incoming = (item as any).incoming_weight ?? (item as any).production_weight ?? 0
+  const outgoing = (item as any).outgoing_weight ?? 0
+  const goodReturn = (item as any).good_return_weight ?? 0
+  const damageReturn = (item as any).damage_return_weight ?? 0
   return Math.max(0, incoming - outgoing + goodReturn - damageReturn)
 }
 
@@ -704,13 +704,13 @@ export function ScanItemDialog({
                             "text-sm font-bold px-3 py-1 shrink-0",
                             stockLeft <= 0
                               ? "bg-red-100 text-red-700 border-red-200"
-                              : stockLeft <= 5
+                              : stockLeft <= 125
                                 ? "bg-amber-100 text-amber-700 border-amber-200"
                                 : "bg-emerald-100 text-emerald-700 border-emerald-200"
                           )}
                           variant="outline"
                         >
-                          {stockLeft} Stock Left
+                          {stockLeft.toFixed(1)} kg ({Math.floor(stockLeft / 25)} bx) left
                         </Badge>
                       </div>
                     </div>
@@ -744,8 +744,9 @@ export function ScanItemDialog({
                       <div>
                         <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Incoming</p>
                         <p className="text-sm font-semibold text-slate-700 mt-0.5">
-                          {(foundItem as any).incoming ?? 0}
+                          {((foundItem as any).incoming_weight ?? (foundItem as any).production_weight ?? 0).toFixed(1)} kg
                         </p>
+                        <p className="text-[10px] text-slate-400">≈ {Math.floor(((foundItem as any).incoming_weight ?? (foundItem as any).production_weight ?? 0) / 25)} boxes</p>
                       </div>
                     </div>
 
@@ -755,8 +756,9 @@ export function ScanItemDialog({
                       <div>
                         <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Outgoing</p>
                         <p className="text-sm font-semibold text-slate-700 mt-0.5">
-                          {(foundItem as any).outgoing ?? 0}
+                          {((foundItem as any).outgoing_weight ?? 0).toFixed(1)} kg
                         </p>
+                        <p className="text-[10px] text-slate-400">≈ {Math.floor(((foundItem as any).outgoing_weight ?? 0) / 25)} boxes</p>
                       </div>
                     </div>
 
@@ -766,7 +768,7 @@ export function ScanItemDialog({
                       <div>
                         <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Good Return</p>
                         <p className="text-sm font-semibold text-slate-700 mt-0.5">
-                          {(foundItem as any).goodReturnStock ?? 0}
+                          {((foundItem as any).good_return_weight ?? 0).toFixed(1)} kg
                         </p>
                       </div>
                     </div>
@@ -777,7 +779,7 @@ export function ScanItemDialog({
                       <div>
                         <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Damage Return</p>
                         <p className="text-sm font-semibold text-slate-700 mt-0.5">
-                          {(foundItem as any).damageReturnStock ?? 0}
+                          {((foundItem as any).damage_return_weight ?? 0).toFixed(1)} kg
                         </p>
                       </div>
                     </div>

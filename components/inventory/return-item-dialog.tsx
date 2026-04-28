@@ -23,7 +23,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Search, PackageOpen, AlertTriangle, CheckCircle2, RotateCcw, User, CalendarIcon, FileText, Lock, Loader2, ArrowRight, Package, MessageSquareWarning } from "lucide-react"
+import { Search, PackageOpen, AlertTriangle, CheckCircle2, RotateCcw, User, CalendarIcon, FileText, Lock, Loader2, ArrowRight, Package, MessageSquareWarning, Scale } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/hooks/use-auth"
 import { useToast } from "@/hooks/use-toast"
@@ -46,12 +46,11 @@ interface ReturnItemDialogProps {
 type Step = "select" | "form"
 
 const EMPTY_FORM = {
-  goodReturn: "",
-  badReturn: "",
+  goodReturnWeight: "",
+  badReturnWeight: "",
   badReturnReason: "",
   badReturnOtherReason: "",
   badReturnNotes: "",
-  weightKg: "",
   returnDate: new Date(),
 }
 
@@ -70,9 +69,9 @@ const BAD_RETURN_REASONS = [
 // ---
 
 function resolveStockLeft(item: InventoryItem): number {
-  const incoming = (item as any).incoming ?? (item as any).incomingStock ?? 0
-  const outgoing = (item as any).outgoing ?? (item as any).outgoingStock ?? 0
-  const goodReturn = (item as any).goodReturnStock ?? 0
+  const incoming = (item as any).incoming_weight ?? (item as any).production_weight ?? 0
+  const outgoing = (item as any).outgoing_weight ?? 0
+  const goodReturn = (item as any).good_return_weight ?? 0
   return Math.max(0, incoming - outgoing + goodReturn)
 }
 
@@ -100,7 +99,7 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
   const [loading, setLoading] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
   const [unitLoading, setUnitLoading] = useState(false)
-  const [detectedUnit, setDetectedUnit] = useState<"box" | "pack" | null>(null)
+  const [detectedUnit, setDetectedUnit] = useState<"box" | "pack" | null>("box")
 
   // --- Items sorted alphabetically ---
   const sortedItems = useMemo(
@@ -142,9 +141,11 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
 
   // --- Computed values ---
   const currentStock = selectedItem ? resolveStockLeft(selectedItem) : 0
-  const goodReturnNum = Math.max(0, Number(formData.goodReturn) || 0)
-  const badReturnNum = Math.max(0, Number(formData.badReturn) || 0)
-  const newStock = currentStock + goodReturnNum // Only good return adds to stock
+  const goodReturnNum = Math.max(0, Number(formData.goodReturnWeight) || 0)
+  const badReturnNum = Math.max(0, Number(formData.badReturnWeight) || 0)
+  const goodReturnBoxes = Math.floor(goodReturnNum / 25)
+  const badReturnBoxes = Math.floor(badReturnNum / 25)
+  const newStock = currentStock + goodReturnNum // Only good return adds to stock weight
 
   // --- Reset ---
   const reset = useCallback(() => {
@@ -155,7 +156,7 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
     setSearch("")
     setFilterCategory("all")
     setFilterType("all")
-    setDetectedUnit(null)
+    setDetectedUnit("box")
     setUnitLoading(false)
   }, [])
 
@@ -164,21 +165,8 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
     setSelectedItem(item)
     setFormData({ ...EMPTY_FORM, returnDate: new Date() })
     setErrors({})
-    setDetectedUnit(null)
-    setUnitLoading(true)
-    try {
-      const txn = await TransactionService.findByBarcode(item.barcode || "")
-      if (txn && (txn as any).incoming_unit) {
-        const unit = (txn as any).incoming_unit as "box" | "pack"
-        setDetectedUnit(unit)
-      } else {
-        setDetectedUnit("box")
-      }
-    } catch {
-      setDetectedUnit("box")
-    } finally {
-      setUnitLoading(false)
-    }
+    setDetectedUnit("box")
+    setUnitLoading(false)
     setStep("form")
   }, [])
 
@@ -196,10 +184,10 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {}
     if (!goodReturnNum && !badReturnNum) {
-      newErrors.goodReturn = "Enter at least one return quantity."
+      newErrors.goodReturnWeight = "Enter at least one return weight."
     }
-    if (goodReturnNum < 0) newErrors.goodReturn = "Cannot be negative."
-    if (badReturnNum < 0) newErrors.badReturn = "Cannot be negative."
+    if (goodReturnNum < 0) newErrors.goodReturnWeight = "Cannot be negative."
+    if (badReturnNum < 0) newErrors.badReturnWeight = "Cannot be negative."
     // Bad return reason validation
     if (badReturnNum > 0) {
       if (!formData.badReturnReason) newErrors.badReturnReason = "Reason is required for bad returns."
@@ -228,13 +216,16 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
           ? formData.badReturnOtherReason.trim()
           : formData.badReturnReason,
         notes: formData.badReturnNotes.trim() || null,
-        quantity: badReturnNum,
+        weight: badReturnNum,
+        boxes: badReturnBoxes,
       } : null
 
       // 1. Update inventory item — accumulate returns
       await InventoryService.updateItem(selectedItem.id, {
-        goodReturnStock: prevGoodReturn + goodReturnNum,
-        damageReturnStock: prevDamageReturn + badReturnNum,
+        good_return_weight: ((selectedItem as any).good_return_weight ?? 0) + goodReturnNum,
+        good_return_boxes: ((selectedItem as any).good_return_boxes ?? 0) + goodReturnBoxes,
+        damage_return_weight: ((selectedItem as any).damage_return_weight ?? 0) + badReturnNum,
+        damage_return_boxes: ((selectedItem as any).damage_return_boxes ?? 0) + badReturnBoxes,
         ...(badReturnDetails && { badReturnDetails }),
         updatedAt: new Date(),
       } as any)
@@ -246,13 +237,12 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
         barcode: selectedItem.barcode || "",
         category: selectedItem.category,
         type: (selectedItem as any).productType || (selectedItem as any).subcategory || "",
-        unit_type: unitLabel.toUpperCase(),
-        avg_weight: formData.weightKg ? Number(formData.weightKg) : 0,
-        outgoing_qty: 0,
-        outgoing_packs: 0,
-        good_return: goodReturnNum,
-        damage_return: badReturnNum,
-        stock_left: newStock,
+        unit_type: "BOX",
+        good_return_weight: goodReturnNum,
+        good_return_boxes: goodReturnBoxes,
+        damage_return_weight: badReturnNum,
+        damage_return_boxes: badReturnBoxes,
+        stock_left_weight: newStock,
         reference_no: "",
         source: "inventory_return",
         ...(badReturnDetails && { bad_return_details: badReturnDetails }),
@@ -270,13 +260,15 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
         quantity: goodReturnNum + badReturnNum,
         previousStock: currentStock,
         newStock: newStock,
-        reason: `Returned to inventory (Good: ${goodReturnNum}, Damaged: ${badReturnNum})`,
+        reason: `Returned to inventory (Good: ${goodReturnNum.toFixed(1)}kg, Damaged: ${badReturnNum.toFixed(1)}kg)`,
         transactionDocuments: {
           transaction_type: "incoming",
           source: "inventory_return",
           return_date: formData.returnDate || null,
-          good_return: goodReturnNum,
-          damage_return: badReturnNum,
+          good_return_weight: goodReturnNum,
+          damage_return_weight: badReturnNum,
+          good_return_boxes: goodReturnBoxes,
+          damage_return_boxes: badReturnBoxes,
           ...(badReturnDetails && { bad_return_details: badReturnDetails }),
         },
         createdBy: user.uid,
@@ -287,7 +279,7 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
       setShowConfirm(false)
       toast({
         title: "✅ Return successfully processed",
-        description: `Stock updated for "${getProductName(selectedItem)}". +${goodReturnNum} good, +${badReturnNum} damaged.`,
+        description: `Stock updated for "${getProductName(selectedItem)}". +${goodReturnNum.toFixed(1)}kg good, +${badReturnNum.toFixed(1)}kg damaged.`,
       })
 
       reset()
@@ -314,7 +306,7 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
     } catch { return "-" }
   }
 
-  const unitLabel = detectedUnit === "pack" ? "Packs" : "Boxes"
+  const unitLabel = "Boxes"
 
   return (
     <>
@@ -433,7 +425,7 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
                               )}
                               variant="outline"
                             >
-                              {stock} in stock
+                              {stock.toFixed(1)} kg ({Math.floor(stock / 25)} boxes) in stock
                             </Badge>
                           </div>
                         </button>
@@ -457,49 +449,76 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
                     <p className="text-xs text-teal-600/80 truncate">{selectedItem.barcode} • {selectedItem.category}</p>
                   </div>
                   <Badge className="bg-teal-100 text-teal-700 border-teal-200 text-[10px] shrink-0" variant="outline">
-                    {currentStock} in stock
+                    {currentStock.toFixed(1)} kg ({Math.floor(currentStock / 25)} boxes) in stock
                   </Badge>
                 </div>
 
-                {/* Return Quantity */}
-                <div className="grid gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">Return Quantity</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="grid gap-1.5">
-                      <Label className="text-xs font-medium text-slate-600">
-                        Good Return <span className="text-red-500">*</span>
-                        <span className="ml-1 text-[10px] text-green-600 font-normal">↑ adds to stock</span>
-                      </Label>
-                      <Input
-                        type="number"
-                        min="0"
-                        value={formData.goodReturn}
-                        onChange={(e) => {
-                          setFormData((p) => ({ ...p, goodReturn: e.target.value }))
-                          setErrors((p) => ({ ...p, goodReturn: "" }))
-                        }}
-                        placeholder="e.g. 5"
-                        className={cn("h-9 bg-white", errors.goodReturn ? "border-destructive" : "")}
-                      />
-                      {errors.goodReturn && <p className="text-xs text-destructive flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> {errors.goodReturn}</p>}
+                  {/* Return Quantity */}
+                  <div className="grid gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">Return Quantity</p>
+                    <div className="grid grid-cols-2 gap-4">
+                      {/* Good Return Column */}
+                      <div className="grid gap-1.5">
+                        <Label className="text-xs font-medium text-slate-600">
+                          Good Return (kg) <span className="text-red-500">*</span>
+                          <span className="ml-1 text-[10px] text-green-600 font-normal">↑ adds to stock</span>
+                        </Label>
+                        <div className="relative">
+                          <Scale className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={formData.goodReturnWeight}
+                            onChange={(e) => {
+                              setFormData((p) => ({ ...p, goodReturnWeight: e.target.value }))
+                              setErrors((p) => ({ ...p, goodReturnWeight: "" }))
+                            }}
+                            placeholder="0.00"
+                            className={cn("h-9 pl-8 bg-white", errors.goodReturnWeight ? "border-destructive" : "")}
+                          />
+                        </div>
+                        {goodReturnNum > 0 && (
+                          <p className="text-[10px] text-green-600 font-medium">≈ {goodReturnBoxes} boxes</p>
+                        )}
+                        {errors.goodReturnWeight && <p className="text-xs text-destructive flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> {errors.goodReturnWeight}</p>}
+                      </div>
+
+                      {/* Bad Return Column */}
+                      <div className="grid gap-1.5">
+                        <Label className="text-xs font-medium text-slate-600">
+                          Bad Return (kg)
+                          <span className="ml-1 text-[10px] text-red-500 font-normal">tracked only</span>
+                        </Label>
+                        <div className="relative">
+                          <Scale className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={formData.badReturnWeight}
+                            onChange={(e) => {
+                              setFormData((p) => ({ ...p, badReturnWeight: e.target.value }))
+                              setErrors((p) => ({ ...p, badReturnWeight: "" }))
+                            }}
+                            placeholder="0.00"
+                            className={cn("h-9 pl-8 bg-white", errors.badReturnWeight ? "border-destructive" : "")}
+                          />
+                        </div>
+                        {badReturnNum > 0 && (
+                          <p className="text-[10px] text-red-500 font-medium">≈ {badReturnBoxes} boxes</p>
+                        )}
+                        {errors.badReturnWeight && <p className="text-xs text-destructive flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> {errors.badReturnWeight}</p>}
+                      </div>
                     </div>
-                    <div className="grid gap-1.5">
-                      <Label className="text-xs font-medium text-slate-600">
-                        Bad Return
-                        <span className="ml-1 text-[10px] text-red-500 font-normal">tracked only</span>
-                      </Label>
-                      <Input
-                        type="number"
-                        min="0"
-                        value={formData.badReturn}
-                        onChange={(e) => {
-                          setFormData((p) => ({ ...p, badReturn: e.target.value }))
-                          setErrors((p) => ({ ...p, badReturn: "" }))
-                        }}
-                        placeholder="e.g. 2"
-                        className={cn("h-9 bg-white", errors.badReturn ? "border-destructive" : "")}
-                      />
-                      {errors.badReturn && <p className="text-xs text-destructive flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> {errors.badReturn}</p>}
+
+                    <div className="grid gap-1">
+                      <Label className="text-xs font-medium text-slate-600">Total Boxes Metadata</Label>
+                      <div className="h-9 px-3 flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 text-slate-600 text-sm font-medium">
+                        <Package className="h-3.5 w-3.5 text-slate-400" />
+                        <span>{goodReturnBoxes + badReturnBoxes} total boxes</span>
+                        <span className="text-[10px] font-normal text-slate-400 ml-auto">1 Box = 25 kg</span>
+                      </div>
                     </div>
                   </div>
 
@@ -564,42 +583,7 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
                     </div>
                   )}
 
-                  {/* Unit (locked) */}
-                  <div className="grid gap-1">
-                    <Label className="text-xs font-medium text-slate-600 flex items-center gap-1">
-                      Unit
-                      <Lock className="h-3 w-3 text-amber-500" />
-                    </Label>
-                    {unitLoading ? (
-                      <div className="h-9 px-3 flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 text-slate-400 text-sm cursor-wait animate-pulse">
-                        <span>Detecting…</span>
-                      </div>
-                    ) : (
-                      <div className="h-9 px-3 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 text-amber-800 text-sm font-medium cursor-not-allowed">
-                        <Lock className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-                        <span className="capitalize">{detectedUnit === "pack" ? "Pack" : "Box"}</span>
-                        <span className="text-[10px] font-normal text-amber-600 ml-auto">🔒 Locked</span>
-                      </div>
-                    )}
-                  </div>
 
-                  {/* Weight */}
-                  <div className="grid gap-1">
-                    <Label className="text-xs font-medium text-slate-600">Average Weight <span className="text-slate-400">(kg, optional)</span></Label>
-                    <div className="flex gap-2 items-center">
-                      <Input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={formData.weightKg}
-                        onChange={(e) => setFormData((p) => ({ ...p, weightKg: e.target.value }))}
-                        placeholder="e.g. 25.5"
-                        className="h-9 flex-1"
-                      />
-                      <span className="text-sm font-medium text-slate-500 shrink-0">kg</span>
-                    </div>
-                  </div>
-                </div>
 
                 {/* Return Date & Documents */}
                 <div className="rounded-xl border border-teal-100 bg-teal-50/30 p-4 grid gap-3">
@@ -657,31 +641,26 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
 
                 {/* Stock preview */}
                 <div className="rounded-xl border border-slate-200 bg-white p-3 grid gap-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Stock Preview</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Weight Summary (kg)</p>
                   <div className="grid grid-cols-[1fr_auto] gap-1 text-sm">
-                    <span className="text-slate-600">Current Stock</span>
-                    <span className="font-bold text-right">{currentStock}</span>
+                    <span className="text-slate-600">Current Weight</span>
+                    <span className="font-bold text-right">{currentStock.toFixed(1)}</span>
                     <span className="text-green-600">+ Good Return</span>
-                    <span className="font-bold text-green-600 text-right">+{goodReturnNum}</span>
+                    <span className="font-bold text-green-600 text-right">+{goodReturnNum.toFixed(1)}</span>
                     {badReturnNum > 0 && (
                       <>
                         <span className="text-red-500">Damaged (tracked)</span>
-                        <span className="font-bold text-red-500 text-right">{badReturnNum}</span>
-                        {formData.badReturnReason && (
-                          <>
-                            <span className="text-red-400 text-[10px]">Reason</span>
-                            <span className="text-red-500 text-[10px] text-right font-medium">
-                              {formData.badReturnReason === "Others" ? formData.badReturnOtherReason.trim() : formData.badReturnReason}
-                            </span>
-                          </>
-                        )}
+                        <span className="font-bold text-red-500 text-right">{badReturnNum.toFixed(1)}</span>
                       </>
                     )}
                   </div>
                   <div className="border-t border-slate-100 pt-2 mt-1 flex items-center justify-between">
-                    <span className="text-sm font-semibold text-slate-700">New Stock</span>
-                    <span className="text-xl font-bold text-teal-600">{newStock}</span>
+                    <span className="text-sm font-semibold text-slate-700">New Total Weight</span>
+                    <span className="text-xl font-bold text-teal-600">{newStock.toFixed(1)}</span>
                   </div>
+                  <p className="text-[10px] text-slate-400 text-right italic">
+                    ≈ {Math.floor(newStock / 25)} boxes total
+                  </p>
                 </div>
 
                 {/* Return info summary */}
@@ -748,15 +727,15 @@ export function ReturnItemDialog({ open, onOpenChange, inventoryItems, scannedIt
               <p>You are about to process the following return:</p>
               <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 grid gap-1 text-[13px]">
                 <div className="flex justify-between"><span className="text-slate-500">Product</span><span className="font-medium text-slate-800">{selectedItem ? getProductName(selectedItem) : ""}</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Good Return</span><span className="font-semibold text-green-600">+{goodReturnNum} {unitLabel}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Good Return</span><span className="font-semibold text-green-600">+{goodReturnNum.toFixed(1)} kg ({goodReturnBoxes} bx)</span></div>
                 {badReturnNum > 0 && (
                   <>
-                    <div className="flex justify-between"><span className="text-slate-500">Bad Return</span><span className="font-semibold text-red-500">{badReturnNum} {unitLabel}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">Bad Return</span><span className="font-semibold text-red-500">{badReturnNum.toFixed(1)} kg ({badReturnBoxes} bx)</span></div>
                     <div className="flex justify-between"><span className="text-slate-500">Reason</span><span className="font-medium text-red-600 text-right max-w-[160px] truncate">{formData.badReturnReason === "Others" ? formData.badReturnOtherReason.trim() : formData.badReturnReason}</span></div>
                     {formData.badReturnNotes.trim() && <div className="flex justify-between"><span className="text-slate-500">Notes</span><span className="text-slate-700 text-right max-w-[160px] truncate">{formData.badReturnNotes.trim()}</span></div>}
                   </>
                 )}
-                <div className="border-t border-slate-200 pt-1 mt-1 flex justify-between"><span className="text-slate-500">New Stock</span><span className="font-bold text-teal-600">{newStock}</span></div>
+                <div className="border-t border-slate-200 pt-1 mt-1 flex justify-between"><span className="text-slate-500">New Total Weight</span><span className="font-bold text-teal-600">{newStock.toFixed(1)} kg</span></div>
               </div>
             </div>
           </AlertDialogDescription>

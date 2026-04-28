@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useRouter, useSearchParams, usePathname } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
@@ -80,11 +80,11 @@ export type ItemStatus = "all" | "in-stock" | "low-stock" | "out-of-stock" | "ex
 
 /** Derives the computed status of an inventory item from stockLeft and expirationDate. */
 export function getItemStatus(item: any): Exclude<ItemStatus, "all"> {
-  const incoming = item.incoming ?? item.stockIncoming ?? item.incomingStock ?? 0
-  const outgoing = item.outgoing ?? item.stockOutgoing ?? item.outgoingStock ?? 0
-  const goodReturn = item.goodReturnStock ?? 0
-  const damageReturn = item.damageReturnStock ?? 0
-  const stockLeft = Math.max(0, incoming - outgoing + goodReturn - damageReturn)
+  const incoming = item.incoming_weight ?? item.production_weight ?? 0
+  const outgoing = item.outgoing_weight ?? 0
+  const goodReturn = item.good_return_weight ?? 0
+  const damageReturn = item.damage_return_weight ?? 0
+  const weightLeft = Math.max(0, incoming - outgoing + goodReturn - damageReturn)
 
   // Check expiration first — these states take priority over stock level
   const expiryDate = item.expiryDate ?? item.expirationDate ?? null
@@ -103,8 +103,8 @@ export function getItemStatus(item: any): Exclude<ItemStatus, "all"> {
     } catch { /* ignore */ }
   }
 
-  if (stockLeft === 0) return "out-of-stock"
-  if (stockLeft <= 5) return "low-stock"
+  if (weightLeft === 0) return "out-of-stock"
+  if (weightLeft < 50) return "low-stock"
   return "in-stock"
 }
 
@@ -115,6 +115,7 @@ export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: 
   const { isReadOnly, canEditInventory } = useAuth()
 
   // ——— Filter state ————————————————————————————————————————————————————————
+  const [selectedProductFilter, setSelectedProductFilter] = useState<string | null>(null)
   const [selectedCategory, setSelectedCategory] = useState<string>("all")
   const [selectedType, setSelectedType] = useState<string>("all")
   const [recentlyAddedFilter, setRecentlyAddedFilter] = useState<string>("all")
@@ -143,6 +144,7 @@ export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: 
   const [newItemIds, setNewItemIds] = useState<Set<string>>(new Set())
   const router = useRouter()
   const searchParams = useSearchParams()
+  const pathname = usePathname()
   const { toast } = useToast()
   const previousItemsRef = useRef<Set<string>>(new Set())
   const scrollToItemIdRef = useRef<string | null>(null)
@@ -158,7 +160,38 @@ export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: 
         setExpirationFilter("expiring-soon")
       }
     }
+    
+    // Check for product filter in URL
+    const productParam = searchParams.get("product")
+    if (productParam) {
+      setSelectedProductFilter(productParam)
+    } else {
+      setSelectedProductFilter(null)
+    }
   }, [searchParams])
+
+  const handleNavigateToItem = useCallback((barcode: string) => {
+    const el = document.getElementById(`inventory-${barcode}`)
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" })
+      el.classList.add("highlight-row")
+      setTimeout(() => {
+        el.classList.remove("highlight-row")
+      }, 2000)
+    }
+  }, [])
+
+  // Listen for barcode in URL
+  useEffect(() => {
+    const barcodeToHighlight = searchParams.get("barcode")
+    if (barcodeToHighlight && !loading) {
+      // Small delay to ensure table is rendered
+      const timer = setTimeout(() => {
+        handleNavigateToItem(barcodeToHighlight)
+      }, 800)
+      return () => clearTimeout(timer)
+    }
+  }, [searchParams, loading, handleNavigateToItem])
 
   // Clear query param whenever a filter is removed manually
   const clearQueryParam = useCallback(() => {
@@ -216,11 +249,12 @@ export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: 
     setSearchQuery("")
     setDebouncedSearch("")
     setSortMode("date-desc")
+    setSelectedProductFilter(null)
     clearQueryParam()
   }, [clearQueryParam])
 
   // Check if any filter is active
-  const hasActiveFilters = selectedCategory !== "all" || selectedType !== "all" || recentlyAddedFilter !== "all" || stockStatusFilter !== "all" || expirationFilter !== "all" || debouncedSearch !== ""
+  const hasActiveFilters = selectedCategory !== "all" || selectedType !== "all" || recentlyAddedFilter !== "all" || stockStatusFilter !== "all" || expirationFilter !== "all" || debouncedSearch !== "" || selectedProductFilter !== null
 
   // Available types based on selected category
   const availableTypes = useMemo(() => {
@@ -250,13 +284,11 @@ export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: 
 
         // Normalize legacy field names so data from existing Firestore shows correctly
         const normalized = updatedItems.map((it: any) => {
-          const incoming = it.incoming ?? it.stockIncoming ?? it.incomingStock ?? 0
-          const outgoing = it.outgoing ?? it.stockOutgoing ?? it.outgoingStock ?? 0
-          const stockBase =
-            it.stock ?? it.stockLeft ?? it.stockQuantity ?? it.stockTotal ?? it.ongoingStock ?? 0
-          const returned = it.returned ?? it.returnedStock ?? 0
-          const goodReturnStock = it.goodReturnStock ?? 0
-          const damageReturnStock = it.damageReturnStock ?? 0
+          const incoming = it.incoming_weight ?? it.production_weight ?? 0
+          const outgoing = it.outgoing_weight ?? 0
+          const weightLeft = it.stock_left_weight ?? (incoming - outgoing + (it.good_return_weight ?? 0) - (it.damage_return_weight ?? 0))
+          const goodReturnWeight = it.good_return_weight ?? 0
+          const damageReturnWeight = it.damage_return_weight ?? 0
           // Extract expiryDate - prefer expiryDate over expirationDate, preserve original Firestore Timestamp object
           const expiry = it.expiryDate ?? it.expirationDate ?? null
           // Parse createdAt - handle both Date objects and Firestore Timestamps
@@ -269,11 +301,10 @@ export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: 
             ...it, // Preserve ALL original fields from Firebase
             incoming,
             outgoing,
-            stock: stockBase,
-            ongoingStock: stockBase, // Keep ongoingStock for display
-            returned,
-            goodReturnStock,
-            damageReturnStock,
+            stock: weightLeft,
+            ongoingStock: weightLeft, // Keep ongoingStock for display
+            goodReturnStock: goodReturnWeight,
+            damageReturnStock: damageReturnWeight,
             // Ensure expiryDate is always set (even if null) for consistent access
             expirationDate: expiry,
             expiryDate: expiry ?? it.expiryDate, // Prefer normalized value, fallback to original
@@ -416,7 +447,7 @@ export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: 
       unsubscribeTransactions()
       if (animationTimerRef.current) clearTimeout(animationTimerRef.current)
     }
-  }, [])
+  }, [router, toast])
 
   // Filter items by category, type, search query, stock status, expiration, and recently added
   const filteredItems = useMemo(() => {
@@ -488,11 +519,26 @@ export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: 
         if (createdAt < recentlyCutoff) return false
       }
 
+      // Product Name filter (from notification click)
+      if (selectedProductFilter) {
+        const itemProductName = (item.name || item.productName || item.category || "").toLowerCase()
+        const filterName = selectedProductFilter.toLowerCase()
+        
+        // Match either the full product name or the category-subcategory combination
+        const categorySubcategory = item.subcategory 
+          ? `${item.category} - ${item.subcategory}`.toLowerCase()
+          : item.category.toLowerCase()
+          
+        if (!itemProductName.includes(filterName) && !categorySubcategory.includes(filterName)) {
+          return false
+        }
+      }
+
       return true
     })
 
     return filtered // Sorting is now handled by sortMode
-  }, [items, selectedCategory, selectedType, debouncedSearch, stockStatusFilter, expirationFilter, recentlyAddedFilter])
+  }, [items, selectedCategory, selectedType, debouncedSearch, stockStatusFilter, expirationFilter, recentlyAddedFilter, selectedProductFilter])
 
   // Filter transactions for the table display (one row per transaction)
   const filteredTransactions = useMemo(() => {
@@ -541,29 +587,40 @@ export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: 
 
   console.log("[Inventory Dashboard] Total items:", items.length, "Filtered items:", filteredItems.length, "Category:", selectedCategory, "Type:", selectedType, "Search:", debouncedSearch)
 
-  const totalItems = filteredItems.length
-  // Calculate total stock using correct formula: incomingStock - outgoingStock + goodReturnStock - damageReturnStock
-  const totalStock = filteredItems.reduce((sum, item) => {
-    const incomingStock = (item as any).incoming ?? 0
-    const outgoingStock = (item as any).outgoing ?? 0
-    const goodReturnStock = (item as any).goodReturnStock ?? 0
-    const damageReturnStock = (item as any).damageReturnStock ?? 0
-    const stockLeft = incomingStock - outgoingStock + goodReturnStock - damageReturnStock
-    return sum + Math.max(0, Number.isFinite(stockLeft) ? stockLeft : 0)
+  const totalStockWeight = items.reduce((sum, item) => {
+    const incomingWeight = (item as any).incoming_weight ?? (item as any).production_weight ?? 0
+    const outgoingWeight = (item as any).outgoing_weight ?? 0
+    const goodReturnWeight = (item as any).good_return_weight ?? 0
+    const damageReturnWeight = (item as any).damage_return_weight ?? 0
+    const weightLeft = incomingWeight - outgoingWeight + goodReturnWeight - damageReturnWeight
+    return sum + Math.max(0, Number.isFinite(weightLeft) ? weightLeft : 0)
   }, 0)
+  console.log("TOTAL KG:", totalStockWeight)
 
-  // Filter low stock items using correct formula
+  const totalItems = items.length
+  // totalStockWeight is calculated above and used for the main KPI display
+
+  // Filter low stock items count
   const lowStockItems = filteredItems.filter((item) => {
-    const incomingStock = (item as any).incoming ?? 0
-    const outgoingStock = (item as any).outgoing ?? 0
-    const goodReturnStock = (item as any).goodReturnStock ?? 0
-    const damageReturnStock = (item as any).damageReturnStock ?? 0
-    const stockLeft = incomingStock - outgoingStock + goodReturnStock - damageReturnStock
-    return stockLeft < 10
+    const incomingWeight = (item as any).incoming_weight ?? (item as any).production_weight ?? 0
+    const outgoingWeight = (item as any).outgoing_weight ?? 0
+    const goodReturnWeight = (item as any).good_return_weight ?? 0
+    const damageReturnWeight = (item as any).damage_return_weight ?? 0
+    const weightLeft = incomingWeight - outgoingWeight + goodReturnWeight - damageReturnWeight
+    return weightLeft > 0 && weightLeft < 50 // Below 50kg threshold
   }).length
 
   const nearExpiryItems = filteredItems.filter((item) => {
     if (!item.expirationDate) return false
+    
+    const incomingWeight = (item as any).incoming_weight ?? (item as any).production_weight ?? 0
+    const outgoingWeight = (item as any).outgoing_weight ?? 0
+    const goodReturnWeight = (item as any).good_return_weight ?? 0
+    const damageReturnWeight = (item as any).damage_return_weight ?? 0
+    const weightLeft = incomingWeight - outgoingWeight + goodReturnWeight - damageReturnWeight
+    
+    if (weightLeft <= 0) return false // No weight left, no need to alert for expiry
+
     const expiryDate = new Date(item.expirationDate)
     const today = new Date()
     const daysUntilExpiry = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
@@ -582,8 +639,8 @@ export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: 
         : txn.transaction_date?.toDate ? txn.transaction_date.toDate()
           : new Date(txn.transaction_date || 0)
       if (isNaN(txDate.getTime()) || txDate < todayStart) return
-      goodReturns += (txn.good_return ?? 0)
-      damagedReturns += (txn.damage_return ?? 0)
+      goodReturns += (txn.good_return_weight ?? 0)
+      damagedReturns += (txn.damage_return_weight ?? 0)
     })
     return { good: goodReturns, damaged: damagedReturns, total: goodReturns + damagedReturns }
   }, [transactions])
@@ -601,26 +658,46 @@ export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: 
         : txn.transaction_date?.toDate ? txn.transaction_date.toDate()
           : new Date(txn.transaction_date || 0)
       if (isNaN(txDate.getTime()) || txDate < todayStart) return
-      incoming += (txn.incoming_qty ?? 0)
-      outgoing += (txn.outgoing_qty ?? 0)
-      returns += (txn.good_return ?? 0) + (txn.damage_return ?? 0)
+      incoming += (txn.incoming_weight ?? txn.production_weight ?? 0)
+      outgoing += (txn.outgoing_weight ?? 0)
+      returns += (txn.good_return_weight ?? 0) + (txn.damage_return_weight ?? 0)
     })
     return { incoming, outgoing, returns, total: incoming + outgoing + returns }
   }, [transactions])
 
-  // Compute Low Stock Alert (items with stock < 10, sorted lowest to highest)
+  // Compute Low Stock Alert (aggregated per product)
   const lowStockAlertList = useMemo(() => {
-    const alerts = filteredItems.map(item => {
-      const incomingStock = (item as any).incoming ?? 0
-      const outgoingStock = (item as any).outgoing ?? 0
-      const goodReturnStock = (item as any).goodReturnStock ?? 0
-      const damageReturnStock = (item as any).damageReturnStock ?? 0
-      const stockLeft = incomingStock - outgoingStock + goodReturnStock - damageReturnStock
-      return { name: item.name || "Unknown", stock: stockLeft, type: (item as any).unitType === "PACK" ? "pk" : "bx" }
+    const productAggregation = new Map<string, { name: string; weight: number; barcode: string; createdAt: any }>()
+
+    filteredItems.forEach((item: any) => {
+      const incomingWeight = item.incoming_weight ?? item.production_weight ?? 0
+      const outgoingWeight = item.outgoing_weight ?? 0
+      const goodReturnWeight = item.good_return_weight ?? 0
+      const damageReturnWeight = item.damage_return_weight ?? 0
+      const weightLeft = incomingWeight - outgoingWeight + goodReturnWeight - damageReturnWeight
+
+      const name = item.subcategory 
+        ? `${item.category} - ${item.subcategory}`
+        : item.category || "Unknown Product"
+
+      const existing = productAggregation.get(name) || { name, weight: 0, barcode: item.barcode, createdAt: item.createdAt }
+      existing.weight += weightLeft
+      
+      // Keep oldest batch's barcode for reference (FIFO)
+      const itemDate = item.createdAt instanceof Date ? item.createdAt : (item.createdAt?.toDate ? item.createdAt.toDate() : new Date(item.createdAt || 0))
+      const existingDate = existing.createdAt instanceof Date ? existing.createdAt : (existing.createdAt?.toDate ? existing.createdAt.toDate() : new Date(existing.createdAt || 0))
+      
+      if (itemDate < existingDate) {
+        existing.barcode = item.barcode
+        existing.createdAt = item.createdAt
+      }
+
+      productAggregation.set(name, existing)
     })
-    return alerts
-      .filter(item => item.stock < 10)
-      .sort((a, b) => a.stock - b.stock)
+
+    return Array.from(productAggregation.values())
+      .filter(p => p.weight > 0 && p.weight <= 50)
+      .sort((a, b) => a.weight - b.weight)
       .slice(0, 3)
   }, [filteredItems])
 
@@ -629,11 +706,11 @@ export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: 
     return calculateWeeklyChange({
       items: filteredItems,
       getValue: (item) => {
-        const incomingStock = (item as any).incoming ?? 0
-        const outgoingStock = (item as any).outgoing ?? 0
-        const goodReturnStock = (item as any).goodReturnStock ?? 0
-        const damageReturnStock = (item as any).damageReturnStock ?? 0
-        return incomingStock - outgoingStock + goodReturnStock - damageReturnStock
+        const incomingWeight = (item as any).incoming_weight ?? (item as any).production_weight ?? 0
+        const outgoingWeight = (item as any).outgoing_weight ?? 0
+        const goodReturnWeight = (item as any).good_return_weight ?? 0
+        const damageReturnWeight = (item as any).damage_return_weight ?? 0
+        return incomingWeight - outgoingWeight + goodReturnWeight - damageReturnWeight
       },
       getDate: (item) => parseFirestoreDate((item as any).updatedAt || (item as any).createdAt),
     })
@@ -645,12 +722,12 @@ export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: 
       getDate: (item) => parseFirestoreDate((item as any).updatedAt || (item as any).createdAt),
       currentWeekCount: lowStockItems,
       filter: (item) => {
-        const incomingStock = (item as any).incoming ?? 0
-        const outgoingStock = (item as any).outgoing ?? 0
-        const goodReturnStock = (item as any).goodReturnStock ?? 0
-        const damageReturnStock = (item as any).damageReturnStock ?? 0
-        const stockLeft = incomingStock - outgoingStock + goodReturnStock - damageReturnStock
-        return stockLeft < 10
+        const incomingWeight = (item as any).incoming_weight ?? (item as any).production_weight ?? 0
+        const outgoingWeight = (item as any).outgoing_weight ?? 0
+        const goodReturnWeight = (item as any).good_return_weight ?? 0
+        const damageReturnWeight = (item as any).damage_return_weight ?? 0
+        const weightLeft = incomingWeight - outgoingWeight + goodReturnWeight - damageReturnWeight
+        return weightLeft > 0 && weightLeft < 50
       },
     })
   }, [filteredItems, lowStockItems])
@@ -679,8 +756,21 @@ export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: 
     if (debouncedSearch) {
       tags.push({ key: "search", label: `"${debouncedSearch}"`, onRemove: () => { setSearchQuery(""); setDebouncedSearch("") } })
     }
+    if (selectedProductFilter) {
+      tags.push({ 
+        key: "product", 
+        label: `Product: ${selectedProductFilter}`, 
+        onRemove: () => {
+          setSelectedProductFilter(null)
+          // Also clear from URL
+          const params = new URLSearchParams(window.location.search)
+          params.delete("product")
+          router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+        } 
+      })
+    }
     return tags
-  }, [selectedCategory, selectedType, stockStatusFilter, expirationFilter, recentlyAddedFilter, debouncedSearch, clearQueryParam])
+  }, [selectedCategory, selectedType, stockStatusFilter, expirationFilter, recentlyAddedFilter, debouncedSearch, selectedProductFilter, clearQueryParam, router, pathname])
 
   if (loading) {
     return <InventoryDashboardSkeleton />
@@ -773,11 +863,11 @@ export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: 
                 </>
               ) : (
                 <>
-                  <div className="text-2xl sm:text-3xl font-bold tracking-tight">{todayTransactions.total}</div>
+                  <div className="text-2xl sm:text-3xl font-bold tracking-tight">{todayTransactions.total.toLocaleString()} kg</div>
                   <div className="flex flex-wrap items-center gap-1 sm:gap-2 mt-1.5 sm:mt-2">
-                    <span className="inline-flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs font-semibold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/30 px-1 sm:px-1.5 py-0.5 rounded-md">↑ {todayTransactions.incoming} In</span>
-                    <span className="inline-flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 px-1 sm:px-1.5 py-0.5 rounded-md">↓ {todayTransactions.outgoing} Out</span>
-                    <span className="inline-flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 px-1 sm:px-1.5 py-0.5 rounded-md">↺ {todayTransactions.returns} Rtn</span>
+                    <span className="inline-flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs font-semibold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/30 px-1.5 py-0.5 rounded-md">↑ {todayTransactions.incoming.toLocaleString()} kg In</span>
+                    <span className="inline-flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 px-1.5 py-0.5 rounded-md">↓ {todayTransactions.outgoing.toLocaleString()} kg Out</span>
+                    <span className="inline-flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 px-1.5 py-0.5 rounded-md">↺ {todayTransactions.returns.toLocaleString()} kg Rtn</span>
                   </div>
                 </>
               )}
@@ -787,15 +877,15 @@ export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: 
           {/* 2. Stock Overview */}
           <Card className="shadow-sm hover:shadow-md transition-shadow duration-200 rounded-xl bg-white dark:bg-card">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 sm:pb-2 px-3 sm:px-6 pt-3 sm:pt-6">
-              <CardTitle className="text-[11px] sm:text-sm font-medium text-muted-foreground">Stock Overview</CardTitle>
+              <CardTitle className="text-[11px] sm:text-sm font-medium text-muted-foreground">TOTAL ITEMS</CardTitle>
               <StockOverviewIcon />
             </CardHeader>
             <CardContent className="px-3 sm:px-6 pb-3 sm:pb-6">
-              <div className="text-2xl sm:text-3xl font-bold tracking-tight">{totalStock.toLocaleString()}</div>
+              <div className="text-2xl sm:text-3xl font-bold tracking-tight">{totalItems} items</div>
               <div className="flex flex-wrap items-center gap-1 sm:gap-2 mt-1.5 sm:mt-2">
-                <span className="inline-flex items-center text-[10px] sm:text-xs text-muted-foreground bg-slate-50 dark:bg-slate-900/40 px-1 sm:px-1.5 py-0.5 rounded-md">{totalItems} items</span>
+                <span className="inline-flex items-center text-[10px] sm:text-xs text-muted-foreground bg-slate-50 dark:bg-slate-900/40 px-1 sm:px-1.5 py-0.5 rounded-md">{totalStockWeight.toLocaleString()} kg total ({Math.ceil(totalStockWeight / 25).toLocaleString()} boxes)</span>
                 {lowStockItems > 0 ? (
-                  <span className="inline-flex items-center text-[10px] sm:text-xs font-semibold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-1 sm:px-1.5 py-0.5 rounded-md">⚠ {lowStockItems} low</span>
+                  <span className="inline-flex items-center text-[10px] sm:text-xs font-semibold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-1 sm:px-1.5 py-0.5 rounded-md">⚠ {lowStockItems} low stock</span>
                 ) : (
                   <span className="inline-flex items-center text-[10px] sm:text-xs font-semibold text-green-600 bg-green-50 dark:bg-green-950/30 px-1 sm:px-1.5 py-0.5 rounded-md">✓ All stocked</span>
                 )}
@@ -826,13 +916,13 @@ export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: 
                 </>
               ) : (
                 <>
-                  <div className="text-2xl sm:text-3xl font-bold tracking-tight">{todayReturns.total}</div>
+                  <div className="text-2xl sm:text-3xl font-bold tracking-tight">{todayReturns.total.toLocaleString()} kg</div>
                   <div className="flex flex-wrap items-center gap-1 sm:gap-2 mt-1.5 sm:mt-2">
-                    <span className="inline-flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs font-semibold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/30 px-1 sm:px-1.5 py-0.5 rounded-md">
-                      +{todayReturns.good} Good
+                    <span className="inline-flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs font-semibold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/30 px-1.5 py-0.5 rounded-md">
+                      +{todayReturns.good.toLocaleString()} kg Good
                     </span>
-                    <span className="inline-flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 px-1 sm:px-1.5 py-0.5 rounded-md">
-                      +{todayReturns.damaged} Bad
+                    <span className="inline-flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 px-1.5 py-0.5 rounded-md">
+                      +{todayReturns.damaged.toLocaleString()} kg Bad
                     </span>
                   </div>
                 </>
@@ -855,14 +945,35 @@ export function InventoryDashboard({ isArchiveView = false }: { isArchiveView?: 
               ) : (
                 <div className="space-y-1.5 sm:space-y-2">
                   {lowStockAlertList.map((p, i) => (
-                    <div key={p.name + i} className="flex items-center justify-between gap-1.5 sm:gap-2 p-1 sm:p-1.5 rounded-lg bg-orange-50/60 dark:bg-orange-950/20">
-                      <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
-                        <span className="text-[9px] sm:text-[10px] font-bold rounded-full w-4 h-4 sm:w-5 sm:h-5 flex items-center justify-center shrink-0 bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400">
-                          !
-                        </span>
-                        <span className="text-[10px] sm:text-xs font-medium truncate" title={p.name}>{p.name}</span>
+                    <div 
+                      key={p.name + i} 
+                      className="flex items-center justify-between gap-1.5 sm:gap-2 p-1 sm:p-1.5 rounded-lg bg-orange-50/60 dark:bg-orange-950/20 cursor-pointer hover:bg-orange-100 dark:hover:bg-orange-900/40 transition-colors"
+                      onClick={() => p.barcode && handleNavigateToItem(p.barcode)}
+                    >
+                      <div className="flex flex-col min-w-0">
+                        <div className="flex items-center gap-1 sm:gap-1.5">
+                          <span className="text-[9px] sm:text-[10px] font-bold rounded-full w-4 h-4 sm:w-5 sm:h-5 flex items-center justify-center shrink-0 bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400">
+                            !
+                          </span>
+                          <span className="text-[10px] sm:text-xs font-bold truncate" title={p.name}>{p.name}</span>
+                        </div>
+                        {p.barcode && (
+                          <span className="text-[8px] sm:text-[9px] text-muted-foreground font-mono ml-5 sm:ml-6 truncate opacity-70">
+                            {p.barcode}
+                          </span>
+                        )}
                       </div>
-                      <span className={`text-[10px] sm:text-xs font-bold shrink-0 px-1 sm:px-1.5 py-0.5 rounded ${p.stock <= 0 ? 'text-red-700 bg-red-100 dark:text-red-400 dark:bg-red-950/40' : 'text-orange-700 bg-orange-100 dark:text-orange-400 dark:bg-orange-950/40'}`}>{p.stock} {p.type}</span>
+                      <span className={`text-[10px] sm:text-[11px] font-bold shrink-0 px-1.5 sm:px-2 py-0.5 rounded flex flex-col items-end ${p.weight <= 0 ? 'text-red-700 bg-red-50 border border-red-100' : 'text-orange-700 bg-orange-50 border border-orange-100'}`}>
+                        {(() => {
+                          const boxes = Math.ceil(p.weight / 25)
+                          return (
+                            <>
+                              <span className="whitespace-nowrap">{boxes} box{boxes > 1 ? "es" : ""} left</span>
+                              <span className="text-[9px] opacity-70">({p.weight.toFixed(1)} kg)</span>
+                            </>
+                          )
+                        })()}
+                      </span>
                     </div>
                   ))}
                 </div>

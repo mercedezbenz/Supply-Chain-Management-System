@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Image from "next/image"
 import {
   getFirestore,
   collection,
@@ -188,10 +189,12 @@ const filteredProducts = products.filter((p) => {
 
                     {/* IMAGE */}
                     <div className="w-14 h-14 bg-gray-200 rounded-md overflow-hidden">
-                      <img
+                      <Image
                         src={p.imageUrl || "/placeholder.png"}
                         className="w-full h-full object-cover"
                         alt={p.name}
+                        width={100}
+                        height={100}
                       />
                     </div>
 

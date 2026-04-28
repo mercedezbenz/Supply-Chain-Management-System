@@ -116,7 +116,7 @@ export function FirebaseSetupGuide() {
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>
                   <strong>This is the most critical step!</strong> Without these rules, the app will show
-                  "permission-denied" errors and won't work.
+                  &quot;permission-denied&quot; errors and won&apos;t work.
                 </AlertDescription>
               </Alert>
 
@@ -133,17 +133,17 @@ export function FirebaseSetupGuide() {
                     >
                       Firebase Console - Firestore Rules <ExternalLink className="w-3 h-3" />
                     </a>{" "}
-                    (this link goes directly to your project's rules)
+                    (this link goes directly to your project&apos;s rules)
                   </li>
-                  <li>You'll see a code editor with existing rules</li>
+                  <li>You&apos;ll see a code editor with existing rules</li>
                   <li>
                     <strong>Select ALL existing text</strong> and delete it
                   </li>
                   <li>Copy the rules below and paste them into the editor</li>
                   <li>
-                    Click the blue <strong>"Publish"</strong> button
+                    Click the blue <strong>&quot;Publish&quot;</strong> button
                   </li>
-                  <li>Wait for the "Rules published successfully" message</li>
+                  <li>Wait for the &quot;Rules published successfully&quot; message</li>
                 </ol>
               </div>
 
@@ -168,7 +168,7 @@ export function FirebaseSetupGuide() {
                 className="w-full"
                 disabled={rulesApplied}
               >
-                {rulesApplied ? "✓ Rules Applied Successfully" : "I've Applied the Rules"}
+                {rulesApplied ? "✓ Rules Applied Successfully" : "I&apos;ve Applied the Rules"}
               </Button>
             </CardContent>
           </Card>
@@ -261,10 +261,10 @@ export function FirebaseSetupGuide() {
               <strong>If you still see permission errors:</strong>
             </p>
             <ul className="list-disc list-inside space-y-1">
-              <li>Make sure you clicked "Publish" in the Firebase Console after pasting the rules</li>
+              <li>Make sure you clicked &quot;Publish&quot; in the Firebase Console after pasting the rules</li>
               <li>Wait 1-2 minutes for the rules to propagate</li>
               <li>Refresh this page and try again</li>
-              <li>Check that you're using the correct Firebase project (decktago)</li>
+              <li>Check that you&apos;re using the correct Firebase project (decktago)</li>
             </ul>
           </CardContent>
         </Card>

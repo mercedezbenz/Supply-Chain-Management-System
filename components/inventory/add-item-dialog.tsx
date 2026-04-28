@@ -4,6 +4,7 @@ import { db } from "@/lib/firebase-live";
 import type React from "react"
 import { useState, useRef, useEffect, useCallback } from "react"
 import { format } from "date-fns"
+import Image from "next/image"
 import { CalendarIcon, Barcode, RefreshCw, CheckCircle2, Loader2, Printer, Plus, Check, ChevronsUpDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -137,8 +138,6 @@ const EMPTY_FORM = {
   productName: "",
   productionDate: undefined as Date | undefined,
   expirationDate: undefined as Date | undefined,
-  incomingStock: "",
-  incomingUnit: "box" as "box" | "pack",
   // Weight tracking
   productionWeight: "",
   packingWeight: "",
@@ -635,9 +634,9 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
     }
     if (!formData.expirationDate) newErrors.expirationDate = "Expiration date is required"
 
-    const incomingNum = Number(formData.incomingStock.trim())
-    if (formData.incomingStock.trim() === "" || isNaN(incomingNum) || incomingNum < 0) {
-      newErrors.incomingStock = "Incoming stock must be a valid number (0 or greater)"
+    const prodW = parseFloat(formData.productionWeight)
+    if (!formData.productionWeight || isNaN(prodW) || prodW <= 0) {
+      newErrors.productionWeight = "Production weight is required (must be > 0)"
     }
 
 
@@ -664,19 +663,36 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
     setLoading(true)
     console.log("imageFile before upload:", imageFile)
     try {
-      const incoming = Number.parseInt(formData.incomingStock) || 0
-      const stockLeft = incoming
-
       // Compute weight difference
       const prodW = formData.productionWeight ? parseFloat(formData.productionWeight) : null
       const packW = formData.packingWeight ? parseFloat(formData.packingWeight) : null
       const weightDiff = prodW !== null && packW !== null ? Math.abs(prodW - packW) : null
 
+      // Weight-based: compute boxes from production weight (1 box = 25 kg)
+      const weight = prodW || 0
+      const computedBoxes = Math.floor(weight / 25)
+      const incoming = computedBoxes
+      const stockLeft = incoming
+
       // Standardize productKey for BOTH categories
       const productKey = `${(autoProductName || formData.category).toLowerCase().trim()}-${formData.productType.toLowerCase().trim()}`
         .replace(/\s+/g, "-")
 
+      // Upload image to Cloudinary FIRST
+      let uploadedImageUrl: string | null = null
+      if (imageFile) {
+        try {
+          uploadedImageUrl = await uploadToCloudinary(imageFile)
+        } catch (uploadErr: any) {
+          console.error("Cloudinary upload failed:", uploadErr)
+          toast.error("Image Upload Failed", {
+            description: uploadErr.message || "Could not upload image. Product will be saved without an image.",
+          })
+        }
+      }
+
       const itemData: any = {
+        imageUrl: uploadedImageUrl || null,
         barcode: formData.barcode.trim(),
         barcode_base: formData.barcodeBase || formData.barcode.trim(),
         product_id: productKey,
@@ -696,8 +712,10 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         productionDate: formData.productionDate || null,
         expiryDate: formData.expirationDate || null,
         expirationDate: formData.expirationDate || null,
-        unit_type: formData.incomingUnit.toUpperCase(),
+        unit_type: "BOX",
         // Weight tracking
+        incoming_weight: weight,
+        incoming_boxes: computedBoxes,
         production_weight: prodW,
         packing_weight: packW,
         weight_difference: weightDiff,
@@ -714,41 +732,28 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
       await InventoryService.addItem(itemData)
 
       // Upsert product master data for products that support image upload
-      if (itemData.category === "By-product" || itemData.category === "Finished Product") {
+     if (imageFile) {
         const ref = doc(db, "products", productKey);
         const snap = await getDoc(ref);
         const existingData = snap.data();
 
-        // Upload image to Cloudinary (if provided)
-        let imageUrl: string | null = null
-        if (imageFile) {
-          try {
-            imageUrl = await uploadToCloudinary(imageFile)
-          } catch (uploadErr: any) {
-            console.error("Cloudinary upload failed:", uploadErr)
-            toast.error("Image Upload Failed", {
-              description: uploadErr.message || "Could not upload image. Product will be saved without an image.",
-            })
-          }
-        }
+        console.log("Final imageUrl:", uploadedImageUrl)
 
-        console.log("Final imageUrl:", imageUrl)
-
-        if (!imageUrl && imageFile) {
+        if (!uploadedImageUrl && imageFile) {
            console.warn("Image upload failed or skipped")
         }
 
         console.log("Category:", itemData.category)
         console.log("ProductKey:", productKey)
         console.log("ImageFile:", imageFile)
-        console.log("ImageURL:", imageUrl)
+        console.log("ImageURL:", uploadedImageUrl)
 
         // 4. Fix overwrite issue using merge: true
         await setDoc(ref, {
   name: itemData.name,
   type: itemData.productType,
-  category: itemData.category, // ✅ ADD THIS
-  imageUrl: imageUrl ?? existingData?.imageUrl ?? null,
+  category: itemData.category,
+  imageUrl: uploadedImageUrl ?? existingData?.imageUrl ?? null,
 }, { merge: true });
       }
       
@@ -762,10 +767,12 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         barcode_base: formData.barcodeBase || formData.barcode.trim(),
         category: formData.category,
         type: formData.productType,
-        unit_type: formData.incomingUnit.toUpperCase(),
+        unit_type: "BOX",
         incoming_qty: incoming,
         incoming_packs: incoming,
-        incoming_unit: formData.incomingUnit,
+        incoming_weight: weight,
+        incoming_boxes: computedBoxes,
+        incoming_unit: "box",
         outgoing_qty: 0,
         outgoing_packs: 0,
         good_return: 0,
@@ -807,9 +814,9 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
     }
   }
 
-  // Stock left preview
-  const incoming = Number.parseInt(formData.incomingStock) || 0
-  const stockLeft = incoming
+  // Stock left preview (weight-based)
+  const previewWeight = parseFloat(formData.productionWeight) || 0
+  const previewBoxes = Math.floor(previewWeight / 25)
 
   // ── Category color helper ─────────────────────────────────────────────────
   const getCategoryColor = (cat: string) => {
@@ -1082,9 +1089,11 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                     />
                     {imagePreview && (
                       <div className="relative mt-1 w-24 h-24 rounded-lg border border-slate-200 overflow-hidden bg-white">
-                        <img
+                        <Image
                           src={imagePreview}
                           alt="Preview"
+                          width={96}
+                          height={96}
                           className="w-full h-full object-cover"
                         />
                         <button
@@ -1117,53 +1126,16 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                 </div>
               )}
 
-              {/* ── 2. STOCK ENTRY ────────────────────────────────────────── */}
+              {/* ── 2. STOCK ENTRY (Weight-Based) ─────────────────────────── */}
               <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-5 grid gap-4">
-                <p className="text-xs font-semibold uppercase tracking-widest text-blue-500">Stock Entry</p>
+                <p className="text-xs font-semibold uppercase tracking-widest text-blue-500">Stock Entry (Weight-Based)</p>
 
-                {/* Row 1: Incoming Stock (full width on mobile, half on sm+) */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {/* Incoming Stock */}
-                  <div className="grid gap-1.5">
-                    <Label className="text-sm font-medium text-slate-700">
-                      Incoming Stock <span className="text-red-500">*</span>
-                    </Label>
-                    <div className="flex gap-1.5">
-                      <Input
-                        id="incomingStock"
-                        type="number"
-                        min="0"
-                        value={formData.incomingStock}
-                        onChange={(e) => {
-                          setFormData((prev) => ({ ...prev, incomingStock: e.target.value }))
-                          setErrors((prev) => ({ ...prev, incomingStock: "" }))
-                        }}
-                        placeholder="e.g. 25"
-                        className={cn("h-9 flex-1", errors.incomingStock ? "border-destructive" : "")}
-                      />
-                      <Select
-                        value={formData.incomingUnit}
-                        onValueChange={(v) => setFormData((prev) => ({ ...prev, incomingUnit: v as "box" | "pack" }))}
-                      >
-                        <SelectTrigger className="h-9 w-[80px] shrink-0">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="box">Box</SelectItem>
-                          <SelectItem value="pack">Pack</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    {errors.incomingStock && <p className="text-xs text-destructive">{errors.incomingStock}</p>}
-                  </div>
-                </div>
-
-                {/* Row 2: Production Weight | Packing Weight */}
+                {/* Row 1: Production Weight | Packing Weight */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {/* Production Weight */}
                   <div className="grid gap-1.5">
                     <Label className="text-sm font-medium text-slate-700">
-                      Production Weight
+                      Production Weight <span className="text-red-500">*</span>
                     </Label>
                     <div className="flex gap-1.5 items-center">
                       <Input
@@ -1172,14 +1144,16 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                         min="0"
                         step="0.01"
                         value={formData.productionWeight}
-                        onChange={(e) =>
+                        onChange={(e) => {
                           setFormData((prev) => ({ ...prev, productionWeight: e.target.value }))
-                        }
-                        placeholder="e.g. 120.5"
-                        className="h-9 flex-1"
+                          setErrors((prev) => ({ ...prev, productionWeight: "" }))
+                        }}
+                        placeholder="e.g. 125"
+                        className={cn("h-9 flex-1", errors.productionWeight ? "border-destructive" : "")}
                       />
                       <span className="text-sm font-medium text-slate-400 shrink-0">kg</span>
                     </div>
+                    {errors.productionWeight && <p className="text-xs text-destructive">{errors.productionWeight}</p>}
                   </div>
 
                   {/* Packing Weight */}
@@ -1204,6 +1178,24 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                     </div>
                   </div>
                 </div>
+
+                {/* Auto-computed boxes preview */}
+                {formData.productionWeight && parseFloat(formData.productionWeight) > 0 && (
+                  <div className="rounded-lg border border-blue-200 bg-blue-50/60 px-4 py-3 flex items-center gap-3">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-500 text-white text-xs font-bold">📦</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-blue-700">
+                        Auto-computed:{" "}
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-sm font-bold bg-blue-100 text-blue-800">
+                          {Math.floor(parseFloat(formData.productionWeight) / 25)} boxes
+                        </span>
+                        <span className="text-xs font-normal text-blue-600 ml-2">
+                          ({parseFloat(formData.productionWeight)} kg ÷ 25 kg/box)
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 {/* Row 3: Real-time Weight Difference Indicator */}
                 {(() => {

@@ -278,7 +278,7 @@ export function EncoderDashboard() {
                   
                   // For Verification Tab, calculate scanned progress dynamically if we need it
                   const totalItems = order.selectedStocks ? order.selectedStocks.length : 0;
-                  const scannedItems = order.selectedStocks ? order.selectedStocks.filter((s: any) => s.scannedQty === s.qty).length : 0;
+                  const scannedItems = order.selectedStocks ? order.selectedStocks.filter((s: any) => s.scanned === true || (s.scannedWeight >= s.requiredWeight && s.requiredWeight > 0)).length : 0;
                   
                   return (
                   <div
@@ -302,11 +302,15 @@ export function EncoderDashboard() {
                       {activeTab === "pending" ? (
                         order.items && order.items.length > 0 ? (
                           <ul className="text-[13px] text-gray-600 dark:text-foreground space-y-1">
-                            {order.items.map((item: any, idx: number) => (
-                              <li key={idx} className="truncate">
-                                • {item.name} <span className="text-gray-400">({item.quantity})</span>
-                              </li>
-                            ))}
+                            {order.items.map((item: any, idx: number) => {
+                              const weight = item.quantity || 0;
+                              const boxes = Math.ceil(weight / 25);
+                              return (
+                                <li key={idx} className="truncate">
+                                  • {item.name} <span className="text-gray-400">({weight} kg • {boxes} boxes)</span>
+                                </li>
+                              );
+                            })}
                           </ul>
                         ) : (
                           <span className="text-xs text-gray-400 italic">No items</span>
@@ -314,14 +318,19 @@ export function EncoderDashboard() {
                       ) : (
                         order.selectedStocks && order.selectedStocks.length > 0 ? (
                           <ul className="text-[13px] text-gray-600 dark:text-foreground space-y-1">
-                            {order.selectedStocks.map((stock: any, idx: number) => (
-                              <li key={idx} className="truncate">
-                                • {stock.itemName} 
-                                <span className={activeTab === "delivery" || activeTab === "on_delivery" || activeTab === "completed" ? "text-violet-600 font-bold ml-1 text-[11px]" : "text-gray-500 font-mono ml-1 text-[11px]"}>
-                                  {activeTab === "delivery" || activeTab === "on_delivery" || activeTab === "completed" ? `(${stock.scannedQty} box)` : `(${stock.barcode})`}
-                                </span>
-                              </li>
-                            ))}
+                            {order.selectedStocks.map((stock: any, idx: number) => {
+                              const weight = stock.requiredWeight || stock.allocatedWeight || stock.selectedWeight || 0;
+                              const boxes = Math.ceil(weight / 25);
+                              return (
+                                <li key={idx} className="truncate">
+                                  • {stock.itemName} 
+                                  <span className={activeTab === "delivery" || activeTab === "on_delivery" || activeTab === "completed" ? "text-violet-600 font-bold ml-1 text-[11px]" : "text-gray-500 font-mono ml-1 text-[11px]"}>
+                                    ({weight} kg • {boxes} boxes)
+                                    {activeTab === "verification" && ` • ${stock.barcode}`}
+                                  </span>
+                                </li>
+                              );
+                            })}
                           </ul>
                         ) : (
                           <span className="text-xs text-red-500 italic">No stock selected</span>

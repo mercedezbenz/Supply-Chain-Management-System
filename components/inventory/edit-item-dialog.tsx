@@ -102,6 +102,50 @@ export function EditItemDialog({ transaction, open, onOpenChange }: EditItemDial
   const cities = useMemo(() => getCities(addressData.region, addressData.province), [addressData.region, addressData.province])
   const barangays = useMemo(() => getBarangays(addressData.region, addressData.province, addressData.city), [addressData.region, addressData.province, addressData.city])
 
+  // ─── Find linked customer_transaction ──────────────────────────────────
+  const findCustomerTransaction = useCallback(async (txn: any) => {
+    try {
+      const allCustTxns = await CustomerTransactionService.getTransactions()
+      // Match by productBarcode + customerName (most reliable)
+      const match = (allCustTxns as any[]).find((ct: any) =>
+        ct.productBarcode === txn.barcode &&
+        ct.customerName === txn.customer_name
+      )
+      if (match) {
+        setCustomerTxnId(match.id)
+        // Also populate address/doc data from customer_transaction if richer
+        const ad = match.addressDetails || {}
+        if (ad.houseNumber) {
+          setAddressData(prev => ({
+            houseNumber: prev.houseNumber || ad.houseNumber || "",
+            streetName: prev.streetName || ad.streetName || "",
+            region: prev.region || ad.region || "",
+            province: prev.province || ad.province || "",
+            city: prev.city || ad.city || "",
+            barangay: prev.barangay || ad.barangay || "",
+            zipCode: prev.zipCode || ad.zipCode || "",
+          }))
+        }
+        if (match.deliveryReceiptNo || match.salesInvoiceNo) {
+          setDocData(prev => ({
+            deliveryDate: prev.deliveryDate || toInputDate(match.deliveryDate),
+            deliveryReceiptNo: prev.deliveryReceiptNo || match.deliveryReceiptNo || "",
+            salesInvoiceNo: prev.salesInvoiceNo || match.salesInvoiceNo || "",
+            transferSlipNo: prev.transferSlipNo || match.transferSlipNo || "",
+            processingDate: prev.processingDate || toInputDate(match.processingDate),
+          }))
+        }
+        console.log("[EditItemDialog] Found matching customer_transaction:", match.id)
+      } else {
+        console.log("[EditItemDialog] No matching customer_transaction found for:", txn.barcode, txn.customer_name)
+        setCustomerTxnId(null)
+      }
+    } catch (err) {
+      console.warn("[EditItemDialog] Error finding customer_transaction:", err)
+      setCustomerTxnId(null)
+    }
+  }, [])
+
   // ─── Sync form data when transaction changes ─────────────────────────
   useEffect(() => {
     if (!transaction) return
@@ -147,51 +191,9 @@ export function EditItemDialog({ transaction, open, onOpenChange }: EditItemDial
       // Try to find matching customer_transaction by barcode + customer_name
       findCustomerTransaction(txn)
     }
-  }, [transaction])
+  }, [transaction, findCustomerTransaction])
 
-  // ─── Find linked customer_transaction ──────────────────────────────────
-  const findCustomerTransaction = useCallback(async (txn: any) => {
-    try {
-      const allCustTxns = await CustomerTransactionService.getTransactions()
-      // Match by productBarcode + customerName (most reliable)
-      const match = (allCustTxns as any[]).find((ct: any) =>
-        ct.productBarcode === txn.barcode &&
-        ct.customerName === txn.customer_name
-      )
-      if (match) {
-        setCustomerTxnId(match.id)
-        // Also populate address/doc data from customer_transaction if richer
-        const ad = match.addressDetails || {}
-        if (ad.houseNumber) {
-          setAddressData(prev => ({
-            houseNumber: prev.houseNumber || ad.houseNumber || "",
-            streetName: prev.streetName || ad.streetName || "",
-            region: prev.region || ad.region || "",
-            province: prev.province || ad.province || "",
-            city: prev.city || ad.city || "",
-            barangay: prev.barangay || ad.barangay || "",
-            zipCode: prev.zipCode || ad.zipCode || "",
-          }))
-        }
-        if (match.deliveryReceiptNo || match.salesInvoiceNo) {
-          setDocData(prev => ({
-            deliveryDate: prev.deliveryDate || toInputDate(match.deliveryDate),
-            deliveryReceiptNo: prev.deliveryReceiptNo || match.deliveryReceiptNo || "",
-            salesInvoiceNo: prev.salesInvoiceNo || match.salesInvoiceNo || "",
-            transferSlipNo: prev.transferSlipNo || match.transferSlipNo || "",
-            processingDate: prev.processingDate || toInputDate(match.processingDate),
-          }))
-        }
-        console.log("[EditItemDialog] Found matching customer_transaction:", match.id)
-      } else {
-        console.log("[EditItemDialog] No matching customer_transaction found for:", txn.barcode, txn.customer_name)
-        setCustomerTxnId(null)
-      }
-    } catch (err) {
-      console.warn("[EditItemDialog] Error finding customer_transaction:", err)
-      setCustomerTxnId(null)
-    }
-  }, [])
+
 
   // ─── Simple field updaters ────────────────────────────────────────────
   const updateField = useCallback((field: string, value: string) => {

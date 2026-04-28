@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { doc, updateDoc, collection, addDoc, serverTimestamp, runTransaction } from "firebase/firestore"
 import { getFirebaseDb, auth } from "@/lib/firebase-live"
 import { FirebaseService } from "@/services/firebase-service"
@@ -65,7 +65,7 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
     }
   }, [isOpen, task])
 
-  const getProcessingPlan = () => {
+  const getProcessingPlan = useCallback(() => {
     const plan: any[] = []
     
     // Deduplicate batches by barcode or ID to prevent ghost duplicates
@@ -78,58 +78,42 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
       ).values()
     )
 
-    // Filter only valid stock
-    const filteredBatches = uniqueBatches.filter((item: any) => {
-      const incoming = item.incoming ?? item.stockIncoming ?? item.incomingStock ?? 0
-      const outgoing = item.outgoing ?? item.stockOutgoing ?? item.outgoingStock ?? 0
-      const good = item.goodReturnStock ?? 0
-      const bad = item.damageReturnStock ?? 0
-
-      const remaining = incoming - outgoing + good - bad
-      return remaining > 0
-    })
-
-    // Map remaining quantity
-    const invMap = filteredBatches.map((inv: any) => {
-      const incoming = inv.incoming ?? inv.stockIncoming ?? inv.incomingStock ?? 0
-      const outgoing = inv.outgoing ?? inv.stockOutgoing ?? inv.outgoingStock ?? 0
-      const good = inv.goodReturnStock ?? 0
-      const bad = inv.damageReturnStock ?? 0
-      const remainingQty = incoming - outgoing + good - bad
-      return { ...inv, remainingQty }
-    })
+    // Filter only valid stock using weight fields
+    const invMap = uniqueBatches.map((inv: any) => {
+      const incoming = inv.incoming_weight ?? inv.production_weight ?? inv.incoming ?? 0
+      const outgoing = inv.outgoing_weight ?? inv.outgoing ?? 0
+      const good = inv.good_return_weight ?? inv.goodReturnStock ?? 0
+      const bad = inv.damage_return_weight ?? inv.damageReturnStock ?? 0
+      const remainingWeight = Math.max(0, incoming - outgoing + good - bad)
+      return { ...inv, remainingWeight }
+    }).filter(item => item.remainingWeight > 0)
 
     task.items?.forEach((item: any) => {
-      const neededQty = item.quantity || 0
+      const requiredWeight = item.quantity || 0
       
       const itemPlan = {
         name: item.name,
-        needed: neededQty,
-        unit: item.unit || "boxes/packs",
+        needed: requiredWeight,
+        unit: "kg",
         batches: [] as any[],
         isExpanded: true,
       }
 
       const orderName = item.name || "";
       
-      // Find matching batches using exact name matching, ONLY > 0 transaction-verified stock, and skip archived
       let matchingBatches = invMap.filter(inv => {
         const invName = inv.productName || inv.name || "";
         const isArchived = Boolean((inv as any).isDeleted) || Boolean((inv as any).archived);
-        return invName === orderName && inv.remainingQty > 0 && !isArchived;
+        return invName === orderName && inv.remainingWeight > 0 && !isArchived;
       });
       
-      // 3. Sort FIFO (Expiration asc, then CreatedAt asc)
+      // Sort FIFO
       matchingBatches.sort((a, b) => {
         const aExp = a.expirationDate || a.expiryDate;
         const bExp = b.expirationDate || b.expiryDate;
         const aTimeExp = aExp?.seconds ? aExp.seconds * 1000 : (aExp?.toDate ? aExp.toDate().getTime() : Infinity);
         const bTimeExp = bExp?.seconds ? bExp.seconds * 1000 : (bExp?.toDate ? bExp.toDate().getTime() : Infinity);
-        
-        if (aTimeExp !== bTimeExp) {
-            return aTimeExp - bTimeExp;
-        }
-
+        if (aTimeExp !== bTimeExp) return aTimeExp - bTimeExp;
         const aAdd = a.createdAt;
         const bAdd = b.createdAt;
         const aTimeAdd = aAdd?.seconds ? aAdd.seconds * 1000 : (aAdd?.toDate ? aAdd.toDate().getTime() : Infinity);
@@ -137,53 +121,52 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
         return aTimeAdd - bTimeAdd;
       });
 
-      let remainingQtyToFill = neededQty;
+      let remainingToFill = requiredWeight;
 
-      // Map ALL shown matches so user can manually choose exact quantity
       for (const inv of matchingBatches) {
-        let qtyToTake = 0;
-        const available = inv.remainingQty;
+        let weightToTake = 0;
+        const availableWeight = inv.remainingWeight;
+        const weightPerBox = 25; // Business Rule: 1 BOX = 25 KG
 
-        if (available > 0 && remainingQtyToFill > 0) {
-           qtyToTake = Math.min(available, remainingQtyToFill);
-           remainingQtyToFill = Math.max(0, remainingQtyToFill - qtyToTake);
+        if (availableWeight > 0 && remainingToFill > 0) {
+           weightToTake = Math.min(availableWeight, remainingToFill);
+           remainingToFill = Math.max(0, remainingToFill - weightToTake);
         }
 
         itemPlan.batches.push({
           inventoryId: inv.id,
           barcode: (inv as any).batchNumber || inv.barcode || "N/A", 
-          available: available,
-          quantity: qtyToTake,
-          productionWeight: (inv as any).production_weight || 0,
-          packingWeight: (inv as any).packing_weight || 0,
+          availableWeight: availableWeight,
+          selectedWeight: weightToTake,
+          weightPerBox: weightPerBox,
           expiryDate: inv.expirationDate || inv.expiryDate,
-          createdAt: inv.createdAt
+          createdAt: inv.createdAt,
+          uiExpanded: weightToTake > 0
         });
       }
 
       plan.push(itemPlan)
     })
-
     return plan
-  }
+  }, [inventory, task.items])
 
   useEffect(() => {
     if (inventory.length > 0) {
       setPlanState(getProcessingPlan())
     }
-  }, [inventory])
+  }, [inventory, getProcessingPlan])
 
   // Step 1: Confirmation explicitly seals exact selections in Firebase database
   const handleConfirmSelection = async () => {
     if (!auth.currentUser) return toast.error("User not authenticated")
     
-    // Safety guard: block submission if any product is not fully fulfilled
+    // Safety guard: block submission if any product is not fully fulfilled (based on weight)
     const unfulfilled = planState.find(p => {
-      const totalQty = p.batches.reduce((sum: number, b: any) => sum + (Number(b.quantity) || 0), 0);
-      return totalQty < p.needed;
+      const totalSelectedKg = p.batches.reduce((sum: number, b: any) => sum + (Number(b.selectedWeight) || 0), 0);
+      return totalSelectedKg < p.needed;
     });
     if (unfulfilled) {
-      toast.error(`Incomplete selection for "${unfulfilled.name}". Please fulfill required boxes before confirming.`);
+      toast.error(`Incomplete selection for "${unfulfilled.name}". Please fulfill required weight (kg) before confirming.`);
       return;
     }
     
@@ -192,16 +175,16 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
       const selectedBatches: any[] = []
       for (const p of planState) {
         for (const b of p.batches) {
-          if (b.quantity > 0) {
+          if (b.selectedWeight > 0) {
             selectedBatches.push({
               itemName: p.name,
               inventoryId: b.inventoryId,
               barcode: b.barcode,
-              quantity: b.quantity || 0,
-              productionWeight: b.productionWeight || 0,
-              packingWeight: b.packingWeight || 0,
+              requiredWeight: b.selectedWeight,
+              availableWeight: b.availableWeight,
+              weightPerBox: b.weightPerBox,
+              scannedWeight: 0,
               dateAdded: b.createdAt || null,
-              scannedQty: 0 // Initialize at zero for verification phase
             })
           }
         }
@@ -248,12 +231,11 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
     }
     
     const batch = verificationState[batchIdx]
-    const requiredQty = batch.quantity || 0
-    const currentScanned = batch.scannedQty || 0
+    const requiredWeight = batch.requiredWeight || 0
     
     // Prevent double scan if batch already fully verified
-    if (batch.scanned || currentScanned >= requiredQty) {
-      toast.error(`Batch ${code} is already verified and deducted!`)
+    if (batch.scanned) {
+      toast.error(`Batch ${code} is already verified!`)
       return
     }
 
@@ -261,49 +243,39 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
     console.log("TASK STATUS:", task.status)
     console.log("BATCH:", batch)
 
-    // Execute atomic Firestore transaction: deduct 1 per scan
+    // Execute atomic Firestore transaction: deduct FULL allocated weight
     setProcessing(true)
     try {
       const db = getFirebaseDb()
-      // The system MUST NOT directly update inventory.remaining.
-      // Stock must ONLY be deducted via transactions.
       await addDoc(collection(db, "transactions"), {
         type: "OUT",
-
         orderId: task.orderId,
         productName: batch.itemName || batch.productName || "Unknown",
-
         barcode: batch.barcode,
         barcode_base: batch.barcode_base || null,
-
         inventoryId: batch.inventoryId,
-
-        outgoing_qty: 1,
-        outgoing_packs: 1,
-
-        incoming_qty: 0,
-        incoming_packs: 0,
-
-        good_return: 0,
-        damage_return: 0,
-
+        outgoing_weight: requiredWeight,
+        outgoing_boxes: Math.ceil(requiredWeight / 25),
         created_at: serverTimestamp(),
-
         source: "encoder_verification"
       })
 
-      console.log("OUT TRANSACTION CREATED", {
-        barcode: batch.barcode,
-        orderId: task.orderId
+      // Update inventory document: deduct weight and set status if depleted
+      const inventoryDocRef = doc(db, "inventory", batch.inventoryId)
+      const isDepleted = requiredWeight >= (batch.availableWeight || 0)
+      
+      await updateDoc(inventoryDocRef, {
+        outgoing_weight: ((inventory.find(i => i.id === batch.inventoryId) as any)?.outgoing_weight || 0) + requiredWeight,
+        status: isDepleted ? "OUT_OF_STOCK" : "ACTIVE"
       })
 
       // Update local verification state
       const newState = [...verificationState]
-      const newScannedQty = currentScanned + 1
+      const newScannedWeight = requiredWeight
       newState[batchIdx] = { 
         ...newState[batchIdx], 
-        scannedQty: newScannedQty,
-        scanned: newScannedQty >= requiredQty,
+        scannedWeight: newScannedWeight,
+        scanned: true,
         scannedAt: new Date().toISOString()
       }
       setVerificationState(newState)
@@ -334,24 +306,21 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
         osc.stop(audioCtx.currentTime + 0.1)
       } catch {}
 
-      toast.success(`✔ Verified & deducted 1 box for ${batch.itemName} (${newScannedQty}/${requiredQty})`)
+      toast.success(`✔ Verified & deducted full ${requiredWeight.toFixed(1)}kg for ${batch.itemName}`)
 
       // Check if ALL batches are now fully verified
       const allDone = newState.every((b: any) => b.scanned === true)
       
       if (allDone) {
-        // Move task to FOR_DELIVERY (not directly ON_DELIVERY)
+        // Move task to FOR_DELIVERY
         await updateDoc(doc(db, "encoder_tasks", task.id), {
           status: "FOR_DELIVERY",
           scanned: true,
           updatedAt: serverTimestamp()
         })
 
-        // Fix applied here: Removed extraneous sales notification to ensure isolation.
-        // Sales only receives "New Order" notifications.
         console.log("STATUS UPDATE → IN TRANSIT after scan complete")
         await updateOrderStatus(task.orderId, "in_transit")
-
 
         toast.success("🎉 All batches verified! Task moved to For Delivery.")
         onClose()
@@ -364,16 +333,16 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
     }
   }
 
-  // Validate that ALL products have their required box quantity fully met
+  // Validate that ALL products have their required quantity fully met (in kg)
   const isFullyFulfilled = planState.length > 0 && planState.every(p => {
-    const totalQty = p.batches.reduce((sum: number, b: any) => sum + (Number(b.quantity) || 0), 0);
-    return totalQty >= p.needed;
+    const totalSelectedKg = p.batches.reduce((sum: number, b: any) => sum + (Number(b.selectedWeight) || 0), 0);
+    return totalSelectedKg >= p.needed;
   });
   
   // Compute totals for the warning message
   const selectionSummary = planState.map(p => {
-    const totalQty = p.batches.reduce((sum: number, b: any) => sum + (Number(b.quantity) || 0), 0);
-    return { name: p.name, needed: p.needed, selected: totalQty, remaining: Math.max(0, p.needed - totalQty) };
+    const totalSelectedKg = p.batches.reduce((sum: number, b: any) => sum + (Number(b.selectedWeight) || 0), 0);
+    return { name: p.name, needed: p.needed, selected: totalSelectedKg, remaining: Math.max(0, p.needed - totalSelectedKg) };
   });
   const hasIncompleteItems = selectionSummary.some(s => s.remaining > 0);
 
@@ -406,9 +375,9 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
               <div className="space-y-6 animate-in fade-in duration-300">
                 {/* Overall progress */}
                 {(() => {
-                  const totalRequired = verificationState.reduce((s: number, b: any) => s + (b.quantity || 0), 0);
-                  const totalScanned = verificationState.reduce((s: number, b: any) => s + (b.scannedQty || 0), 0);
-                  const allDone = totalScanned >= totalRequired;
+                  const totalRequiredKg = verificationState.reduce((s: number, b: any) => s + (b.requiredWeight || 0), 0);
+                  const totalScannedKg = verificationState.reduce((s: number, b: any) => s + (b.scannedWeight || 0), 0);
+                  const allDone = totalScannedKg >= totalRequiredKg;
                   return (
                     <div className={cn("px-6 py-5 rounded-xl border", allDone ? "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/30" : "bg-sky-50 dark:bg-sky-950/20 border-sky-100 dark:border-sky-900/30")}>
                       <div className="flex items-center justify-between mb-2">
@@ -416,18 +385,18 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
                           {allDone ? "✅ Verification Complete" : "Scan Barcodes to Verify"}
                         </h3>
                         <span className={cn("text-sm font-black px-3 py-1 rounded-full border", allDone ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-sky-100 text-sky-700 border-sky-200")}>
-                          {totalScanned} / {totalRequired} boxes
+                          {totalScannedKg.toFixed(1)} / {totalRequiredKg.toFixed(1)} kg
                         </span>
                       </div>
                       <p className={cn("text-xs mb-4 font-medium", allDone ? "text-emerald-600/80" : "text-sky-600/80")}>
-                        {allDone ? "All boxes verified and deducted from inventory." : "Scan each barcode once to verify and deduct the full allocated quantity."}
+                        {allDone ? "All weight verified and deducted from inventory." : "Scan each barcode once to verify and deduct the full allocated weight for that batch."}
                       </p>
                       
                       {/* Progress bar */}
                       <div className="h-2.5 w-full bg-white/60 dark:bg-black/20 rounded-full overflow-hidden shadow-inner mb-4">
                         <div 
                           className={cn("h-full transition-all duration-500 ease-out rounded-full", allDone ? "bg-emerald-500" : "bg-sky-500")}
-                          style={{ width: `${totalRequired > 0 ? Math.min(100, (totalScanned / totalRequired) * 100) : 0}%` }}
+                          style={{ width: `${totalRequiredKg > 0 ? Math.min(100, (totalScannedKg / totalRequiredKg) * 100) : 0}%` }}
                         />
                       </div>
                       
@@ -460,9 +429,9 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
 
                 <div className="grid gap-3">
                   {verificationState.map((b, idx) => {
-                    const scanned = b.scannedQty || 0;
-                    const required = b.quantity || 0;
-                    const isFullyScanned = b.scanned === true || scanned >= required;
+                    const scannedKg = b.scannedWeight || 0;
+                    const requiredKg = b.requiredWeight || 0;
+                    const isFullyScanned = b.scanned === true || scannedKg >= requiredKg;
                     return (
                       <div key={idx} className={cn(
                         "p-4 rounded-xl border transition-all duration-300",
@@ -490,12 +459,12 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
                             <span className={cn("text-[17px] font-black tabular-nums", 
                               isFullyScanned ? "text-emerald-600 dark:text-emerald-400" : "text-gray-400"
                             )}>
-                              {scanned} / {required}
+                              {scannedKg.toFixed(1)} / {requiredKg.toFixed(1)} kg
                             </span>
                             <p className={cn("text-[10px] font-bold uppercase tracking-wider mt-0.5", 
                               isFullyScanned ? "text-emerald-500" : "text-gray-400"
                             )}>
-                              {isFullyScanned ? "✓ Verified & Deducted" : `Awaiting scan (${required} box)`}
+                              {isFullyScanned ? "✓ Verified & Deducted" : `Awaiting scan (${Math.ceil(requiredKg / 25)} boxes)`}
                             </p>
                           </div>
                         </div>
@@ -549,12 +518,16 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
                 </div>
 
                 {planState.map((p, idx) => {
-                  const totalQty = p.batches.reduce((sum: number, b: any) => sum + (Number(b.quantity) || 0), 0);
-                  const isMatch = totalQty === p.needed;
-                  const isUnder = totalQty < p.needed;
+                  const requiredKg = p.needed;
+                  const totalSelectedKg = p.batches.reduce((sum: number, b: any) => sum + (Number(b.selectedWeight) || 0), 0);
+                  const remainingKg = Math.max(0, requiredKg - totalSelectedKg);
+                  const isMatch = remainingKg === 0 && totalSelectedKg === requiredKg;
+                  const isUnder = remainingKg > 0;
+                  const isOver = totalSelectedKg > requiredKg;
+                  const totalSelectedBoxes = Math.ceil(totalSelectedKg / 25);
                   
                   // Product metrics
-                  const totalRemaining = p.batches.reduce((sum: number, b: any) => sum + b.available, 0);
+                  const totalRemainingWeight = p.batches.reduce((sum: number, b: any) => sum + b.availableWeight, 0);
                   const nearExpiryBatches = p.batches.filter((b: any) => {
                      if (!b.expiryDate) return false;
                      const d = b.expiryDate.toDate ? b.expiryDate.toDate() : new Date(b.expiryDate.seconds * 1000);
@@ -562,17 +535,26 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
                      return diffDays <= 90;
                   });
                   const hasNearExpiry = nearExpiryBatches.length > 0;
-                  const isLowStock = totalRemaining <= 5;
+                  const isLowStock = totalRemainingWeight <= 125; // 5 boxes
                   
                   // Removed average weights for display
 
                   const renderBatchRow = (batch: any, bIdx: number, isSuggested: boolean, hasSelection: boolean) => {
-                    const handleUpdateQty = (val: number) => {
+                    const handleUpdateWeight = (val: number) => {
                       if (!isFifoOverridden) { toast.error("Click 'Override FIFO' to modify allocations manually."); return; }
                       const newPlan = [...planState];
                       const b = newPlan[idx].batches[bIdx];
-                      if (val > b.available) val = b.available;
-                      b.quantity = val;
+                      
+                      // Auto-correct to multiples of 25kg (1 box)
+                      let corrected = Math.round(val / 25) * 25;
+                      
+                      // Cap at available weight
+                      if (corrected > b.availableWeight) {
+                        corrected = b.availableWeight;
+                      }
+                      
+                      if (corrected < 0) corrected = 0;
+                      b.selectedWeight = corrected;
                       setPlanState(newPlan);
                     };
                     
@@ -603,9 +585,9 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
                              </div>
                              <div className="flex items-center gap-3 flex-wrap text-xs text-slate-500">
                                <Badge
-                                 className={cn("text-[10px] font-bold px-2 py-0.5", batch.available <= 5 ? "bg-amber-100 text-amber-700 border-amber-200" : "bg-slate-100 text-slate-600 border-slate-200")}
+                                 className={cn("text-[10px] font-bold px-2 py-0.5", batch.availableWeight <= 125 ? "bg-amber-100 text-amber-700 border-amber-200" : "bg-slate-100 text-slate-600 border-slate-200")}
                                  variant="outline"
-                               >{batch.available} in stock</Badge>
+                               >{batch.availableWeight.toFixed(1)} kg ({Math.ceil(batch.availableWeight / 25)} boxes) left</Badge>
                                
                                <span className="flex items-center gap-1">
                                  <Clock className="h-3.5 w-3.5 text-slate-400" />
@@ -616,20 +598,26 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
                                     {days < 0 ? "Expired" : `${days}d left`}
                                   </Badge>
                                )}
-                               <span className="flex items-center gap-1 text-slate-400">
-                                 <CalendarDays className="h-3.5 w-3.5" />
-                                 Added: {batch.createdAt?.toDate ? batch.createdAt.toDate().toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'}) : "N/A"}
-                               </span>
                              </div>
                            </div>
 
                            {isActive ? (
                              <div className="flex flex-col md:items-end gap-2 shrink-0 animate-in fade-in slide-in-from-right-4 duration-300">
                                <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-900/50 p-1.5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                                 <Button size="sm" variant="outline" className="h-8 px-3 text-xs font-bold bg-white dark:bg-slate-800 hover:text-sky-600 hover:border-sky-300" onClick={(e) => { e.stopPropagation(); handleUpdateQty(batch.quantity + 1); }}>+1 box</Button>
-                                 <Button size="sm" variant="outline" className="h-8 px-3 text-xs font-bold bg-white dark:bg-slate-800 hover:text-sky-600 hover:border-sky-300" onClick={(e) => { e.stopPropagation(); handleUpdateQty(batch.quantity + 2); }}>+2 box</Button>
-                                 <Button size="sm" variant="outline" className="h-8 px-3 text-xs font-bold bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 border-emerald-200 hover:bg-emerald-50" onClick={(e) => { e.stopPropagation(); handleUpdateQty(batch.available); }}>MAX</Button>
-                                 <Button size="sm" variant="ghost" className="h-8 px-3 text-xs font-bold hover:bg-red-50 hover:text-red-600 text-red-500 transition-colors" onClick={(e) => { e.stopPropagation(); handleUpdateQty(0);
+                                 <Button size="sm" variant="outline" className="h-8 px-2 text-[10px] font-bold bg-white dark:bg-slate-800 hover:text-sky-600 hover:border-sky-300" onClick={(e) => { e.stopPropagation(); handleUpdateWeight(batch.selectedWeight + 25); }}>+25 kg</Button>
+                                 <Button size="sm" variant="outline" className="h-8 px-2 text-[10px] font-bold bg-white dark:bg-slate-800 hover:text-sky-600 hover:border-sky-300" onClick={(e) => { e.stopPropagation(); handleUpdateWeight(batch.selectedWeight + 50); }}>+50 kg</Button>
+                                 <div className="relative w-20">
+                                   <Input 
+                                      type="number" 
+                                      className="h-8 pl-1.5 pr-5 text-[11px] font-bold" 
+                                      value={batch.selectedWeight || ""} 
+                                      placeholder="0"
+                                      onChange={(e) => { e.stopPropagation(); handleUpdateWeight(parseFloat(e.target.value) || 0); }}
+                                   />
+                                   <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold text-slate-400">kg</span>
+                                 </div>
+                                 <Button size="sm" variant="outline" className="h-8 px-2 text-[10px] font-bold bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 border-emerald-200 hover:bg-emerald-50" onClick={(e) => { e.stopPropagation(); handleUpdateWeight(batch.availableWeight); }}>MAX</Button>
+                                 <Button size="sm" variant="ghost" className="h-8 px-2 text-[10px] font-bold hover:bg-red-50 hover:text-red-600 text-red-500 transition-colors" onClick={(e) => { e.stopPropagation(); handleUpdateWeight(0);
                                       const newPlan = [...planState];
                                       newPlan[idx].batches[bIdx].uiExpanded = false;
                                       setPlanState(newPlan);
@@ -638,18 +626,16 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
                                
                                <div className={cn("flex flex-col items-end w-full bg-white dark:bg-black/20 p-2 rounded-lg border shadow-sm transition-colors", hasSelection ? "border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/20" : "border-slate-100 dark:border-slate-800")}>
                                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-0.5">Selected</span>
-                                 <div className="font-bold text-sm text-slate-800 dark:text-slate-200">
-                                     <span className={cn(hasSelection ? "text-sky-700 dark:text-sky-400" : "")}>{batch.quantity || 0} box</span> 
+                                 <div className="font-bold text-sm text-slate-800 dark:text-slate-200 text-right">
+                                     <span className={cn(hasSelection ? "text-sky-700 dark:text-sky-400" : "")}>{batch.selectedWeight.toFixed(1)} kg ({batch.selectedWeight / 25} boxes)</span> 
                                  </div>
                                </div>
                              </div>
                            ) : (
                              <div className="flex shrink-0 ml-4 items-center gap-2">
-                                {!isFifoOverridden ? (
-                                    <Badge variant="outline" className="bg-slate-50 text-slate-400 px-3 py-1 font-semibold border-slate-200">Locked</Badge>
-                                ) : (
-                                    <Button size="sm" variant="ghost" className="text-sky-600 font-bold hover:bg-sky-50 hover:text-sky-700 pointer-events-none">Select Batch <ChevronRight className="w-4 h-4 ml-1"/></Button>
-                                )}
+                                <Badge variant="outline" className="bg-slate-50 text-slate-400 px-3 py-1 font-semibold border-slate-200">
+                                  {isFifoOverridden ? "Select Batch" : "Locked"}
+                                </Badge>
                              </div>
                            )}
                          </div>
@@ -674,9 +660,9 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
                          
                          {/* Validation feedback near the top */}
                          <div className="flex flex-col items-end gap-1.5 shrink-0">
-                            {totalQty === p.needed ? (
+                            {remainingKg === 0 ? (
                                <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 px-3 py-1 font-bold text-sm shadow-sm"><CheckCircle2 className="w-4 h-4 mr-1.5" /> FULFILLED</Badge>
-                            ) : totalQty > 0 ? (
+                            ) : totalSelectedKg > 0 ? (
                                <Badge className="bg-amber-100 text-amber-800 border-amber-300 px-3 py-1 font-bold text-sm shadow-sm"><Clock className="w-4 h-4 mr-1.5" /> IN PROGRESS</Badge>
                             ) : (
                                <Badge className="bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:border-slate-700 px-3 py-1 font-bold text-sm shadow-sm"><AlertTriangle className="w-4 h-4 mr-1.5 opacity-50" /> NOT STARTED</Badge>
@@ -685,28 +671,39 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
                          </div>
                       </div>
 
-                      <div className="flex items-center justify-between text-sm bg-white dark:bg-card border border-slate-200 dark:border-slate-800 rounded-lg p-3 shadow-sm pt-4 pb-4">
-                         <div className="text-center w-1/3 border-r border-slate-100 dark:border-slate-800">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Required</span>
-                            <span className="font-bold text-lg text-slate-700 dark:text-slate-200">{p.needed} box</span>
+                      <div className="flex flex-col gap-3 bg-white dark:bg-card border border-slate-200 dark:border-slate-800 rounded-lg p-3 shadow-sm pt-4 pb-4">
+                         <div className="flex items-center justify-between text-sm">
+                           <div className="text-center w-1/3 border-r border-slate-100 dark:border-slate-800">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Required</span>
+                              <span className="font-bold text-lg text-slate-700 dark:text-slate-200">{requiredKg.toFixed(2)} kg</span>
+                           </div>
+                           <div className="text-center w-1/3 border-r border-slate-100 dark:border-slate-800">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Selected</span>
+                              <span className={cn("font-bold text-lg cursor-default", totalSelectedKg > requiredKg ? "text-red-500" : totalSelectedKg > 0 ? "text-sky-600" : "text-slate-500")}>{totalSelectedKg.toFixed(2)} kg</span>
+                           </div>
+                           <div className="text-center w-1/3">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Remaining</span>
+                              <span className={cn("font-bold text-lg", remainingKg === 0 ? "text-emerald-600" : "text-amber-500")}>{remainingKg.toFixed(2)} kg</span>
+                           </div>
                          </div>
-                         <div className="text-center w-1/3 border-r border-slate-100 dark:border-slate-800">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Selected</span>
-                            <span className={cn("font-bold text-lg cursor-default", totalQty >= p.needed ? "text-emerald-600" : totalQty > 0 ? "text-sky-600" : "text-slate-500")}>{totalQty} box</span>
-                         </div>
-                         <div className="text-center w-1/3">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Remaining</span>
-                            <span className={cn("font-bold text-lg", totalQty >= p.needed ? "text-emerald-600" : "text-amber-600 text-red-500")}>{Math.max(0, p.needed - totalQty)} box</span>
+                         <div className="flex items-center justify-center gap-6 pt-2 border-t border-slate-50 dark:border-slate-800/50 mt-1">
+                           <div className="text-xs text-slate-500 font-medium">Selected: <span className="font-bold text-slate-700 dark:text-slate-300">{totalSelectedKg.toFixed(1)} kg ({totalSelectedBoxes} boxes)</span></div>
                          </div>
                       </div>
 
-                      {/* Progress Bar */}
-                      <div className="space-y-1 w-full mt-1">
+                      {/* Progress Bar & Summary Bar */}
+                      <div className="space-y-2 w-full mt-1">
                          <div className="h-2.5 w-full bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden shadow-inner flex">
                            <div 
-                             className={cn("h-full transition-all duration-500 ease-out", totalQty >= p.needed ? "bg-emerald-500" : "bg-sky-500 border-r border-sky-400")}
-                             style={{ width: `${Math.min(100, (totalQty / p.needed) * 100)}%` }}
+                             className={cn("h-full transition-all duration-500 ease-out", remainingKg === 0 ? "bg-emerald-500" : "bg-sky-500 border-r border-sky-400")}
+                             style={{ width: `${Math.min(100, (totalSelectedKg / requiredKg) * 100)}%` }}
                            />
+                         </div>
+                         <div className="flex justify-between items-center text-xs px-1">
+                           <span className="font-bold text-slate-500">Total Allocated: {totalSelectedKg.toFixed(1)} / {requiredKg.toFixed(1)} kg</span>
+                           {totalSelectedKg > requiredKg && (
+                             <span className="font-bold text-red-500">Over Allocation: {(totalSelectedKg - requiredKg).toFixed(1)} kg</span>
+                           )}
                          </div>
                       </div>
                     </div>
@@ -746,7 +743,7 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
               <p className="text-sm font-bold text-red-700 dark:text-red-400">Incomplete Selection</p>
               <p className="text-xs text-red-600/80 dark:text-red-400/80 mt-0.5">
                 {selectionSummary.filter(s => s.remaining > 0).map(s => 
-                  `${s.name}: need ${s.remaining} more box(es)`
+                  `${s.name}: need ${s.remaining.toFixed(1)} more kg`
                 ).join(" · ")}
               </p>
             </div>

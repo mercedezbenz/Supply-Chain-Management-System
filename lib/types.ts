@@ -158,6 +158,10 @@ export interface InventoryTransaction {
   source: string             // supplier / production / customer_return / delivery
   created_at: Date | any
   // Weight tracking fields
+  incoming_weight?: number | null
+  outgoing_weight?: number | null
+  good_return_weight?: number | null
+  damage_return_weight?: number | null
   production_weight?: number | null
   packing_weight?: number | null
   weight_difference?: number | null

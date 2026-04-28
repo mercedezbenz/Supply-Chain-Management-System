@@ -25,6 +25,7 @@ import {
 
 interface DashboardStats {
   totalItems: number
+  totalWeight: number
   lowStockItems: number
   expiringSoon: number
   outOfStock: number
@@ -166,6 +167,7 @@ export function DashboardOverview() {
   const router = useRouter()
   const [stats, setStats] = useState<DashboardStats>({
     totalItems: 0,
+    totalWeight: 0,
     lowStockItems: 0,
     expiringSoon: 0,
     outOfStock: 0,
@@ -258,10 +260,10 @@ export function DashboardOverview() {
       // Subscribe to inventory collection
       unsubscribeInventory = subscribeToCollection("inventory", (items: InventoryItem[]) => {
         const normalizedItems = items.map((it: any) => {
-          const incomingStock = it.incoming ?? it.stockIncoming ?? it.incomingStock ?? 0
-          const outgoingStock = it.outgoing ?? it.stockOutgoing ?? it.outgoingStock ?? 0
-          const goodReturnStock = it.goodReturnStock ?? 0
-          const damageReturnStock = it.damageReturnStock ?? 0
+          const incomingStock = it.incoming_weight ?? it.production_weight ?? it.incoming ?? it.stockIncoming ?? it.incomingStock ?? 0
+          const outgoingStock = it.outgoing_weight ?? it.outgoing ?? it.stockOutgoing ?? it.outgoingStock ?? 0
+          const goodReturnStock = it.good_return_weight ?? it.goodReturnStock ?? 0
+          const damageReturnStock = it.damage_return_weight ?? it.damageReturnStock ?? 0
           const stockLeft = Math.max(0, incomingStock - outgoingStock + goodReturnStock - damageReturnStock)
 
           let updatedAt = it.updatedAt || it.lastUpdated || it.createdAt
@@ -282,27 +284,25 @@ export function DashboardOverview() {
 
         setAllInventoryItems(normalizedItems)
 
-        // Filter low stock items
+        // Filter low stock items - Logic: remainingWeight <= 50 kg
         const lowStockItems = normalizedItems.filter((item) => {
-          const incomingStock = (item as any).incoming ?? 0
-          const outgoingStock = (item as any).outgoing ?? 0
-          const goodReturnStock = (item as any).goodReturnStock ?? 0
-          const damageReturnStock = (item as any).damageReturnStock ?? 0
-          const stockLeft = Math.max(0, incomingStock - outgoingStock + goodReturnStock - damageReturnStock)
-          return stockLeft < 10
+          const stockLeft = (item as any).stockLeft ?? 0
+          return stockLeft > 0 && stockLeft <= 50
         })
         setStockAlerts(lowStockItems.slice(0, 10))
 
         // Filter out of stock
         const outOfStockItems = normalizedItems.filter((item) => {
           const stockLeft = (item as any).stockLeft ?? 0
-          return stockLeft <= 0
+          return stockLeft === 0
         })
 
         // Filter expiring soon (within 30 days)
         const now = new Date()
         const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
         const expiringItems = normalizedItems.filter((item) => {
+          const stockLeft = (item as any).stockLeft ?? 0
+          if (stockLeft <= 0) return false // Only count items in stock
           const expDate = parseDate((item as any).expiryDate ?? (item as any).expirationDate)
           if (!expDate) return false
           return expDate > now && expDate <= thirtyDaysFromNow
@@ -318,16 +318,20 @@ export function DashboardOverview() {
           .slice(0, 10)
         setRecentlyAdded(recent)
 
-        const lowStock = lowStockItems.length
+        const totalWeight = normalizedItems.reduce((sum, it) => sum + ((it as any).stockLeft || 0), 0)
+        console.log("TOTAL KG:", totalWeight)
+        const totalItemsCount = normalizedItems.length
+
         setStats((prev) => ({
           ...prev,
-          totalItems: items.length,
-          lowStockItems: lowStock,
+          totalItems: totalItemsCount,
+          totalWeight: totalWeight,
+          lowStockItems: lowStockItems.length,
           expiringSoon: expiringItems.length,
           outOfStock: outOfStockItems.length,
         }))
 
-        setShowNotificationBanner(lowStock > 0)
+        setShowNotificationBanner(lowStockItems.length > 0)
         setLoading(false)
       })
 
@@ -447,26 +451,26 @@ export function DashboardOverview() {
     if (mt.includes("GOOD") || (mt.includes("RETURN") && !mt.includes("DAMAGE"))) return "GOOD RETURN"
     if (mt.includes("OUTGOING") || mt.includes("OUT")) return "OUT"
     if (mt.includes("INCOMING") || mt.includes("SUPPLIER") || mt.includes("PRODUCTION") || mt.includes("FROM")) return "IN"
-    // Fallback: check quantities
-    if ((txn.outgoing_qty || 0) > 0) return "OUT"
-    if ((txn.incoming_qty || 0) > 0) return "IN"
-    if ((txn.good_return || 0) > 0) return "GOOD RETURN"
-    if ((txn.damage_return || 0) > 0) return "BAD RETURN"
+    // Fallback: check weights
+    if (((txn as any).outgoing_weight || 0) > 0) return "OUT"
+    if (((txn as any).incoming_weight || (txn as any).production_weight || 0) > 0) return "IN"
+    if (((txn as any).good_return_weight || 0) > 0) return "GOOD RETURN"
+    if (((txn as any).damage_return_weight || 0) > 0) return "BAD RETURN"
     return mt || "IN"
   }
 
   // Get the relevant quantity for a movement
   const getMovementQuantity = (txn: InventoryTransaction) => {
     const action = getMovementAction(txn)
-    if (action === "OUT") return txn.outgoing_qty || txn.incoming_qty || 0
-    if (action === "IN") return txn.incoming_qty || txn.outgoing_qty || 0
-    if (action === "GOOD RETURN") return txn.good_return || 0
-    if (action === "BAD RETURN") return txn.damage_return || 0
-    return txn.incoming_qty || txn.outgoing_qty || 0
+    if (action === "OUT") return (txn as any).outgoing_weight ?? (txn as any).outgoing_qty ?? 0
+    if (action === "IN") return (txn as any).incoming_weight ?? (txn as any).production_weight ?? (txn as any).incoming_qty ?? 0
+    if (action === "GOOD RETURN") return (txn as any).good_return_weight ?? (txn.good_return || 0)
+    if (action === "BAD RETURN") return (txn as any).damage_return_weight ?? (txn.damage_return || 0)
+    return (txn as any).incoming_weight ?? (txn as any).outgoing_weight ?? 0
   }
 
   const getMovementUnit = (txn: InventoryTransaction) => {
-    return txn.unit_type?.toLowerCase() || "pack"
+    return "kg"
   }
 
   // ─── Computed: Stock Status Donut Data ───
@@ -480,14 +484,14 @@ export function DashboardOverview() {
       const expDate = parseDate(item.expiryDate ?? item.expirationDate)
       const isExpiring = expDate && expDate > now && expDate <= thirtyDays
 
-      if (stockLeft <= 0) {
+      if (stockLeft === 0) {
         outOfStock++
       } else if (isExpiring) {
-        expiringSoon++
-      } else if (stockLeft < 10) {
-        lowStock++
+        expiringSoon += stockLeft
+      } else if (stockLeft <= 50) {
+        lowStock += stockLeft
       } else {
-        inStock++
+        inStock += stockLeft
       }
     })
 
@@ -543,11 +547,12 @@ export function DashboardOverview() {
         })
       }
       // 2. LOW STOCK (Warning)
-      else if (stockLeft < 10) {
+      else if (stockLeft <= 50) {
+        const boxes = Math.ceil(stockLeft / 25)
         result.push({
           type: "lowstock",
           icon: <div className="h-2.5 w-2.5 rounded-full bg-yellow-400 shadow-sm shadow-yellow-400/20" />,
-          message: `${name} is running low on stock.`,
+          message: `${boxes} box${boxes > 1 ? "es" : ""} remaining (${stockLeft} kg)`,
           priority: 4,
           category: "Warning",
         })
@@ -575,9 +580,9 @@ export function DashboardOverview() {
 
       const action = getMovementAction(txn)
       if (action === "OUT") {
-        dailyMap[key].used += txn.outgoing_qty || 0
+        dailyMap[key].used += (txn as any).outgoing_weight || 0
       } else if (action === "IN") {
-        dailyMap[key].restocked += txn.incoming_qty || 0
+        dailyMap[key].restocked += (txn as any).incoming_weight || (txn as any).production_weight || 0
       }
     })
 
@@ -656,8 +661,11 @@ export function DashboardOverview() {
           <CardContent className="px-5 pb-5">
             <div className="flex items-end justify-between">
               <div>
-                <div className="text-3xl font-bold text-gray-900 dark:text-foreground leading-none mb-2">
-                  {stats.totalItems.toLocaleString()}
+                <div className="text-3xl font-bold text-gray-900 dark:text-foreground leading-none mb-1">
+                  {stats.totalItems.toLocaleString()} items
+                </div>
+                <div className="text-[13px] font-medium text-gray-400 dark:text-muted-foreground mb-2">
+                  {stats.totalWeight.toLocaleString()} kg total
                 </div>
                 <div className="flex items-center gap-1.5">
                   <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/30">
@@ -798,7 +806,7 @@ export function DashboardOverview() {
                           boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
                           fontSize: "13px",
                         }}
-                        formatter={(value: number, name: string) => [`${value} items`, name]}
+                        formatter={(value: number, name: string) => [`${value.toLocaleString()} kg`, name]}
                       />
                     </PieChart>
                   </ResponsiveContainer>
@@ -809,7 +817,7 @@ export function DashboardOverview() {
                     <div key={entry.name} className="flex items-center gap-2">
                       <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: entry.color }} />
                       <span className="text-xs text-gray-500 dark:text-muted-foreground truncate">{entry.name}</span>
-                      <span className="text-xs font-bold text-gray-700 dark:text-foreground ml-auto">{entry.value}</span>
+                       <span className="text-xs font-bold text-gray-700 dark:text-foreground ml-auto">{entry.value.toLocaleString()} kg</span>
                     </div>
                   ))}
                 </div>
@@ -1059,8 +1067,12 @@ export function DashboardOverview() {
                           {/* Stock Status — badge + progress bar */}
                           <div className="flex flex-col items-center gap-1.5">
                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${statusColor}`}>
-                              {stockLeft > 0 && <span className="font-bold text-[11px]">{stockLeft}</span>}
                               {statusLabel}
+                              {stockLeft > 0 && (
+                                <span className="font-bold text-[11px]">
+                                  ({Math.ceil(stockLeft / 25)} box{Math.ceil(stockLeft / 25) !== 1 ? "es" : ""})
+                                </span>
+                              )}
                             </span>
                             {/* Progress bar */}
                             <div className="w-full max-w-[80px] h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
@@ -1263,181 +1275,6 @@ export function DashboardOverview() {
         </Card>
       </div>
 
-      {/* ─── Usage Trend Chart ─── */}
-      <Card className="rounded-2xl border border-gray-100 dark:border-border bg-white dark:bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.08)] transition-all duration-300 overflow-hidden">
-        {/* ── Card Header ── */}
-        <CardHeader className="px-6 pt-6 pb-3 flex flex-row items-start justify-between gap-4">
-          <div>
-            <CardTitle className="text-lg font-bold text-gray-900 dark:text-foreground">
-              Inventory Usage Trend
-            </CardTitle>
-            <CardDescription className="text-sm text-gray-400 dark:text-muted-foreground mt-0.5">
-              Daily usage and restocking patterns over the last 14 days
-            </CardDescription>
-          </div>
-          {/* Header-level legend pills */}
-          {usageTrendData.length > 0 && (
-            <div className="flex items-center gap-2 flex-shrink-0 pt-0.5">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800">
-                <span className="w-2 h-2 rounded-full bg-green-500 shadow-sm shadow-green-500/40" />
-                Incoming (Restock)
-              </span>
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800">
-                <span className="w-2 h-2 rounded-full bg-red-500 shadow-sm shadow-red-500/40" />
-                Outgoing (Usage)
-              </span>
-            </div>
-          )}
-        </CardHeader>
-
-        <CardContent className="px-2 sm:px-4 pb-6 pt-0">
-          {usageTrendData.length > 0 ? (
-            <>
-              {/* ── Chart ── */}
-              <div className="w-full h-[300px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart
-                    data={usageTrendData}
-                    margin={{ top: 16, right: 20, left: -10, bottom: 4 }}
-                  >
-                    {/* ── Gradient defs ── */}
-                    <defs>
-                      {/* Outgoing / Usage — Red */}
-                      <linearGradient id="gradOutgoing" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%"   stopColor="#ef4444" stopOpacity={0.18} />
-                        <stop offset="100%" stopColor="#ef4444" stopOpacity={0.01} />
-                      </linearGradient>
-                      {/* Incoming / Restock — Green */}
-                      <linearGradient id="gradIncoming" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%"   stopColor="#22c55e" stopOpacity={0.18} />
-                        <stop offset="100%" stopColor="#22c55e" stopOpacity={0.01} />
-                      </linearGradient>
-                    </defs>
-
-                    {/* ── Grid — horizontal lines only, very light ── */}
-                    <CartesianGrid
-                      strokeDasharray="4 4"
-                      stroke="#f1f5f9"
-                      vertical={false}
-                      horizontal={true}
-                    />
-
-                    {/* ── Axes ── */}
-                    <XAxis
-                      dataKey="date"
-                      tick={{ fontSize: 11, fill: "#94a3b8", fontFamily: "inherit" }}
-                      tickLine={false}
-                      axisLine={{ stroke: "#e2e8f0", strokeWidth: 1 }}
-                      dy={6}
-                      interval="preserveStartEnd"
-                    />
-                    <YAxis
-                      tick={{ fontSize: 11, fill: "#94a3b8", fontFamily: "inherit" }}
-                      tickLine={false}
-                      axisLine={false}
-                      tickFormatter={(v: number) => (v === 0 ? "0" : v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${v}`)}
-                      width={38}
-                    />
-
-                    {/* ── Custom Tooltip ── */}
-                    <RechartsTooltip
-                      cursor={{ stroke: "#e2e8f0", strokeWidth: 1.5, strokeDasharray: "4 4" }}
-                      contentStyle={{
-                        backgroundColor: "#ffffff",
-                        border: "1px solid #e2e8f0",
-                        borderRadius: "14px",
-                        padding: "10px 16px",
-                        boxShadow: "0 8px 24px rgba(0,0,0,0.10)",
-                        fontSize: "12px",
-                        fontFamily: "inherit",
-                        minWidth: "160px",
-                      }}
-                      labelStyle={{ fontWeight: 700, color: "#1e293b", marginBottom: "6px", fontSize: "12px" }}
-                      formatter={(value: number, name: string) => {
-                        const isOutgoing = name === "used"
-                        const label = isOutgoing ? "Outgoing (Usage)" : "Incoming (Restock)"
-                        const color = isOutgoing ? "#ef4444" : "#22c55e"
-                        const unit = value === 1 ? "unit" : "units"
-                        return [
-                          <span key="val" style={{ color, fontWeight: 700, fontSize: "13px" }}>
-                            {value} <span style={{ fontWeight: 400, color: "#64748b", fontSize: "11px" }}>{unit}</span>
-                          </span>,
-                          label,
-                        ]
-                      }}
-                    />
-
-                    {/* ── Outgoing (Usage) — Red ── */}
-                    <Area
-                      type="monotoneX"
-                      dataKey="used"
-                      name="used"
-                      stroke="#ef4444"
-                      strokeWidth={3}
-                      fill="url(#gradOutgoing)"
-                      dot={{ r: 3.5, fill: "#ef4444", stroke: "#ffffff", strokeWidth: 2 }}
-                      activeDot={{ r: 6, fill: "#ef4444", stroke: "#ffffff", strokeWidth: 2.5, style: { filter: "drop-shadow(0 0 4px rgba(239,68,68,0.5))" } }}
-                      isAnimationActive={true}
-                      animationDuration={900}
-                      animationEasing="ease-out"
-                    />
-
-                    {/* ── Incoming (Restock) — Green ── */}
-                    <Area
-                      type="monotoneX"
-                      dataKey="restocked"
-                      name="restocked"
-                      stroke="#22c55e"
-                      strokeWidth={3}
-                      fill="url(#gradIncoming)"
-                      dot={{ r: 3.5, fill: "#22c55e", stroke: "#ffffff", strokeWidth: 2 }}
-                      activeDot={{ r: 6, fill: "#22c55e", stroke: "#ffffff", strokeWidth: 2.5, style: { filter: "drop-shadow(0 0 4px rgba(34,197,94,0.5))" } }}
-                      isAnimationActive={true}
-                      animationDuration={900}
-                      animationBegin={150}
-                      animationEasing="ease-out"
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-
-              {/* ── Bottom summary strip ── */}
-              <div className="flex items-center justify-between gap-4 mt-4 pt-4 border-t border-gray-100 dark:border-border px-2">
-                {/* Summary stats */}
-                <div className="flex items-center gap-5">
-                  <div className="flex items-center gap-2">
-                    <span className="flex h-2.5 w-2.5 rounded-full bg-green-500 shadow-sm shadow-green-500/40" />
-                    <span className="text-[11px] font-semibold text-gray-500 dark:text-muted-foreground">Incoming (Restock)</span>
-                    <span className="text-[11px] font-bold text-green-600 dark:text-green-400 ml-1">
-                      {usageTrendData.reduce((s, d) => s + (d.restocked ?? 0), 0)} units
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="flex h-2.5 w-2.5 rounded-full bg-red-500 shadow-sm shadow-red-500/40" />
-                    <span className="text-[11px] font-semibold text-gray-500 dark:text-muted-foreground">Outgoing (Usage)</span>
-                    <span className="text-[11px] font-bold text-red-600 dark:text-red-400 ml-1">
-                      {usageTrendData.reduce((s, d) => s + (d.used ?? 0), 0)} units
-                    </span>
-                  </div>
-                </div>
-                <span className="text-[10px] text-gray-300 dark:text-muted-foreground/50 hidden sm:block">
-                  Last {usageTrendData.length} day{usageTrendData.length !== 1 ? "s" : ""}
-                </span>
-              </div>
-            </>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-20">
-              <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-gray-50 to-gray-100 dark:from-secondary/30 dark:to-secondary/50 flex items-center justify-center mb-4 shadow-sm">
-                <TrendingUp className="h-7 w-7 text-gray-300 dark:text-muted-foreground/40" />
-              </div>
-              <p className="text-sm font-medium text-gray-400 dark:text-muted-foreground">No usage data available yet</p>
-              <p className="text-xs text-gray-300 dark:text-muted-foreground/50 mt-1 text-center max-w-[240px]">
-                Trend data will appear here as inventory transactions are logged
-              </p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
     </div>
   )
 }
