@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge"
 import { Bell, AlertTriangle, Clock, TrendingDown, Filter, Check } from "lucide-react"
 import { InventoryService } from "@/services/firebase-service"
 import type { InventoryItem } from "@/lib/types"
+import { useAuth } from "@/hooks/use-auth"
 
 interface ExpiryNotification {
   item: InventoryItem
@@ -33,6 +34,8 @@ type NotificationFilter = "all" | "low-stock" | "expired" | "expiring"
 export function ExpiryNotifications() {
   const router = useRouter()
   const pathname = usePathname()
+  const { user } = useAuth()
+  const userRole = user?.role
   const [expiryNotifications, setExpiryNotifications] = useState<ExpiryNotification[]>([])
   const [lowStockNotifications, setLowStockNotifications] = useState<LowStockNotification[]>([])
   const [loading, setLoading] = useState(true)
@@ -89,21 +92,19 @@ export function ExpiryNotifications() {
           console.warn("[Notifications] No items received from Firebase. Check Firebase connection and permissions.")
         }
 
-        // Normalize field names first (same as inventory dashboard)
+        // Normalize field names — MUST match inventory dashboard weight-based formula exactly
+        // Source of truth: incoming_weight - outgoing_weight + good_return_weight - damage_return_weight
         const normalizedItems = items.map((it: any) => {
-          const incoming = it.incoming ?? it.stockIncoming ?? it.incomingStock ?? 0
-          const outgoing = it.outgoing ?? it.stockOutgoing ?? it.outgoingStock ?? 0
-          const stockBase =
-            it.stock ?? it.stockLeft ?? it.stockQuantity ?? it.stockTotal ?? it.ongoingStock ?? 0
-          const returned = it.returned ?? it.returnedStock ?? 0
+          const incomingWeight = (it as any).incoming_weight ?? (it as any).production_weight ?? 0
+          const outgoingWeight = (it as any).outgoing_weight ?? 0
+          const goodReturnWeight = (it as any).good_return_weight ?? 0
+          const damageReturnWeight = (it as any).damage_return_weight ?? 0
+          const weightLeft = Math.max(0, incomingWeight - outgoingWeight + goodReturnWeight - damageReturnWeight)
           const expiry = it.expiryDate ?? it.expirationDate ?? null
 
           return {
             ...it,
-            incoming,
-            outgoing,
-            stock: stockBase,
-            returned,
+            _weightLeft: weightLeft, // Computed weight for aggregation
             expirationDate: expiry,
             expiryDate: expiry,
           }
@@ -113,25 +114,22 @@ export function ExpiryNotifications() {
         today.setHours(0, 0, 0, 0)
 
         // AGGREGATION STEP: Group by Product Name (Category + Subcategory)
+        // Uses the same weight formula as inventory-dashboard.tsx lowStockAlertList
         const productAggregation = new Map<string, {
           productName: string,
           totalStock: number,
           items: any[]
-        }>();
+        }>()
 
         normalizedItems.forEach((item: any) => {
-          const stockBase = Number(item.stock) || 0
-          const incoming = Number(item.incoming) || 0
-          const outgoing = Number(item.outgoing) || 0
-          const returned = Number(item.returned) || 0
-          const totalStock = stockBase + incoming - outgoing + returned
+          const weightLeft = item._weightLeft
 
           const productName = item.subcategory 
             ? `${item.category} - ${item.subcategory}`
             : item.category || "Unknown Product";
 
           const existing = productAggregation.get(productName) || { productName, totalStock: 0, items: [] as any[] };
-          existing.totalStock += totalStock;
+          existing.totalStock += weightLeft;
           existing.items.push(item);
           productAggregation.set(productName, existing);
         });
@@ -283,20 +281,21 @@ export function ExpiryNotifications() {
           // Debug: Show why items don't match criteria
           if (normalizedItems.length > 0) {
             const sample = normalizedItems[0]
-            const stockBase = Number(sample.stock) || 0
-            const incoming = Number(sample.incoming) || 0
-            const outgoing = Number(sample.outgoing) || 0
-            const returned = Number(sample.returned) || 0
-            const total = stockBase + incoming - outgoing + returned
+            const incomingW = Number(sample.incoming_weight ?? sample.production_weight) || 0
+            const outgoingW = Number(sample.outgoing_weight) || 0
+            const goodReturnW = Number(sample.good_return_weight) || 0
+            const damageReturnW = Number(sample.damage_return_weight) || 0
+            const total = Math.max(0, incomingW - outgoingW + goodReturnW - damageReturnW)
             const expiry = sample.expiryDate || sample.expirationDate
             console.log("[Notifications] Sample item analysis:", {
               barcode: sample.barcode,
               category: sample.category,
-              stock: stockBase,
-              incoming,
-              outgoing,
-              returned,
-              totalStock: total,
+              incoming_weight: incomingW,
+              outgoing_weight: outgoingW,
+              good_return_weight: goodReturnW,
+              damage_return_weight: damageReturnW,
+              weightLeft: total,
+              computedWeightLeft: sample._weightLeft,
               isLowStock: total <= 50,
               hasExpiryDate: !!expiry,
               expiryDate: expiry
@@ -426,11 +425,14 @@ export function ExpiryNotifications() {
       const idStr = `low-stock-${(n.productName || n.item.id).replace(/[\s\W]+/g, "-").toLowerCase()}`
       if (!readIds.includes(idStr)) unread++;
     });
-    expiryNotifications.forEach(n => {
-      if (!readIds.includes(`expiry-${n.status}-${n.item.id}`)) unread++;
-    });
+    // Owner should not count expiry notifications
+    if (userRole !== "owner") {
+      expiryNotifications.forEach(n => {
+        if (!readIds.includes(`expiry-${n.status}-${n.item.id}`)) unread++;
+      });
+    }
     return unread;
-  }, [lowStockNotifications, expiryNotifications, readIds])
+  }, [lowStockNotifications, expiryNotifications, readIds, userRole])
 
   return (
     <div className="relative">
@@ -490,6 +492,8 @@ export function ExpiryNotifications() {
               >
                 Low Stock
               </Button>
+              {userRole !== "owner" && (
+              <>
               <Button
                 variant={filter === "expired" ? "default" : "outline"}
                 size="sm"
@@ -506,6 +510,8 @@ export function ExpiryNotifications() {
               >
                 Expiring
               </Button>
+              </>
+              )}
             </div>
           </div>
           <DropdownMenuSeparator />
@@ -571,7 +577,7 @@ export function ExpiryNotifications() {
                 </>
               )}
 
-              {filteredData.showExpired && filteredData.filteredExpired.length > 0 && (
+              {userRole !== "owner" && filteredData.showExpired && filteredData.filteredExpired.length > 0 && (
                 <>
                   <DropdownMenuLabel className="text-xs font-medium text-red-600 flex items-center gap-2">
                     <AlertTriangle className="h-3 w-3" />
@@ -620,7 +626,7 @@ export function ExpiryNotifications() {
                 </>
               )}
 
-              {filteredData.showExpiring && filteredData.filteredExpiring.length > 0 && (
+              {userRole !== "owner" && filteredData.showExpiring && filteredData.filteredExpiring.length > 0 && (
                 <>
                   <DropdownMenuLabel className="text-xs font-medium text-orange-600 flex items-center gap-2">
                     <Clock className="h-3 w-3" />

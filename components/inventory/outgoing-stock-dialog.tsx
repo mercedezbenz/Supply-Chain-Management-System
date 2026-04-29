@@ -645,10 +645,16 @@ export function OutgoingStockDialog({
       } as any)
 
       // 2. Create transaction ledger entry (append-only)
+      const txnProductName = getProductName(selectedItem)
+      console.log("[ProductOut] TRANSACTION SAVED:", { product_name: txnProductName, barcode: selectedItem.barcode, weight: weightNum })
+
       await TransactionService.addTransaction({
         transaction_date: new Date(),
-        product_name: getProductName(selectedItem),
+        movement_type: "Outgoing",
+        product_name: txnProductName,
+        product_id: (selectedItem as any).product_id || null,
         barcode: selectedItem.barcode || "",
+        barcode_base: (selectedItem as any).barcode_base || null,
         category: selectedItem.category,
         type:
           (selectedItem as any).productType ||

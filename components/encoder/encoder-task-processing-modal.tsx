@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { doc, updateDoc, collection, addDoc, serverTimestamp, runTransaction } from "firebase/firestore"
+import { doc, updateDoc, collection, addDoc, serverTimestamp, runTransaction, increment, getDoc } from "firebase/firestore"
 import { getFirebaseDb, auth } from "@/lib/firebase-live"
 import { FirebaseService } from "@/services/firebase-service"
 import { InventoryItem } from "@/lib/types"
@@ -136,6 +136,9 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
         itemPlan.batches.push({
           inventoryId: inv.id,
           barcode: (inv as any).batchNumber || inv.barcode || "N/A", 
+          productName: inv.name || (inv as any).productName || item.name || "",
+          productId: (inv as any).product_id || "",
+          category: inv.category || "",
           availableWeight: availableWeight,
           selectedWeight: weightToTake,
           weightPerBox: weightPerBox,
@@ -178,6 +181,9 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
           if (b.selectedWeight > 0) {
             selectedBatches.push({
               itemName: p.name,
+              productName: b.productName || p.name || "",
+              productId: b.productId || "",
+              category: b.category || "",
               inventoryId: b.inventoryId,
               barcode: b.barcode,
               requiredWeight: b.selectedWeight,
@@ -210,12 +216,12 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
     }
   }
 
-  // Step 2: Handle barcode scan — 1 scan = 1 box deducted
+  // Step 2: Handle barcode scan — 1 scan = deduct full allocated weight
   const handleScan = async () => {
-    console.log("HANDLE SCAN CALLED")
+    console.log("[ENCODER_SCAN] handleScan called")
     
     if (task.status !== "FOR_VERIFICATION") {
-      console.log("❌ Scan blocked - not in verification stage")
+      console.log("[ENCODER_SCAN] ❌ Scan blocked - not in verification stage")
       return
     }
 
@@ -231,7 +237,7 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
     }
     
     const batch = verificationState[batchIdx]
-    const requiredWeight = batch.requiredWeight || 0
+    const deductionWeight = batch.requiredWeight || 0
     
     // Prevent double scan if batch already fully verified
     if (batch.scanned) {
@@ -239,52 +245,127 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
       return
     }
 
-    console.log("SCAN TRIGGERED")
-    console.log("TASK STATUS:", task.status)
-    console.log("BATCH:", batch)
+    if (deductionWeight <= 0) {
+      toast.error("No weight to deduct for this batch.")
+      return
+    }
 
-    // Execute atomic Firestore transaction: deduct FULL allocated weight
+    console.log("[ENCODER_SCAN] SCAN TRIGGERED")
+    console.log("[ENCODER_SCAN] BATCH:", batch)
+    console.log("[ENCODER_SCAN] DEDUCTION WEIGHT:", deductionWeight, "kg")
+
     setProcessing(true)
     try {
       const db = getFirebaseDb()
-      await addDoc(collection(db, "transactions"), {
-        type: "OUT",
-        orderId: task.orderId,
-        productName: batch.itemName || batch.productName || "Unknown",
-        barcode: batch.barcode,
-        barcode_base: batch.barcode_base || null,
-        inventoryId: batch.inventoryId,
-        outgoing_weight: requiredWeight,
-        outgoing_boxes: Math.ceil(requiredWeight / 25),
-        created_at: serverTimestamp(),
-        source: "encoder_verification"
-      })
 
-      // Update inventory document: deduct weight and set status if depleted
+      // ── 1. ATOMIC INVENTORY DEDUCTION ──────────────────────────────────
+      // Use Firestore getDoc for fresh data + updateDoc with computed value
+      // This avoids stale local state bugs
       const inventoryDocRef = doc(db, "inventory", batch.inventoryId)
-      const isDepleted = requiredWeight >= (batch.availableWeight || 0)
+      const inventorySnap = await getDoc(inventoryDocRef)
       
-      await updateDoc(inventoryDocRef, {
-        outgoing_weight: ((inventory.find(i => i.id === batch.inventoryId) as any)?.outgoing_weight || 0) + requiredWeight,
-        status: isDepleted ? "OUT_OF_STOCK" : "ACTIVE"
+      if (!inventorySnap.exists()) {
+        toast.error("Inventory item not found in database.")
+        return
+      }
+
+      const liveInvData = inventorySnap.data()
+      const currentOutgoingWeight = liveInvData.outgoing_weight || 0
+      const currentIncomingWeight = liveInvData.incoming_weight ?? liveInvData.production_weight ?? 0
+      const currentGoodReturn = liveInvData.good_return_weight ?? 0
+      const currentDamageReturn = liveInvData.damage_return_weight ?? 0
+      const newOutgoingWeight = currentOutgoingWeight + deductionWeight
+      const newRemainingWeight = Math.max(0, currentIncomingWeight - newOutgoingWeight + currentGoodReturn - currentDamageReturn)
+      const isDepleted = newRemainingWeight <= 0
+
+      console.log("[ENCODER_SCAN] Inventory state:", {
+        currentOutgoing: currentOutgoingWeight,
+        incoming: currentIncomingWeight,
+        newOutgoing: newOutgoingWeight,
+        newRemaining: newRemainingWeight,
+        isDepleted
       })
 
-      // Update local verification state
+      // Update inventory document: increment outgoing_weight, set status if depleted
+      await updateDoc(inventoryDocRef, {
+        outgoing_weight: newOutgoingWeight,
+        ...(isDepleted ? { status: "OUT_OF_STOCK" } : {})
+      })
+
+      // ── 2. CREATE TRANSACTION LOG (OUT) ────────────────────────────────
+      // Fields aligned with what inventory-table.tsx grouping logic expects
+      const productName = batch.itemName || batch.productName || liveInvData.name || liveInvData.productName || liveInvData.category || "Unknown Product"
+      const productCategory = batch.category || liveInvData.category || ""
+      const barcodeBase = batch.barcode_base || liveInvData.barcode_base || null
+      const productId = batch.productId || liveInvData.product_id || null
+
+      console.log("[ENCODER_SCAN] BATCH DATA:", { itemName: batch.itemName, productName: batch.productName, barcode: batch.barcode, productId: batch.productId, category: batch.category })
+      console.log("[ENCODER_SCAN] LIVE INV DATA:", { name: liveInvData.name, productName: liveInvData.productName, category: liveInvData.category, product_id: liveInvData.product_id })
+      console.log("[ENCODER_SCAN] TRANSACTION SAVED:", { product_name: productName, barcode: batch.barcode, weight: deductionWeight })
+
+      await addDoc(collection(db, "transactions"), {
+        // Core fields for inventory table grouping
+        type: "OUT",
+        movement_type: "Outgoing",
+        product_name: productName,
+        barcode: batch.barcode,
+        barcode_base: barcodeBase,
+        category: productCategory,
+        product_id: productId,
+        
+        // Weight fields (critical — inventory table reads these)
+        outgoing_weight: deductionWeight,
+        outgoing_qty: Math.ceil(deductionWeight / 25),
+        incoming_weight: 0,
+        incoming_qty: 0,
+        good_return_weight: 0,
+        good_return: 0,
+        damage_return_weight: 0,
+        damage_return: 0,
+        stock_left: newRemainingWeight,
+        weight_left: newRemainingWeight,
+        
+        // Reference info
+        source: "encoder_verification",
+        reference_no: `ENCODER_SCAN_${task.orderId}`,
+        orderId: task.orderId,
+        inventoryId: batch.inventoryId,
+        customer_name: task.customerName || "",
+        sales_invoice_no: task.salesInvoiceNo || task.salesInvoiceNumber || null,
+        delivery_receipt_no: task.deliveryReceiptNo || task.deliveryReceiptNumber || null,
+        
+        // Timestamps
+        transaction_date: serverTimestamp(),
+        created_at: serverTimestamp(),
+      })
+
+      // ── 3. UPDATE LOCAL INVENTORY STATE ────────────────────────────────
+      // Keep local state in sync so subsequent scans don't use stale data
+      setInventory(prev =>
+        prev.map(item =>
+          item.id === batch.inventoryId
+            ? { ...item, outgoing_weight: newOutgoingWeight } as any
+            : item
+        )
+      )
+
+      // ── 4. UPDATE LOCAL VERIFICATION STATE ─────────────────────────────
       const newState = [...verificationState]
-      const newScannedWeight = requiredWeight
       newState[batchIdx] = { 
         ...newState[batchIdx], 
-        scannedWeight: newScannedWeight,
+        scannedWeight: deductionWeight,
         scanned: true,
-        scannedAt: new Date().toISOString()
+        scannedAt: new Date().toISOString(),
+        // Update available weight so UI reflects deduction
+        availableWeight: Math.max(0, (batch.availableWeight || 0) - deductionWeight)
       }
       setVerificationState(newState)
 
-      // Add to scannedBarcodes
+      // ── 5. TRACK SCANNED BARCODES ──────────────────────────────────────
       const newScannedBarcodes = [...scannedBarcodes, code]
       setScannedBarcodes(newScannedBarcodes)
 
-      // Update encoder_tasks in Firestore
+      // ── 6. UPDATE ENCODER TASK IN FIRESTORE ────────────────────────────
       await updateDoc(doc(db, "encoder_tasks", task.id), {
         selectedStocks: newState,
         scannedBarcodes: newScannedBarcodes,
@@ -293,7 +374,7 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
         updatedAt: serverTimestamp()
       })
 
-      // Beep sound feedback
+      // ── 7. AUDIO FEEDBACK ─────────────────────────────────────────────
       try { 
         const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)()
         const osc = audioCtx.createOscillator()
@@ -306,9 +387,9 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
         osc.stop(audioCtx.currentTime + 0.1)
       } catch {}
 
-      toast.success(`✔ Verified & deducted full ${requiredWeight.toFixed(1)}kg for ${batch.itemName}`)
+      toast.success(`✔ Verified & deducted ${deductionWeight.toFixed(1)}kg for ${productName}`)
 
-      // Check if ALL batches are now fully verified
+      // ── 8. CHECK COMPLETION ────────────────────────────────────────────
       const allDone = newState.every((b: any) => b.scanned === true)
       
       if (allDone) {
@@ -319,7 +400,7 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
           updatedAt: serverTimestamp()
         })
 
-        console.log("STATUS UPDATE → IN TRANSIT after scan complete")
+        console.log("[ENCODER_SCAN] STATUS UPDATE → IN TRANSIT after scan complete")
         await updateOrderStatus(task.orderId, "in_transit")
 
         toast.success("🎉 All batches verified! Task moved to For Delivery.")
@@ -327,6 +408,7 @@ export function EncoderTaskProcessingModal({ task, isOpen, onClose }: EncoderTas
       }
 
     } catch (err: any) {
+      console.error("[ENCODER_SCAN] Error during scan:", err)
       toast.error(err.message || "Stock unavailable or already deducted")
     } finally {
       setProcessing(false)
