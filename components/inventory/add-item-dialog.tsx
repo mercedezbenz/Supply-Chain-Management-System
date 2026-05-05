@@ -5,7 +5,8 @@ import type React from "react"
 import { useState, useRef, useEffect, useCallback } from "react"
 import { format } from "date-fns"
 import Image from "next/image"
-import { CalendarIcon, Barcode, RefreshCw, CheckCircle2, Loader2, Printer, Plus, Check, ChevronsUpDown } from "lucide-react"
+import { CalendarIcon, Barcode, RefreshCw, CheckCircle2, Loader2, Printer, Plus, Check, ChevronsUpDown, AlertTriangle } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -162,6 +163,10 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
   const [barcodeModalOpen, setBarcodeModalOpen] = useState(false)
 
   const [formData, setFormData] = useState(EMPTY_FORM)
+
+  // Confirmation state
+  const [showConfirmModal, setShowConfirmModal] = useState(false)
+  const [dontShowSmallDiff, setDontShowSmallDiff] = useState(false)
 
   // Custom product list (user-added products during session)
   const [customProducts, setCustomProducts] = useState<ProductEntry[]>([])
@@ -495,6 +500,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
   }
 
   // ── Submit ─────────────────────────────────────────────────────────────
+  // ── Submit Wrapper ──────────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -509,6 +515,26 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
       return
     }
 
+    // Weight discrepancy check
+    const prodW = formData.productionWeight ? parseFloat(formData.productionWeight) : 0
+    const packW = formData.packingWeight ? parseFloat(formData.packingWeight) : 0
+    const weightDiff = Math.abs(prodW - packW)
+
+    if (weightDiff > 0) {
+      // Logic:
+      // If > 5kg: FORCE confirmation
+      // If <= 5kg: Show unless "Don't show again" is checked
+      if (weightDiff > 5 || !dontShowSmallDiff) {
+        setShowConfirmModal(true)
+        return
+      }
+    }
+
+    await performSubmit()
+  }
+
+  // ── Actual Submission Logic ───────────────────────────────────────────
+  const performSubmit = async () => {
     setLoading(true)
     console.log("imageFile before upload:", imageFile)
     try {
@@ -605,7 +631,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
   imageUrl: uploadedImageUrl ?? existingData?.imageUrl ?? null,
 }, { merge: true });
       }
-      
+
 
       // APPEND-ONLY LEDGER: Always create a NEW transaction row for every incoming event
       await TransactionService.addTransaction({
@@ -644,6 +670,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         icon: "✅",
       })
 
+      setShowConfirmModal(false)
       resetAll()
       onOpenChange(false)
     } catch (error: any) {
@@ -1358,6 +1385,110 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
         productionDate={formData.productionDate ? format(formData.productionDate, "MMM dd, yyyy") : undefined}
         expiryDate={formData.expirationDate ? format(formData.expirationDate, "MMM dd, yyyy") : undefined}
       />
+
+      {/* ── Weight Discrepancy Confirmation Modal ───────────────────────── */}
+      <Dialog open={showConfirmModal} onOpenChange={setShowConfirmModal}>
+        <DialogContent className={cn(
+          "max-w-[400px] p-0 overflow-hidden rounded-2xl border-2 shadow-2xl",
+          (Math.abs((parseFloat(formData.productionWeight) || 0) - (parseFloat(formData.packingWeight) || 0)) > 5) 
+            ? "border-red-100" 
+            : "border-amber-100"
+        )}>
+          <div className="p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className={cn(
+                "h-10 w-10 rounded-full flex items-center justify-center shrink-0",
+                (Math.abs((parseFloat(formData.productionWeight) || 0) - (parseFloat(formData.packingWeight) || 0)) > 5)
+                  ? "bg-red-100 text-red-600"
+                  : "bg-amber-100 text-amber-600"
+              )}>
+                <AlertTriangle className="h-6 w-6" />
+              </div>
+              <DialogTitle className="text-xl font-bold text-slate-900">
+                Confirm Weight Discrepancy
+              </DialogTitle>
+            </div>
+
+            <div className="space-y-4">
+              <p className="text-sm text-slate-600 leading-relaxed">
+                There is a weight difference of <span className="font-bold text-slate-900">{Math.abs((parseFloat(formData.productionWeight) || 0) - (parseFloat(formData.packingWeight) || 0)).toFixed(2)} kg</span> between production and packing weight.
+                <br /><br />
+                This may cause inaccurate inventory records. Do you want to proceed?
+              </p>
+
+              <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500 font-medium">Production Weight:</span>
+                  <span className="text-slate-900 font-bold">{parseFloat(formData.productionWeight) || 0} kg</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500 font-medium">Packing Weight:</span>
+                  <span className="text-slate-900 font-bold">{parseFloat(formData.packingWeight) || 0} kg</span>
+                </div>
+                <div className="pt-2 mt-2 border-t border-slate-200 flex justify-between text-sm">
+                  <span className="text-slate-500 font-medium">Difference:</span>
+                  <span className={cn(
+                    "font-bold",
+                    (Math.abs((parseFloat(formData.productionWeight) || 0) - (parseFloat(formData.packingWeight) || 0)) > 5)
+                      ? "text-red-600"
+                      : "text-amber-600"
+                  )}>
+                    +{(Math.abs((parseFloat(formData.productionWeight) || 0) - (parseFloat(formData.packingWeight) || 0))).toFixed(2)} kg
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2 pt-1">
+                <div className="mt-0.5 h-4 w-4 rounded bg-blue-50 flex items-center justify-center shrink-0">
+                  <span className="text-[10px] font-bold text-blue-500">i</span>
+                </div>
+                <p className="text-[11px] text-blue-600 font-medium italic">
+                  Tip: Please double-check weights to avoid stock inconsistencies.
+                </p>
+              </div>
+
+              {Math.abs((parseFloat(formData.productionWeight) || 0) - (parseFloat(formData.packingWeight) || 0)) <= 5 && (
+                <div className="flex items-center space-x-2 pt-2 border-t border-slate-100 mt-4">
+                  <Checkbox 
+                    id="dont-show-small" 
+                    checked={dontShowSmallDiff}
+                    onCheckedChange={(checked) => setDontShowSmallDiff(!!checked)}
+                  />
+                  <label 
+                    htmlFor="dont-show-small"
+                    className="text-xs font-medium text-slate-500 cursor-pointer select-none"
+                  >
+                    Don't show again for small differences (&lt;5kg)
+                  </label>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter className="bg-slate-50/80 p-4 gap-2 flex-row sm:justify-end">
+            <Button 
+              variant="outline" 
+              onClick={() => setShowConfirmModal(false)}
+              className="flex-1 sm:flex-none border-slate-200 hover:bg-white text-slate-600 h-10"
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={() => performSubmit()}
+              disabled={loading}
+              className={cn(
+                "flex-1 sm:flex-none h-10 gap-2 font-semibold shadow-sm",
+                (Math.abs((parseFloat(formData.productionWeight) || 0) - (parseFloat(formData.packingWeight) || 0)) > 5)
+                  ? "bg-red-600 hover:bg-red-700 text-white shadow-red-200"
+                  : "bg-primary hover:bg-primary/90 text-primary-foreground shadow-primary/20"
+              )}
+            >
+              {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+              Proceed Anyway
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   )
 }
