@@ -599,7 +599,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
           transaction_type: "incoming",
           source: "incoming",
         },
-        createdBy: user.uid,
+        createdBy: user!.uid,
         createdAt: new Date(),
         updatedAt: new Date(),
       }
@@ -1458,7 +1458,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                     htmlFor="dont-show-small"
                     className="text-xs font-medium text-slate-500 cursor-pointer select-none"
                   >
-                    Don't show again for small differences (&lt;5kg)
+                    Don&apos;t show again for small differences (&lt;5kg)
                   </label>
                 </div>
               )}
