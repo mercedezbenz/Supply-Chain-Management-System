@@ -72,8 +72,19 @@ export function useNotifications(userRole?: string) {
         console.warn(`[useNotifications] 🚨 ROLE LEAKAGE DETECTED! Found ${allNotifs.length - roleFiltered.length} items for other roles:`, leaked.map(l => l.targetRole))
       }
 
-      setNotifications(roleFiltered)
       setLoading(false)
+
+      // Deduplicate by orderId to prevent redundant UI entries
+      const uniqueNotifsMap = new Map<string, Notification>()
+      roleFiltered.forEach((n: any) => {
+        const key = n.orderId || n.id
+        if (!uniqueNotifsMap.has(key)) {
+          uniqueNotifsMap.set(key, n)
+        }
+      })
+      const uniqueNotifs = Array.from(uniqueNotifsMap.values())
+
+      setNotifications(uniqueNotifs)
     }, (error) => {
       console.error(`[useNotifications] ❌ Error fetching notifications:`, error)
       // If index is missing or permissions fail, set empty to avoid crash

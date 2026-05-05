@@ -198,17 +198,27 @@ export function OrderDetails({ orderId }: OrderDetailsProps) {
           createdAt: serverTimestamp()
         });
 
-        // Backend Notification System
-        await addDoc(collection(db, "notifications"), {
-          title: "Ready for Processing",
-          message: `Order #${orderId.slice(-6).toUpperCase()} is ready for processing.`,
-          targetRole: "encoder",
-          userId: null,
-          type: "order",
-          isRead: false,
-          orderId: orderId,
-          createdAt: serverTimestamp()
-        });
+        // Backend Notification System - Check if exists first
+        const existingNotifQuery = query(
+          collection(db, "notifications"),
+          where("orderId", "==", orderId),
+          where("type", "==", "order"),
+          limit(1)
+        );
+        const existingNotifSnap = await getDocs(existingNotifQuery);
+
+        if (existingNotifSnap.empty) {
+          await addDoc(collection(db, "notifications"), {
+            title: "Ready for Processing",
+            message: `Order #${orderId.slice(-6).toUpperCase()} is ready for processing.`,
+            targetRole: "encoder",
+            userId: null,
+            type: "order",
+            isRead: false,
+            orderId: orderId,
+            createdAt: serverTimestamp()
+          });
+        }
 
         console.log("✅ Encoder task created");
         toast.success("Order confirmed and sent to Encoder");
