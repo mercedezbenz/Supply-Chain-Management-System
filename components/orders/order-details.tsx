@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { doc, updateDoc, collection, addDoc, serverTimestamp, getDocs, query, where } from "firebase/firestore"
+import { doc, updateDoc, collection, addDoc, serverTimestamp, getDocs, query, where, limit } from "firebase/firestore"
 import { getFirebaseDb, auth } from "@/lib/firebase-live"
 import { toast } from "sonner"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
