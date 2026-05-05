@@ -58,7 +58,6 @@ export function SalesNotifications({ userRole }: { userRole?: string }) {
   const { notifications, loading, markAsRead, markAllAsRead } = useNotifications(userRole)
   const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
-  const [activeFilter, setActiveFilter] = useState<"all" | "pending" | "completed" | "cancelled">("all")
 
   // 1. Normalize all notification types to lowercase
   const normalizedNotifications = useMemo(() => {
@@ -68,58 +67,28 @@ export function SalesNotifications({ userRole }: { userRole?: string }) {
     }));
   }, [notifications]);
 
-  // 2. Filter by status
-  const filteredNotifications = useMemo(() => {
-    if (activeFilter === "all") return normalizedNotifications
+  const unreadCount = normalizedNotifications.filter(n => !n.isRead).length
 
-    return normalizedNotifications.filter(n => {
-      const title = n.title.toLowerCase()
-      const message = n.message.toLowerCase()
-      
-      if (activeFilter === "pending") {
-        if (userRole?.toLowerCase() === "sales") {
-          return title.includes("new order") || n.type === "new_order"
-        }
-        return title.includes("new order") || title.includes("pending") || title.includes("ready for processing")
-      }
-      if (activeFilter === "completed") {
-        return title.includes("completed") || title.includes("delivered") || title.includes("ready for delivery")
-      }
-      if (activeFilter === "cancelled") {
-        return title.includes("cancelled") || title.includes("failed") || title.includes("void")
-      }
-      return true
-    })
-  }, [normalizedNotifications, activeFilter, userRole])
-
-  const unreadCount = filteredNotifications.filter(n => !n.isRead).length
-
-  // UI Safety Filter logic explicitly implemented in hook, but grouping happens here
+  // 2. Group by Today and Earlier
   const groupedNotifications = useMemo(() => {
     const today: typeof notifications = []
-    const yesterday: typeof notifications = []
     const earlier: typeof notifications = []
 
     const todayDate = new Date()
     todayDate.setHours(0,0,0,0)
 
-    const yesterdayDate = new Date(todayDate)
-    yesterdayDate.setDate(yesterdayDate.getDate() - 1)
-
-    filteredNotifications.forEach(n => {
+    normalizedNotifications.forEach(n => {
       const d = parseTimestamp(n.createdAt)
       d.setHours(0,0,0,0)
       if (d.getTime() === todayDate.getTime()) {
         today.push(n as any)
-      } else if (d.getTime() === yesterdayDate.getTime()) {
-        yesterday.push(n as any)
       } else {
         earlier.push(n as any)
       }
     })
 
-    return { today, yesterday, earlier }
-  }, [filteredNotifications])
+    return { today, earlier }
+  }, [normalizedNotifications])
 
   const handleView = (orderId?: string | any, notifId?: string) => {
     if (notifId) markAsRead(notifId)
@@ -243,36 +212,14 @@ export function SalesNotifications({ userRole }: { userRole?: string }) {
               </Button>
             )}
           </div>
-
-          {/* Filter Tabs */}
-          <div className="flex items-center gap-1 px-2 py-1.5 border-b border-gray-100 dark:border-border bg-white dark:bg-card/50">
-            {[
-              { id: "all", label: "All" },
-              { id: "pending", label: "Pending" },
-              { id: "completed", label: "Completed" },
-              { id: "cancelled", label: "Canceled" }
-            ].map(tab => (
-              <button
-                key={tab.id}
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveFilter(tab.id as any); }}
-                className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all ${
-                  activeFilter === tab.id 
-                    ? "bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 shadow-sm border border-blue-100 dark:border-blue-800" 
-                    : "text-gray-500 hover:bg-gray-100 dark:hover:bg-secondary/50 border border-transparent"
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
           
-          <div className="max-h-[420px] overflow-y-auto p-1.5 custom-scrollbar bg-gray-50/30 dark:bg-background/50">
+          <div className="max-h-[420px] overflow-y-auto p-1.5 pt-3 custom-scrollbar bg-gray-50/30 dark:bg-background/50">
             {loading ? (
               <div className="p-8 text-center text-sm text-muted-foreground flex flex-col items-center">
                 <div className="h-8 w-8 rounded-full border-2 border-gray-200 border-t-blue-500 animate-spin mb-3" />
                 Loading {userRole?.toLowerCase() === "encoder" ? "tasks" : "updates"}...
               </div>
-            ) : filteredNotifications.length === 0 ? (
+            ) : normalizedNotifications.length === 0 ? (
               <div className="p-8 text-center text-sm text-gray-500 flex flex-col items-center">
                  <div className="h-12 w-12 rounded-full bg-gray-100 dark:bg-secondary/50 flex items-center justify-center mb-3">
                     <CheckCircle2 className="h-6 w-6 text-gray-400" />
@@ -283,7 +230,6 @@ export function SalesNotifications({ userRole }: { userRole?: string }) {
             ) : (
               <>
                 <Section title="Today" items={groupedNotifications.today} />
-                <Section title="Yesterday" items={groupedNotifications.yesterday} />
                 <Section title="Earlier" items={groupedNotifications.earlier} />
               </>
             )}
