@@ -27,7 +27,6 @@ export function LoginForm() {
     return () => clearTimeout(timer);
   }, []);
 
-
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (rateLimitCountdown > 0) {
@@ -149,10 +148,13 @@ export function LoginForm() {
           position: relative;
           z-index: 10;
           display: flex;
+          flex-direction: column;
           align-items: center;
           justify-content: center;
           min-height: 100vh;
           padding: 1.5rem;
+          overflow-y: auto;
+          gap: 1.5rem;
         }
 
         /* ───── Login card — solid frosted glass ───── */
@@ -171,7 +173,6 @@ export function LoginForm() {
             0 8px 24px rgba(0, 0, 0, 0.04),
             0 2px 8px rgba(0, 0, 0, 0.02);
 
-          /* Entrance animation only, no continuous floating */
           opacity: 0;
           transform: translateY(16px);
           transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
@@ -232,7 +233,6 @@ export function LoginForm() {
           justify-content: center;
         }
 
-        /* Brand name below logo */
         .login-brand-name {
           font-size: 1.4rem;
           font-weight: 700;
@@ -309,8 +309,7 @@ export function LoginForm() {
           border-radius: 12px;
           outline: none;
           transition: all 0.3s ease;
-          box-shadow:
-            0 1px 3px rgba(0, 0, 0, 0.04);
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
         }
 
         .login-input::placeholder {
@@ -327,8 +326,7 @@ export function LoginForm() {
             0 1px 3px rgba(0, 0, 0, 0.04);
         }
 
-        .login-input:focus ~ .login-input-icon,
-        .login-input-group:focus-within .login-input-icon {
+        .login-input:focus ~ .login-input-icon {
           color: #3b82f6;
         }
 
@@ -355,7 +353,7 @@ export function LoginForm() {
           color: #64748b;
         }
 
-        /* ───── Submit button — solid sky blue, high contrast ───── */
+        /* ───── Submit button ───── */
         .login-submit-btn {
           width: 100%;
           padding: 14px 24px;
@@ -381,28 +379,11 @@ export function LoginForm() {
             0 2px 4px rgba(0, 0, 0, 0.08);
         }
 
-        .login-submit-btn::before {
-          content: '';
-          position: absolute;
-          inset: 0;
-          background: linear-gradient(135deg, #3b9fe0 0%, #2bb5c4 100%);
-          opacity: 0;
-          transition: opacity 0.3s ease;
-        }
-
-        .login-submit-btn:hover::before {
-          opacity: 1;
-        }
-
         .login-submit-btn:hover {
           transform: translateY(-1px);
           box-shadow:
             0 6px 20px rgba(86, 180, 240, 0.28),
             0 2px 4px rgba(0, 0, 0, 0.05);
-        }
-
-        .login-submit-btn:active {
-          transform: translateY(0);
         }
 
         .login-submit-btn:disabled {
@@ -453,11 +434,7 @@ export function LoginForm() {
           list-style-type: disc;
         }
 
-        .login-error li {
-          margin-top: 2px;
-        }
-
-        /* ───── Decorative corner accents — subtle ───── */
+        /* Decorative corner accents */
         .login-corner-accent {
           position: absolute;
           width: 120px;
@@ -480,17 +457,13 @@ export function LoginForm() {
           background: #7dd3e8;
         }
 
-        /* Mobile branding (shown only on small screens) */
+        /* Mobile branding */
         .login-mobile-brand {
           display: flex;
           flex-direction: column;
           align-items: center;
           gap: 8px;
           margin-bottom: 2rem;
-        }
-
-        .login-mobile-brand .login-brand-name {
-          font-size: 1.1rem;
         }
 
         @media (min-width: 768px) {
@@ -514,8 +487,6 @@ export function LoginForm() {
         </div>
         <div className="login-bg-overlay" />
         <div className="login-bg-particles" />
-
-        {/* Ambient glow */}
         <div className="login-card-glow" />
 
         {/* Card container */}
@@ -525,7 +496,7 @@ export function LoginForm() {
             <div className="login-corner-accent top-right" />
             <div className="login-corner-accent bottom-left" />
 
-            {/* Left Panel — DPE Logo + DecktaGO */}
+            {/* Left Panel */}
             <div className="login-left">
               <div className="login-logo-container">
                 <Image
@@ -533,12 +504,7 @@ export function LoginForm() {
                   alt="DPE Logo"
                   width={160}
                   height={100}
-                  className="relative"
-                  style={{
-                    objectFit: 'contain',
-                    width: '160px',
-                    height: 'auto',
-                  }}
+                  style={{ objectFit: 'contain', width: '160px', height: 'auto' }}
                   priority
                 />
               </div>
@@ -547,7 +513,7 @@ export function LoginForm() {
               </div>
             </div>
 
-            {/* Right Panel — Login Form */}
+            {/* Right Panel */}
             <div className="login-right">
               {/* Mobile branding */}
               <div className="login-mobile-brand">
@@ -556,11 +522,7 @@ export function LoginForm() {
                   alt="DPE Logo"
                   width={100}
                   height={62}
-                  style={{
-                    objectFit: 'contain',
-                    width: '100px',
-                    height: 'auto',
-                  }}
+                  style={{ objectFit: 'contain', width: '100px', height: 'auto' }}
                   priority
                 />
                 <div className="login-brand-name">
@@ -572,7 +534,6 @@ export function LoginForm() {
               <p className="login-form-subtitle">Sign in to your account</p>
 
               <form onSubmit={handleSubmit} autoComplete="off">
-                {/* Error display */}
                 {error && (
                   <div className="login-error">
                     {error.includes("wait") || error.includes("too-many-requests") ? (
@@ -586,16 +547,6 @@ export function LoginForm() {
                         <div style={{ marginTop: '6px', fontWeight: 600 }}>
                           Time remaining: {Math.floor(rateLimitCountdown / 60)}:
                           {(rateLimitCountdown % 60).toString().padStart(2, "0")}
-                        </div>
-                      )}
-                      {(error.includes("wait") || error.includes("too-many-requests")) && (
-                        <div style={{ marginTop: '8px' }}>
-                          <strong>Quick fixes:</strong>
-                          <ul>
-                            <li>Wait 15-30 minutes</li>
-                            <li>Try from a different device/network</li>
-                            <li>Clear browser cache and cookies</li>
-                          </ul>
                         </div>
                       )}
                     </div>
@@ -613,7 +564,6 @@ export function LoginForm() {
                     onChange={(e) => setEmail(e.target.value)}
                     required
                     disabled={loading || isRateLimited}
-                    autoComplete="off"
                     className="login-input"
                   />
                 </div>
@@ -629,7 +579,6 @@ export function LoginForm() {
                     onChange={(e) => setPassword(e.target.value)}
                     required
                     disabled={loading || isRateLimited}
-                    autoComplete="new-password"
                     className="login-input"
                   />
                   <button
@@ -649,21 +598,22 @@ export function LoginForm() {
                   disabled={loading || isRateLimited}
                 >
                   <span>
-                    {loading && (
-                      <Loader2 size={18} className="animate-spin" />
-                    )}
+                    {loading && <Loader2 size={18} className="animate-spin" />}
                     {isRateLimited && <Clock size={18} />}
                     {isRateLimited
-                      ? `Wait ${Math.floor(rateLimitCountdown / 60)}:${(
-                          rateLimitCountdown % 60
-                        )
-                          .toString()
-                          .padStart(2, "0")}`
+                      ? `Wait ${Math.floor(rateLimitCountdown / 60)}:${(rateLimitCountdown % 60).toString().padStart(2, "0")}`
                       : "Login"}
                   </span>
                 </button>
               </form>
             </div>
+          </div>
+
+          {/* Optional Footer Link */}
+          <div className={`transition-all duration-1000 delay-300 ${mounted ? 'opacity-60 translate-y-0' : 'opacity-0 translate-y-4'}`}>
+            <p className="text-[11px] font-medium text-slate-500 tracking-wide">
+              Need help? Contact <a href="mailto:support@decktago.com" className="text-blue-500 hover:underline">System Administrator</a>
+            </p>
           </div>
         </div>
       </div>

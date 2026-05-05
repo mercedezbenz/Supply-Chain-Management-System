@@ -6,9 +6,21 @@ import { Header } from "./header"
 import { useSidebar } from "./sidebar-context"
 import { GlobalChatListener } from "../chat/global-chat-listener"
 import { GlobalOrderListener } from "../notifications/global-order-listener"
+import { UserManualModal } from "./user-manual-modal"
+import { useAuth } from "@/hooks/use-auth"
+import { useCallback } from "react"
 
 export function MainLayout({ children }: { children: React.ReactNode }) {
-  const { isCollapsed } = useSidebar()
+  const { isCollapsed, showManual, setShowManual, isWelcomeManual, setIsWelcomeManual } = useSidebar()
+  const { user } = useAuth()
+
+  const handleManualClose = useCallback(() => {
+    setShowManual(false)
+    if (isWelcomeManual && user?.email) {
+      localStorage.setItem(`seenManual_${user.email}`, "true")
+      setIsWelcomeManual(false)
+    }
+  }, [isWelcomeManual, user?.email, setShowManual, setIsWelcomeManual])
 
   return (
     <div className="min-h-screen bg-background">
@@ -19,6 +31,21 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
         <Header />
         <main className="p-3 sm:p-4 md:p-6 pt-16 md:pt-3">{children}</main>
       </div>
+
+      {/* User Manual Modal */}
+      <UserManualModal
+        open={showManual}
+        onClose={handleManualClose}
+        isWelcome={isWelcomeManual}
+        defaultTab={
+          isWelcomeManual
+            ? user?.role === "sales" ? "sales"
+            : user?.role === "encoder" ? "encoder"
+            : user?.role === "owner" ? "owner"
+            : "general"
+            : undefined
+        }
+      />
     </div>
   )
 }

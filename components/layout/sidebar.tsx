@@ -5,7 +5,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { Menu, X, ChevronLeft, ChevronRight } from "lucide-react"
+import { Menu, X, ChevronLeft, ChevronRight, HelpCircle } from "lucide-react"
 import Image from "next/image"
 import { useSidebar } from "./sidebar-context"
 import { useAuth } from "@/hooks/use-auth"
@@ -15,12 +15,18 @@ import { useNotifications } from "@/hooks/useNotifications"
 export function Sidebar() {
   const [isOpen, setIsOpen] = useState(false)
   const pathname = usePathname()
-  const { isCollapsed, toggleSidebar } = useSidebar()
+  const { isCollapsed, toggleSidebar, setShowManual, setIsWelcomeManual } = useSidebar()
   const { user } = useAuth()
   const { notifications } = useNotifications(user?.role)
 
   // Role-based menu filtering — only show items the user's role can access
   const filteredNavigation = getMenuItemsForRole(user?.role)
+
+  const handleManualOpen = () => {
+    setIsWelcomeManual(false)
+    setShowManual(true)
+    setIsOpen(false) // Close mobile sidebar if open
+  }
 
   const hasUnreadOrders = notifications.some(n => 
     !n.isRead && 
@@ -130,6 +136,20 @@ export function Sidebar() {
                 </Link>
               )
             })}
+
+            {/* Help/User Guide at bottom of list */}
+            <button
+              onClick={handleManualOpen}
+              className={cn(
+                "w-full flex items-center text-sm font-medium rounded-lg transition-all duration-200 relative",
+                isCollapsed ? "px-2 py-3 justify-center" : "px-4 py-3",
+                "text-gray-600 dark:text-sidebar-foreground hover:bg-gray-100 dark:hover:bg-sidebar-accent/10 hover:text-gray-800 dark:hover:text-sidebar-accent",
+              )}
+              title={isCollapsed ? "User Guide" : undefined}
+            >
+              <HelpCircle className={cn("h-5 w-5", !isCollapsed && "mr-3")} />
+              {!isCollapsed && <span>User Guide</span>}
+            </button>
           </nav>
 
           {/* Collapse Toggle Button (Desktop only) */}

@@ -936,8 +936,9 @@ const filteredProducts = sortedProducts.filter(group => group.stockLeft > 0)
                     ? originalGroup.batches
                     : [originalGroup]
                   const mainBatch = batches[0]
+                  const hasMultipleBatches = batches.length > 1
                   
-                  const rowsToRender = isExpanded && batches.length > 1
+                  const rowsToRender = isExpanded && hasMultipleBatches
                     ? batches
                     : [mainBatch];
 
@@ -995,7 +996,7 @@ const filteredProducts = sortedProducts.filter(group => group.stockLeft > 0)
                             }}
                             className={[
                               "group border-b border-border/25 transition-colors duration-150",
-                              hasHistory && isMainRow ? "cursor-pointer" : "",
+                              hasMultipleBatches && isMainRow ? "cursor-pointer" : "",
                               !isMainRow
                                 ? "bg-slate-50/40 dark:bg-slate-900/10"
                                 : isExpanded
@@ -1006,22 +1007,25 @@ const filteredProducts = sortedProducts.filter(group => group.stockLeft > 0)
                               isMainRow ? "hover:bg-blue-50/40 dark:hover:bg-muted/25" : "hover:bg-slate-100/50 dark:hover:bg-slate-800/20",
                               highlightRing,
                             ].filter(Boolean).join(" ")}
-                            onClick={() => hasHistory && isMainRow && toggleExpand(originalGroup.productName)}
-                            title={hasHistory && isMainRow ? "Click to view transaction history" : ""}
+                            onClick={() => hasMultipleBatches && isMainRow && toggleExpand(originalGroup.productName)}
+                            title={hasMultipleBatches && isMainRow ? "Click to view batches" : ""}
                           >
                         {/* Expand Icon */}
                         {!readOnly && (
                         <td className="h-14 px-3 py-2 align-middle text-center w-10">
-                          {hasHistory && isMainRow ? (
-                            <div className={`inline-flex items-center justify-center w-6 h-6 rounded-md transition-all duration-200 ${
-                              isExpanded
-                                ? "bg-blue-500 text-white shadow-sm"
-                                : "bg-slate-100 text-slate-500 group-hover:bg-blue-100 group-hover:text-blue-600"
-                            }`}>
-                              {isExpanded
-                                ? <ChevronUp className="h-3.5 w-3.5" />
-                                : <ChevronDown className="h-3.5 w-3.5" />
-                              }
+                          {hasMultipleBatches && isMainRow ? (
+                            <div className="flex items-center gap-1">
+                              <div className={`inline-flex items-center justify-center w-6 h-6 rounded-md transition-all duration-200 ${
+                                isExpanded
+                                  ? "bg-blue-500 text-white shadow-sm"
+                                  : "bg-slate-100 text-slate-500 group-hover:bg-blue-100 group-hover:text-blue-600"
+                              }`}>
+                                {isExpanded
+                                  ? <ChevronUp className="h-3.5 w-3.5" />
+                                  : <ChevronDown className="h-3.5 w-3.5" />
+                                }
+                              </div>
+                              {!isExpanded && <span className="text-[10px] font-bold text-slate-400">+{batches.length - 1}</span>}
                             </div>
                           ) : (
                             <div className="w-6 h-6" />
@@ -1381,8 +1385,9 @@ const filteredProducts = sortedProducts.filter(group => group.stockLeft > 0)
               ? originalGroup.batches
               : [originalGroup]
             const mainBatch = batches[0]
+            const hasMultipleBatches = batches.length > 1
 
-            const rowsToRender = isExpanded && batches.length > 1
+            const rowsToRender = isExpanded && hasMultipleBatches
               ? batches
               : [mainBatch];
 
@@ -1438,9 +1443,9 @@ const filteredProducts = sortedProducts.filter(group => group.stockLeft > 0)
                 <div
                   className={[
                     "px-3 pt-3 pb-2 transition-colors",
-                    hasHistory && isMainRow ? "cursor-pointer active:bg-blue-50/40 dark:active:bg-blue-950/30" : "",
+                    hasMultipleBatches && isMainRow ? "cursor-pointer active:bg-blue-50/40 dark:active:bg-blue-950/30" : "",
                   ].join(" ")}
-                  onClick={() => hasHistory && isMainRow && toggleExpand(originalGroup.productName)}
+                  onClick={() => hasMultipleBatches && isMainRow && toggleExpand(originalGroup.productName)}
                 >
                   <div className="flex items-start justify-between gap-2">
                     {/* Left: Info */}
@@ -1470,16 +1475,19 @@ const filteredProducts = sortedProducts.filter(group => group.stockLeft > 0)
                     </div>
 
                     {/* Right: Expand toggle */}
-                    {hasHistory && isMainRow && (
-                      <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-all duration-200 shrink-0 mt-0.5 ${
-                        isExpanded
-                          ? "bg-blue-500 text-white shadow-md shadow-blue-500/25"
-                          : "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
-                      }`}>
-                        {isExpanded
-                          ? <ChevronUp className="h-3.5 w-3.5" />
-                          : <ChevronDown className="h-3.5 w-3.5" />
-                        }
+                    {hasMultipleBatches && isMainRow && (
+                      <div className="flex flex-col items-center gap-1 shrink-0 mt-0.5">
+                        <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-all duration-200 ${
+                          isExpanded
+                            ? "bg-blue-500 text-white shadow-md shadow-blue-500/25"
+                            : "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
+                        }`}>
+                          {isExpanded
+                            ? <ChevronUp className="h-3.5 w-3.5" />
+                            : <ChevronDown className="h-3.5 w-3.5" />
+                          }
+                        </div>
+                        {!isExpanded && <span className="text-[9px] font-bold text-slate-400">+{batches.length - 1}</span>}
                       </div>
                     )}
                   </div>

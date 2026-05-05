@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -21,7 +21,7 @@ import {
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { LogOut, Moon, Sun, Menu } from "lucide-react"
+import { LogOut, Moon, Sun, Menu, HelpCircle } from "lucide-react"
 import { useAuth } from "@/hooks/use-auth"
 import { ExpiryNotifications } from "@/components/notifications/expiry-notifications"
 import { SalesNotifications } from "@/components/notifications/sales-notifications"
@@ -33,8 +33,24 @@ export function Header() {
   const { user, logout } = useAuth()
   console.log("[Header] Current User Role:", user?.role)
   const { setTheme, theme } = useTheme()
-  const { toggleSidebar } = useSidebar()
+  const { toggleSidebar, setShowManual, setIsWelcomeManual } = useSidebar()
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
+
+  // Auto-open manual on first visit (per user)
+  useEffect(() => {
+    if (!user?.email) return
+    const key = `seenManual_${user.email}`
+    const seen = localStorage.getItem(key)
+    if (!seen) {
+      setIsWelcomeManual(true)
+      setShowManual(true)
+    }
+  }, [user?.email])
+
+  const handleManualOpen = useCallback(() => {
+    setIsWelcomeManual(false)
+    setShowManual(true)
+  }, [setIsWelcomeManual, setShowManual])
 
   const handleLogout = async () => {
     try {
@@ -89,7 +105,14 @@ export function Header() {
               <ExpiryNotifications />
             )}
 
-
+            {/* User Manual button */}
+            <button
+              onClick={handleManualOpen}
+              className="relative inline-flex items-center justify-center rounded-lg text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring hover:bg-accent hover:text-accent-foreground h-8 w-8 p-0 text-gray-500 dark:text-gray-400"
+              title="User Manual"
+            >
+              <HelpCircle className="h-5 w-5" />
+            </button>
 
 
             {/* User menu */}
@@ -152,6 +175,16 @@ export function Header() {
                   </div>
                 </DropdownMenuItem>
 
+                <DropdownMenuItem 
+                  onClick={handleManualOpen} 
+                  className="flex items-center gap-3 p-2 rounded-lg cursor-pointer hover:bg-gray-50 focus:bg-gray-50 dark:hover:bg-gray-800 dark:focus:bg-gray-800 transition-colors my-1"
+                >
+                  <div className="flex items-center justify-center h-8 w-8 rounded-full bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
+                    <HelpCircle className="h-4 w-4" />
+                  </div>
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-200">User Guide</span>
+                </DropdownMenuItem>
+
                 <DropdownMenuSeparator className="bg-gray-100 dark:bg-gray-800 my-2"/>
                 
                 <DropdownMenuItem 
@@ -198,6 +231,7 @@ export function Header() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
     </>
   )
 }

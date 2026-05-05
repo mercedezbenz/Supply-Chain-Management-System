@@ -3,7 +3,7 @@
 // Used by add-item-dialog, edit-item-dialog, and inventory-table.
 
 // ─── Category constants ──────────────────────────────────────────────────────
-export const CATEGORIES = ["Raw Material", "Finished Product", "By-product"] as const
+export const CATEGORIES = ["Finished Product", "By-product"] as const
 export type CategoryValue = (typeof CATEGORIES)[number]
 
 // ─── Type constants ──────────────────────────────────────────────────────────
@@ -147,7 +147,6 @@ export function getFilteredProducts(category: string, type: string): ProductEntr
 
 // ─── Category prefix map for barcode generation ──────────────────────────────
 export const categoryPrefixMap: Record<string, string> = {
-  "Raw Material": "RM",
   "Finished Product": "FP",
   "By-product": "BP",
 }

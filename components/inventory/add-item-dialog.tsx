@@ -1,5 +1,5 @@
 "use client"
-import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, collection, addDoc, serverTimestamp, query, where, getDocs, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase-live";
 import type React from "react"
 import { useState, useRef, useEffect, useCallback } from "react"
@@ -43,6 +43,8 @@ import { Calendar } from "@/components/ui/calendar"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/hooks/use-auth"
 import { InventoryService, BarcodeService, TransactionService } from "@/services/firebase-service"
+import { BarcodeModal } from "./barcode-modal"
+import { BarcodeLabel } from "./barcode-label"
 import { toast } from "sonner"
 import {
   CATEGORIES,
@@ -157,11 +159,36 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
   // Barcode generation state
   const [isGenerating, setIsGenerating] = useState(false)
   const [barcodeReady, setBarcodeReady] = useState(false)
+  const [barcodeModalOpen, setBarcodeModalOpen] = useState(false)
 
   const [formData, setFormData] = useState(EMPTY_FORM)
 
   // Custom product list (user-added products during session)
   const [customProducts, setCustomProducts] = useState<ProductEntry[]>([])
+  const [isSavingProduct, setIsSavingProduct] = useState(false)
+
+  // Listen to Firestore products collection
+  useEffect(() => {
+    const productsRef = collection(db, "products")
+    const unsubscribe = onSnapshot(productsRef, (snapshot) => {
+      const fetchedProducts: ProductEntry[] = []
+      snapshot.forEach((doc) => {
+        const data = doc.data()
+        if (data.name && data.category && data.type) {
+          fetchedProducts.push({
+            name: data.name,
+            category: data.category,
+            type: data.type
+          })
+        }
+      })
+      setCustomProducts(fetchedProducts)
+    }, (error) => {
+      console.error("Error fetching products from Firebase:", error)
+    })
+    return () => unsubscribe()
+  }, [])
+
   // "+ Add Item" inline form
   const [showAddProduct, setShowAddProduct] = useState(false)
   const [newProductName, setNewProductName] = useState("")
@@ -212,6 +239,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
     setNewProductName("")
     setImageFile(null)
     setImagePreview(null)
+    setBarcodeModalOpen(false)
   }, [])
 
   // ── Auto-fill from scanned item ─────────────────────────────────────────
@@ -272,9 +300,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
 
   // Auto-derived display name
   const autoProductName = (() => {
-    if (formData.category === "Raw Material" && formData.productType) {
-      return `Raw Material - ${formData.productType}`
-    }
+
     if (formData.productName) {
       return formData.productName
     }
@@ -327,22 +353,50 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
   }
 
   // ── Add new product inline ────────────────────────────────────────────────
-  const handleSaveNewProduct = () => {
+  // ── Add new product inline ────────────────────────────────────────────────
+  const handleSaveNewProduct = async () => {
     const trimmed = newProductName.trim()
     if (!trimmed) return
 
-    const newEntry: ProductEntry = {
-      category: formData.category,
-      type: formData.productType,
-      name: trimmed,
-    }
-    setCustomProducts((prev) => [...prev, newEntry])
-    setFormData((prev) => ({ ...prev, productName: trimmed }))
-    setShowAddProduct(false)
-    setNewProductName("")
-    setErrors((prev) => ({ ...prev, productName: "" }))
+    // Standardize casing (e.g. "pork belly" -> "Pork Belly")
+    const standardizedName = trimmed.replace(/\b\w/g, char => char.toUpperCase())
 
-    toast(`"${trimmed}" has been added to the dropdown.`)
+    // Prevent duplicates
+    const isDuplicate = availableProducts.some(p => p.name.toLowerCase() === standardizedName.toLowerCase())
+    if (isDuplicate) {
+      toast.error("Product already exists", {
+        description: "Please select it from the dropdown."
+      })
+      return
+    }
+
+    setIsSavingProduct(true)
+    try {
+      const productsRef = collection(db, "products")
+      await addDoc(productsRef, {
+        name: standardizedName,
+        category: formData.category,
+        type: formData.productType,
+        createdAt: serverTimestamp()
+      })
+
+      // Update local state immediately for fast UI feedback
+      setFormData((prev) => ({ ...prev, productName: standardizedName }))
+      setShowAddProduct(false)
+      setNewProductName("")
+      setErrors((prev) => ({ ...prev, productName: "" }))
+
+      toast.success("Product Saved", {
+        description: `"${standardizedName}" has been added to the master list.`
+      })
+    } catch (error: any) {
+      console.error("Error saving product:", error)
+      toast.error("Failed to save product", {
+        description: error.message || "Please try again."
+      })
+    } finally {
+      setIsSavingProduct(false)
+    }
   }
 
   // Check if we can generate barcode
@@ -364,38 +418,6 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
     prevCanGenerateRef.current = canGenerate
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canGenerate, formData.barcode, isGenerating])
-
-  // ── Barcode SVG ref for JsBarcode preview ────────────────────────────────
-  const barcodeSvgRef = useRef<SVGSVGElement | null>(null)
-  const [svgMounted, setSvgMounted] = useState(false)
-
-  // Callback ref: fires the instant the <svg> enters the DOM
-  const barcodeSvgCallbackRef = useCallback((node: SVGSVGElement | null) => {
-    barcodeSvgRef.current = node
-    setSvgMounted(!!node)
-  }, [])
-
-  useEffect(() => {
-    if (!svgMounted || !barcodeSvgRef.current || !formData.barcode) return
-    import("jsbarcode").then((mod) => {
-      const JsBarcode = mod.default || mod
-      try {
-        JsBarcode(barcodeSvgRef.current!, formData.barcode, {
-          format: "CODE128",
-          width: 2.5,
-          height: 90,
-          displayValue: true,
-          fontSize: 16,
-          fontOptions: "bold",
-          margin: 10,
-          background: "#ffffff",
-          lineColor: "#000000",
-        })
-      } catch (err) {
-        console.error("[JsBarcode] render error:", err)
-      }
-    })
-  }, [svgMounted, formData.barcode])
 
   // ── Generate Unique Barcode ─────────────────────────────────────────────
   const handleGenerateBarcode = async () => {
@@ -444,179 +466,6 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
     } finally {
       setIsGenerating(false)
     }
-  }
-
-  // ── Print barcode (hidden iframe — won't be blocked by popup blocker) ───
-  const handlePrintBarcode = () => {
-    const printArea = document.getElementById("barcode-print-area")
-    if (!printArea) return
-
-    const svgEl = printArea.querySelector("svg")
-    if (!svgEl) return
-
-    const svgHtml = svgEl.outerHTML
-
-    // Create a hidden iframe
-    const iframe = document.createElement("iframe")
-    iframe.style.position = "fixed"
-    iframe.style.top = "-10000px"
-    iframe.style.left = "-10000px"
-    iframe.style.width = "0"
-    iframe.style.height = "0"
-    iframe.style.border = "none"
-    document.body.appendChild(iframe)
-
-    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document
-    if (!iframeDoc) {
-      document.body.removeChild(iframe)
-      return
-    }
-
-    const displayName = autoProductName || formData.category
-    const barcodeText = formData.barcode
-    const productionDateStr = formData.productionDate
-      ? format(formData.productionDate, "MMM dd, yyyy")
-      : "—"
-    const expirationDateStr = formData.expirationDate
-      ? format(formData.expirationDate, "MMM dd, yyyy")
-      : "—"
-
-    iframeDoc.open()
-    iframeDoc.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Print Barcode</title>
-          <style>
-            @page {
-              margin: 8mm;
-            }
-            * {
-              margin: 0;
-              padding: 0;
-              box-sizing: border-box;
-            }
-            body {
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              justify-content: center;
-              min-height: 100vh;
-              background: white;
-              font-family: Arial, Helvetica, sans-serif;
-              -webkit-print-color-adjust: exact;
-              print-color-adjust: exact;
-            }
-            .label {
-              text-align: center;
-              padding: 12px 20px;
-              max-width: 420px;
-              width: 100%;
-            }
-            .product-name {
-              font-size: 15pt;
-              font-weight: 700;
-              letter-spacing: 0.5px;
-              margin-bottom: 6px;
-              line-height: 1.2;
-            }
-            .barcode-text {
-              font-size: 10pt;
-              font-family: 'Courier New', Courier, monospace;
-              font-weight: 600;
-              letter-spacing: 2.5px;
-              color: #222;
-              margin-bottom: 8px;
-            }
-            .barcode-img {
-              margin: 4px auto 8px;
-              display: flex;
-              justify-content: center;
-            }
-            .barcode-img svg {
-              max-width: 100%;
-              height: auto;
-            }
-            .barcode-text-bottom {
-              font-size: 10pt;
-              font-family: 'Courier New', Courier, monospace;
-              font-weight: 600;
-              letter-spacing: 2.5px;
-              color: #222;
-              margin-bottom: 10px;
-            }
-            .separator {
-              width: 60%;
-              margin: 0 auto 10px;
-              border: none;
-              border-top: 1px dashed #bbb;
-            }
-            .dates {
-              display: flex;
-              flex-direction: column;
-              gap: 3px;
-              align-items: center;
-            }
-            .date-row {
-              font-size: 9.5pt;
-              color: #333;
-              line-height: 1.5;
-            }
-            .date-label {
-              font-weight: 600;
-            }
-            .date-value {
-              font-weight: 400;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="label">
-            <div class="product-name">${displayName}</div>
-            <div class="barcode-text">${barcodeText}</div>
-            <div class="barcode-img">${svgHtml}</div>
-            <div class="barcode-text-bottom">${barcodeText}</div>
-            <hr class="separator" />
-            <div class="dates">
-              <div class="date-row">
-                <span class="date-label">Production Date:</span>
-                <span class="date-value">${productionDateStr}</span>
-              </div>
-              <div class="date-row">
-                <span class="date-label">Expiration Date:</span>
-                <span class="date-value">${expirationDateStr}</span>
-              </div>
-            </div>
-          </div>
-        </body>
-      </html>
-    `)
-    iframeDoc.close()
-
-    // Wait for iframe to render, then print
-    iframe.onload = () => {
-      setTimeout(() => {
-        iframe.contentWindow?.focus()
-        iframe.contentWindow?.print()
-        // Remove iframe after printing
-        setTimeout(() => {
-          document.body.removeChild(iframe)
-        }, 1000)
-      }, 250)
-    }
-
-    // Fallback if onload doesn't fire (already loaded)
-    setTimeout(() => {
-      if (document.body.contains(iframe)) {
-        iframe.contentWindow?.focus()
-        iframe.contentWindow?.print()
-        setTimeout(() => {
-          if (document.body.contains(iframe)) {
-            document.body.removeChild(iframe)
-          }
-        }, 1000)
-      }
-    }, 500)
   }
 
   // ── Validation ─────────────────────────────────────────────────────────
@@ -821,7 +670,6 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
   // ── Category color helper ─────────────────────────────────────────────────
   const getCategoryColor = (cat: string) => {
     switch (cat) {
-      case "Raw Material": return "bg-amber-100 text-amber-800 border-amber-200"
       case "Finished Product": return "bg-green-100 text-green-800 border-green-200"
       case "By-product": return "bg-yellow-100 text-yellow-800 border-yellow-200"
       default: return ""
@@ -892,7 +740,6 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                             <span className="flex items-center gap-2">
                               <span className={cn(
                                 "inline-block w-2 h-2 rounded-full",
-                                cat === "Raw Material" ? "bg-amber-500" :
                                 cat === "Finished Product" ? "bg-green-500" :
                                 "bg-yellow-500"
                               )} />
@@ -1031,9 +878,9 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                           size="sm"
                           className="h-9 px-3"
                           onClick={handleSaveNewProduct}
-                          disabled={!newProductName.trim()}
+                          disabled={!newProductName.trim() || isSavingProduct}
                         >
-                          Save
+                          {isSavingProduct ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
                         </Button>
                         <Button
                           type="button"
@@ -1052,15 +899,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                   </div>
                 )}
 
-                {/* Raw Material info banner */}
-                {formData.category === "Raw Material" && formData.productType && (
-                  <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-                    <span className="text-base">🥩</span>
-                    <p className="text-xs text-amber-700">
-                      <span className="font-semibold">Raw Material</span> — represents whole/boxed meat (unprocessed). No product name selection needed.
-                    </p>
-                  </div>
-                )}
+
 
                 {/* Image Upload — By-product and Finished Product */}
                 {(formData.category === "By-product" || formData.category === "Finished Product") && (
@@ -1457,14 +1296,21 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                   <div
                     id="barcode-print-area"
                     className={cn(
-                      "rounded-xl border-2 flex flex-col items-center justify-center transition-colors min-h-[170px] bg-white p-4",
+                      "rounded-xl border-2 flex flex-col items-center justify-center transition-colors min-h-[170px] bg-white p-4 overflow-hidden",
                       barcodeReady
                         ? "border-emerald-200 shadow-sm shadow-emerald-100"
                         : "border-dashed border-slate-200"
                     )}
                   >
                     {barcodeReady ? (
-                      <svg ref={barcodeSvgCallbackRef} className="w-full max-w-full" />
+                      <div className="flex justify-center w-full scale-[0.85] origin-center">
+                        <BarcodeLabel
+                          productName={autoProductName || formData.category}
+                          barcode={formData.barcode}
+                          productionDate={formData.productionDate ? format(formData.productionDate, "MMM dd, yyyy") : undefined}
+                          expiryDate={formData.expirationDate ? format(formData.expirationDate, "MMM dd, yyyy") : undefined}
+                        />
+                      </div>
                     ) : (
                       <div className="flex flex-col items-center gap-2 py-6 text-slate-400">
                         <Barcode className="h-10 w-10 opacity-20" />
@@ -1480,7 +1326,7 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={handlePrintBarcode}
+                    onClick={() => setBarcodeModalOpen(true)}
                     className="h-11 w-full gap-2 border-slate-300 hover:bg-slate-50 font-medium text-sm"
                   >
                     <Printer className="h-4 w-4" />
@@ -1503,6 +1349,15 @@ export function AddItemDialog({ open, onOpenChange, scannedItem }: AddItemDialog
           </div>
         </form>
       </DialogContent>
+
+      <BarcodeModal
+        open={barcodeModalOpen}
+        onOpenChange={setBarcodeModalOpen}
+        barcode={formData.barcode}
+        productName={autoProductName || formData.category}
+        productionDate={formData.productionDate ? format(formData.productionDate, "MMM dd, yyyy") : undefined}
+        expiryDate={formData.expirationDate ? format(formData.expirationDate, "MMM dd, yyyy") : undefined}
+      />
     </Dialog>
   )
 }

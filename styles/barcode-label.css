@@ -94,4 +94,19 @@
   .barcode-label-error {
     display: none !important;
   }
+
+  /* Hide everything else on the page during print */
+  body * {
+    visibility: hidden;
+  }
+  .barcode-label-preview, .barcode-label-preview * {
+    visibility: visible;
+  }
+  .barcode-label-preview {
+    position: absolute;
+    left: 0;
+    top: 0;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
 }
